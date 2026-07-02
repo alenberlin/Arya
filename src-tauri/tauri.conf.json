@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Arya",
@@ -17,6 +18,22 @@
         "height": 720,
         "minWidth": 800,
         "minHeight": 560
+      },
+      {
+        "label": "hud",
+        "title": "Arya dictation",
+        "url": "index.html",
+        "width": 280,
+        "height": 64,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "shadow": false,
+        "acceptFirstMouse": true
       }
     ],
     "security": {

@@ -1,0 +1,79 @@
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+}
+
+.hud {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  margin: 8px;
+  padding: 0 16px;
+  border-radius: 22px;
+  background: rgba(24, 24, 27, 0.92);
+  color: #fafafa;
+  font-family: system-ui, sans-serif;
+  font-size: 12px;
+  user-select: none;
+  cursor: default;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.hud-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #71717a;
+  flex-shrink: 0;
+}
+
+.hud-recording .hud-dot {
+  background: #ef4444;
+  animation: hud-pulse 1.4s ease-in-out infinite;
+}
+
+.hud-error {
+  background: rgba(88, 22, 22, 0.95);
+}
+
+.hud-bars {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 20px;
+}
+
+.hud-bar {
+  width: 3px;
+  height: 20px;
+  border-radius: 2px;
+  background: #a1a1aa;
+  transform-origin: center;
+  transition: transform 80ms linear;
+}
+
+.hud-recording .hud-bar {
+  background: #34d399;
+}
+
+.hud-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes hud-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
