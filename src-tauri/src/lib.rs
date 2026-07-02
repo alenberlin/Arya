@@ -1,5 +1,6 @@
 mod db;
 mod notes;
+pub mod speech;
 
 use tauri::Manager;
 
