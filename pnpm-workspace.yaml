@@ -1,0 +1,4 @@
+# Marks this repo as its own pnpm workspace root (the parent directory is a
+# workspace too; without this file pnpm resolves installs up there).
+# Future members: sidecar/ (agent runtime, M7).
+packages: []
