@@ -141,25 +141,6 @@ pub async fn create_dictionary_entry(
     })
 }
 
-/// Dev-only: drives one full dictation cycle without the hotkey, so the
-/// pipeline can be exercised end to end in automated runtime checks.
-#[cfg(debug_assertions)]
-#[tauri::command]
-pub fn dev_run_dictation(
-    app: AppHandle,
-    service: State<'_, Arc<DictationService>>,
-    pool: State<'_, SqlitePool>,
-    duration_ms: u64,
-) {
-    let service = service.inner().clone();
-    let pool = pool.inner().clone();
-    std::thread::spawn(move || {
-        service.begin(&app);
-        std::thread::sleep(std::time::Duration::from_millis(duration_ms));
-        service.finish(&app, pool);
-    });
-}
-
 #[tauri::command]
 pub async fn delete_dictionary_entry(
     pool: State<'_, SqlitePool>,
