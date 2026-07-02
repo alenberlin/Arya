@@ -4,6 +4,7 @@ mod db;
 mod dictation;
 mod notes;
 mod paste;
+mod recording;
 pub mod speech;
 
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 use dictation::service::DictationService;
+use recording::recorder::Recorder;
 
 /// Builds and runs the Tauri application.
 pub fn run() {
@@ -30,33 +32,35 @@ pub fn run() {
                 // and continue so the user can rebind in settings.
                 eprintln!("dictation hotkey not registered: {e}");
             }
+            app.manage(Recorder::spawn());
             position_hud_top_center(app.handle());
-
-            // Dev-only runtime hook: ARYA_DEV_DICTATE_MS=<hold ms> drives one
-            // dictation cycle shortly after launch, for automated E2E checks.
             #[cfg(debug_assertions)]
-            {
-                let hold_ms = std::env::var("ARYA_DEV_DICTATE_MS")
-                    .ok()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(0);
-                if hold_ms > 0 {
-                    let handle = app.handle().clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_secs(3));
-                        let service = handle.state::<Arc<DictationService>>().inner().clone();
-                        let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
-                        service.begin(&handle);
-                        std::thread::sleep(std::time::Duration::from_millis(hold_ms));
-                        service.finish(&handle, pool);
-                    });
-                }
-            }
+            dev_hooks::install(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             notes::create_note,
             notes::list_notes,
+            notes::get_note,
+            notes::get_note_turns,
+            notes::update_note,
+            notes::delete_note,
+            notes::create_folder,
+            notes::list_folders,
+            notes::rename_folder,
+            notes::delete_folder,
+            notes::assign_note_to_folder,
+            recording::commands::start_recording,
+            recording::commands::pause_recording,
+            recording::commands::resume_recording,
+            recording::commands::finish_recording,
+            recording::commands::recording_status,
+            recording::commands::retry_processing,
+            recording::commands::scan_recoverable_recordings,
+            recording::commands::recover_recording,
+            recording::commands::discard_recording,
+            recording::commands::get_generation_settings,
+            recording::commands::set_generation_settings,
             dictation::commands::get_dictation_settings,
             dictation::commands::set_dictation_settings,
             dictation::commands::dictation_status,
@@ -66,8 +70,6 @@ pub fn run() {
             dictation::commands::list_dictionary_entries,
             dictation::commands::create_dictionary_entry,
             dictation::commands::delete_dictionary_entry,
-            #[cfg(debug_assertions)]
-            dictation::commands::dev_run_dictation,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -88,4 +90,100 @@ fn position_hud_top_center(app: &tauri::AppHandle) {
     };
     let x = (screen.width as i32 - hud_size.width as i32) / 2;
     let _ = hud.set_position(tauri::PhysicalPosition::new(x, 16));
+}
+
+/// Debug-only runtime hooks for automated E2E checks. Each is env-gated and
+/// compiled out of release builds entirely.
+#[cfg(debug_assertions)]
+mod dev_hooks {
+    use std::sync::Arc;
+
+    use tauri::Manager;
+
+    use crate::dictation::service::DictationService;
+    use crate::recording::recorder::Recorder;
+
+    pub fn install(handle: tauri::AppHandle) {
+        // ARYA_DEV_DICTATE_MS=<hold ms>: one dictation cycle after launch.
+        if let Some(hold_ms) = env_ms("ARYA_DEV_DICTATE_MS") {
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let service = handle.state::<Arc<DictationService>>().inner().clone();
+                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
+                service.begin(&handle);
+                std::thread::sleep(std::time::Duration::from_millis(hold_ms));
+                service.finish(&handle, pool);
+            });
+        }
+
+        // ARYA_DEV_RECORD_MS=<ms>: start a recording, stop after <ms>, process.
+        if let Some(record_ms) = env_ms("ARYA_DEV_RECORD_MS") {
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
+                let recorder = handle.state::<Recorder>().inner().clone();
+                let started = tauri::async_runtime::block_on(
+                    crate::recording::commands::start_recording_inner(
+                        &handle, &pool, &recorder, None,
+                    ),
+                );
+                eprintln!("dev record: started {started:?}");
+                std::thread::sleep(std::time::Duration::from_millis(record_ms));
+                let finished = tauri::async_runtime::block_on(
+                    crate::recording::commands::finish_recording_inner(&handle, &pool, &recorder),
+                );
+                eprintln!("dev record: finished {finished:?}");
+            });
+        }
+
+        // ARYA_DEV_RECORD_FOREVER=1: start recording and never stop (crash test).
+        if std::env::var("ARYA_DEV_RECORD_FOREVER").as_deref() == Ok("1") {
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
+                let recorder = handle.state::<Recorder>().inner().clone();
+                let started = tauri::async_runtime::block_on(
+                    crate::recording::commands::start_recording_inner(
+                        &handle, &pool, &recorder, None,
+                    ),
+                );
+                eprintln!("dev record forever: started {started:?}");
+            });
+        }
+
+        // ARYA_DEV_RECOVER=1: scan for recoverable sessions and recover them.
+        if std::env::var("ARYA_DEV_RECOVER").as_deref() == Ok("1") {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
+                let found = tauri::async_runtime::block_on(
+                    crate::recording::commands::scan_recoverable_inner(&pool),
+                );
+                eprintln!("dev recover: scan {found:?}");
+                if let Ok(list) = found {
+                    for item in list {
+                        let result = tauri::async_runtime::block_on(
+                            crate::recording::commands::recover_recording_inner(
+                                &handle,
+                                &pool,
+                                &item.session_id,
+                            ),
+                        );
+                        eprintln!("dev recover: recovered {result:?}");
+                    }
+                }
+            });
+        }
+    }
+
+    fn env_ms(name: &str) -> Option<u64> {
+        std::env::var(name)
+            .ok()?
+            .parse::<u64>()
+            .ok()
+            .filter(|v| *v > 0)
+    }
 }

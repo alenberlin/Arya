@@ -5,6 +5,7 @@
 //! sherpa-onnx/Parakeet remains a candidate second backend and lands with
 //! diarization (M6) if adopted.
 
+pub mod engine_cache;
 pub mod models;
 pub mod wav;
 pub mod wer;

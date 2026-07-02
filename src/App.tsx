@@ -1,68 +1,31 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import brand from "../brand.json";
 import { DictationPanel } from "./dictation/DictationPanel";
-import { createNote, listNotes, type Note } from "./lib/notes";
+import { NotesWorkspace } from "./notes/NotesWorkspace";
 
 type Tab = "notes" | "dictation";
 
 /**
- * Main-window shell. Minimal two-tab layout until the workspace shell
- * arrives (M4/M13): Notes (walking-skeleton slice) and Dictation (M3).
+ * Main-window shell: Notes workspace (M4) and Dictation panel (M3).
+ * The polished app chrome lands in M13.
  */
 export function App() {
   const [tab, setTab] = useState<Tab>("notes");
-  const [notes, setNotes] = useState<Note[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      setNotes(await listNotes());
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const onNewNote = async () => {
-    try {
-      await createNote("New note");
-      await refresh();
-    } catch (e) {
-      setError(String(e));
-    }
-  };
 
   return (
-    <main style={{ fontFamily: "system-ui", padding: "2rem", maxWidth: 720, margin: "0 auto" }}>
-      <h1>{brand.name}</h1>
-      <nav style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        <button type="button" onClick={() => setTab("notes")} disabled={tab === "notes"}>
-          Notes
-        </button>
-        <button type="button" onClick={() => setTab("dictation")} disabled={tab === "dictation"}>
-          Dictation
-        </button>
-      </nav>
-      {error ? <p role="alert">{error}</p> : null}
-      {tab === "notes" ? (
-        <section>
-          <button type="button" onClick={onNewNote}>
-            New note
+    <main style={{ fontFamily: "system-ui", padding: "1.5rem", maxWidth: 1000, margin: "0 auto" }}>
+      <header style={{ display: "flex", alignItems: "baseline", gap: 16, marginBottom: 12 }}>
+        <h1 style={{ margin: 0 }}>{brand.name}</h1>
+        <nav style={{ display: "flex", gap: 8 }}>
+          <button type="button" onClick={() => setTab("notes")} disabled={tab === "notes"}>
+            Notes
           </button>
-          <ul aria-label="notes">
-            {notes.map((note) => (
-              <li key={note.id}>
-                {note.title} <small>{note.createdAt}</small>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : (
-        <DictationPanel />
-      )}
+          <button type="button" onClick={() => setTab("dictation")} disabled={tab === "dictation"}>
+            Dictation
+          </button>
+        </nav>
+      </header>
+      {tab === "notes" ? <NotesWorkspace /> : <DictationPanel />}
     </main>
   );
 }

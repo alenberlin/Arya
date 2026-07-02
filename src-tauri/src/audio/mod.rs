@@ -5,6 +5,8 @@
 //! recording so HUDs can render meters.
 
 pub mod resample;
+pub mod turns;
+pub mod wav_file;
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
