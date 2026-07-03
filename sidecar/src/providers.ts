@@ -4,6 +4,10 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
 
 const OLLAMA_URL = process.env.ARYA_OLLAMA_URL ?? "http://127.0.0.1:11434";
+// When set, cloud providers route through the Arya API proxy (which holds
+// the real keys). The desktop app never carries provider keys.
+const ARYA_API_URL = process.env.ARYA_API_URL;
+const ARYA_API_TOKEN = process.env.ARYA_API_TOKEN ?? "local-dev-token";
 
 /**
  * Resolves "provider:model" to a language model. Providers:
@@ -19,6 +23,15 @@ export function resolveModel(qualified: string): LanguageModel {
   }
   switch (provider) {
     case "anthropic": {
+      if (ARYA_API_URL) {
+        // Route through the proxy: it holds the key and meters usage.
+        const proxied = createOpenAICompatible({
+          name: "arya-anthropic",
+          baseURL: `${ARYA_API_URL}/v1/anthropic`,
+          headers: { authorization: `Bearer ${ARYA_API_TOKEN}` },
+        });
+        return proxied(model);
+      }
       const anthropic = createAnthropic({
         apiKey: process.env.ANTHROPIC_API_KEY,
         baseURL: process.env.ARYA_ANTHROPIC_BASE_URL,
@@ -26,6 +39,14 @@ export function resolveModel(qualified: string): LanguageModel {
       return anthropic(model);
     }
     case "openai": {
+      if (ARYA_API_URL) {
+        const proxied = createOpenAICompatible({
+          name: "arya-openai",
+          baseURL: `${ARYA_API_URL}/v1/openai`,
+          headers: { authorization: `Bearer ${ARYA_API_TOKEN}` },
+        });
+        return proxied(model);
+      }
       const openai = createOpenAI({
         apiKey: process.env.OPENAI_API_KEY,
         baseURL: process.env.ARYA_OPENAI_BASE_URL,
