@@ -1,0 +1,39 @@
+name: security-audit
+
+# Dependency vulnerability scan. Advisory database changes daily, so this runs
+# on a schedule in addition to pushes. Ignored advisories are documented with
+# reachability analysis in docs/security-audit.md.
+on:
+  push:
+    branches: [main]
+    paths: ["**/Cargo.lock", "pnpm-lock.yaml"]
+  schedule:
+    - cron: "0 7 * * 1" # Mondays
+  workflow_dispatch:
+
+jobs:
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install cargo-audit --locked
+      # Ignores are justified in docs/security-audit.md (unreachable transitives).
+      - run: >
+          cargo audit --file src-tauri/Cargo.lock
+          --ignore RUSTSEC-2023-0071
+          --ignore RUSTSEC-2026-0194
+          --ignore RUSTSEC-2026-0195
+      - run: cargo audit --file arya-api/Cargo.lock --ignore RUSTSEC-2023-0071
+
+  pnpm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm audit --prod

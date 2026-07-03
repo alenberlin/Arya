@@ -19,12 +19,20 @@ pub struct OllamaEmbedder {
     client: reqwest::blocking::Client,
 }
 
+/// One shared HTTP client with a pooled connection, reused across queries so
+/// each search doesn't pay a fresh client's setup + cold connection.
+fn shared_client() -> reqwest::blocking::Client {
+    use std::sync::OnceLock;
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT.get_or_init(reqwest::blocking::Client::new).clone()
+}
+
 impl OllamaEmbedder {
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
             model: EMBED_MODEL.to_string(),
-            client: reqwest::blocking::Client::new(),
+            client: shared_client(),
         }
     }
 
