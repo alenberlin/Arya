@@ -16,6 +16,7 @@ import {
   modelPrivacy,
   type ToolInfo,
 } from "../lib/agent";
+import { agentBranchSession } from "../lib/ecosystem";
 
 interface PendingApproval {
   callId: string;
@@ -190,7 +191,23 @@ export function AgentPanel() {
           background: message.role === "user" ? "#eef2ff" : "#f8fafc",
         }}
       >
-        <small>{message.role === "user" ? "You" : "Arya"}</small>
+        <small>{message.role === "user" ? "You" : "Arya"}</small>{" "}
+        {active && !message.id.startsWith("local-") ? (
+          <button
+            type="button"
+            style={{ fontSize: 11 }}
+            onClick={() =>
+              void agentBranchSession(active.id, message.id)
+                .then((s) => {
+                  void refreshSessions();
+                  return openSession(s);
+                })
+                .catch((e) => setError(String(e)))
+            }
+          >
+            Branch here
+          </button>
+        ) : null}
         {content.reasoning ? (
           <details>
             <summary>Reasoning</summary>

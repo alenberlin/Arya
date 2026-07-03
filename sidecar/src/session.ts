@@ -1,5 +1,6 @@
-import { stepCountIs, streamText, type ModelMessage } from "ai";
+import { stepCountIs, streamText, type ModelMessage, type Tool } from "ai";
 import { ApprovalBroker } from "./approvals.js";
+import type { McpManager } from "./mcp.js";
 import type { AgentEvent, SessionConfig } from "./protocol.js";
 import { resolveModel } from "./providers.js";
 import { buildTools } from "./tools.js";
@@ -22,6 +23,7 @@ export class Session {
   constructor(
     private config: SessionConfig,
     private emit: (event: AgentEvent) => void,
+    private mcp?: McpManager,
   ) {
     for (const item of config.history ?? []) {
       this.messages.push({ role: item.role, content: item.text });
@@ -52,13 +54,19 @@ export class Session {
     this.abort = new AbortController();
     this.emit({ kind: "turn-started" });
 
-    const tools = buildTools({
+    const nextCallId = () => `approval-${++this.callCounter}`;
+    const builtins = buildTools({
       workspace: this.config.workspace,
       mode: this.config.mode,
       broker: this.broker,
       emit: this.emit,
-      nextCallId: () => `approval-${++this.callCounter}`,
+      nextCallId,
     });
+    let tools: Record<string, Tool> = builtins;
+    if (this.mcp) {
+      const mcpTools = await this.mcp.buildTools(this.broker, this.emit, nextCallId);
+      tools = { ...builtins, ...mcpTools };
+    }
 
     try {
       const result = streamText({
