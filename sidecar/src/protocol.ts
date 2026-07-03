@@ -21,6 +21,14 @@ export interface RpcRequest {
   params?: Record<string, unknown>;
 }
 
+/** Reverse call: sidecar -> shell request for workspace context. */
+export interface ContextSearchRequest {
+  jsonrpc: "2.0";
+  id: number;
+  method: "context.search";
+  params: { query: string; limit: number };
+}
+
 export interface RpcResponse {
   jsonrpc: "2.0";
   id: number | string;

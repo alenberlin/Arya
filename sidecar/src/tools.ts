@@ -16,6 +16,8 @@ export interface ToolContext {
   broker: ApprovalBroker;
   emit: (event: AgentEvent) => void;
   nextCallId: () => string;
+  /** Reverse-RPC into the shell for workspace RAG. */
+  searchWorkspace: (query: string, limit: number) => Promise<string>;
 }
 
 /**
@@ -104,6 +106,17 @@ export function buildTools(ctx: ToolContext) {
             .map((e) => `${e.isDirectory() ? "dir " : "file"} ${e.name}`)
             .join("\n") || "(empty)",
         );
+      },
+    }),
+
+    search_workspace: tool({
+      description:
+        "Semantic search over the user's own notes, meeting transcripts, " +
+        "dictations, and past agent sessions. Use this to ground answers in " +
+        "the user's workspace. Returns matching passages with their source.",
+      inputSchema: z.object({ query: z.string(), limit: z.number().default(6) }),
+      execute: async ({ query, limit }) => {
+        return ctx.searchWorkspace(query, limit ?? 6);
       },
     }),
 

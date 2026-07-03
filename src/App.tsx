@@ -6,8 +6,9 @@ import { McpPanel } from "./agent/McpPanel";
 import { RoutinesPanel } from "./agent/RoutinesPanel";
 import { DictationPanel } from "./dictation/DictationPanel";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
+import { SearchPanel } from "./search/SearchPanel";
 
-type Tab = "notes" | "agent" | "routines" | "mcp" | "dictation";
+type Tab = "notes" | "agent" | "search" | "routines" | "mcp" | "dictation";
 
 /**
  * Main-window shell: Notes workspace (M4) and Dictation panel (M3).
@@ -34,6 +35,9 @@ export function App() {
           <button type="button" onClick={() => setTab("agent")} disabled={tab === "agent"}>
             Agent
           </button>
+          <button type="button" onClick={() => setTab("search")} disabled={tab === "search"}>
+            Search
+          </button>
           <button type="button" onClick={() => setTab("routines")} disabled={tab === "routines"}>
             Routines
           </button>
@@ -49,6 +53,8 @@ export function App() {
         <NotesWorkspace />
       ) : tab === "agent" ? (
         <AgentPanel />
+      ) : tab === "search" ? (
+        <SearchPanel />
       ) : tab === "routines" ? (
         <RoutinesPanel />
       ) : tab === "mcp" ? (

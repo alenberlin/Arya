@@ -59,18 +59,20 @@ pub fn seatbelt_profile(workspace: &Path) -> String {
 
 pub struct Sidecar {
     child: Child,
-    stdin: Mutex<ChildStdin>,
+    stdin: Arc<Mutex<ChildStdin>>,
     next_id: AtomicU64,
     pending: PendingMap,
 }
 
 impl Sidecar {
-    /// Spawns the sidecar. `on_event` receives every `event` notification.
+    /// Spawns the sidecar. `on_event` receives every `event` notification;
+    /// `on_context` answers reverse `context.search` requests (query, limit).
     pub fn spawn(
         script: &Path,
         mode: WriteMode,
         workspace: &Path,
         on_event: impl Fn(Value) + Send + 'static,
+        on_context: impl Fn(String, i64) -> Result<Value, String> + Send + 'static,
     ) -> Result<Self, String> {
         std::fs::create_dir_all(workspace).map_err(|e| e.to_string())?;
         let node = which_node()?;
@@ -93,12 +95,15 @@ impl Sidecar {
         let mut child = command
             .spawn()
             .map_err(|e| format!("failed to spawn sidecar: {e}"))?;
-        let stdin = child.stdin.take().ok_or("sidecar stdin unavailable")?;
+        let stdin = Arc::new(Mutex::new(
+            child.stdin.take().ok_or("sidecar stdin unavailable")?,
+        ));
         let stdout = child.stdout.take().ok_or("sidecar stdout unavailable")?;
         let stderr = child.stderr.take().ok_or("sidecar stderr unavailable")?;
 
         let pending: PendingMap = Arc::new(Mutex::new(HashMap::new()));
         let pending_reader = Arc::clone(&pending);
+        let stdin_reader = Arc::clone(&stdin);
 
         std::thread::Builder::new()
             .name(format!("arya-sidecar-{}-out", mode.as_str()))
@@ -108,7 +113,32 @@ impl Sidecar {
                     let Ok(message) = serde_json::from_str::<Value>(&line) else {
                         continue;
                     };
-                    if let Some(id) = message.get("id").and_then(|v| v.as_u64()) {
+                    let method = message.get("method").and_then(|m| m.as_str());
+                    if method == Some("context.search") {
+                        // Reverse RPC: answer with a rev-id response.
+                        let id = message.get("id").cloned().unwrap_or(Value::Null);
+                        let query = message
+                            .get("params")
+                            .and_then(|p| p.get("query"))
+                            .and_then(|q| q.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let limit = message
+                            .get("params")
+                            .and_then(|p| p.get("limit"))
+                            .and_then(|l| l.as_i64())
+                            .unwrap_or(6);
+                        let response = match on_context(query, limit) {
+                            Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+                            Err(message) => json!({
+                                "jsonrpc": "2.0", "id": id,
+                                "error": { "code": -32001, "message": message }
+                            }),
+                        };
+                        if let Ok(mut stdin) = stdin_reader.lock() {
+                            let _ = writeln!(stdin, "{response}");
+                        }
+                    } else if let Some(id) = message.get("id").and_then(|v| v.as_u64()) {
                         let sender = pending_reader.lock().expect("pending lock").remove(&id);
                         if let Some(sender) = sender {
                             let result = if let Some(error) = message.get("error") {
@@ -122,7 +152,7 @@ impl Sidecar {
                             };
                             let _ = sender.send(result);
                         }
-                    } else if message.get("method").and_then(|m| m.as_str()) == Some("event") {
+                    } else if method == Some("event") {
                         if let Some(params) = message.get("params") {
                             on_event(params.clone());
                         }
@@ -142,7 +172,7 @@ impl Sidecar {
 
         Ok(Self {
             child,
-            stdin: Mutex::new(stdin),
+            stdin,
             next_id: AtomicU64::new(1),
             pending,
         })

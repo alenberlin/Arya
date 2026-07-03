@@ -7,6 +7,7 @@ mod dictation;
 mod meeting_detect;
 mod notes;
 mod paste;
+mod rag;
 mod recording;
 pub mod speech;
 mod tray;
@@ -105,6 +106,9 @@ pub fn run() {
             agent::ecosystem::routine_delete,
             agent::ecosystem::routine_runs,
             agent::ecosystem::agent_branch_session,
+            rag::commands::rag_status,
+            rag::commands::rag_reindex,
+            rag::commands::rag_search,
             dictation::commands::get_dictation_settings,
             dictation::commands::set_dictation_settings,
             dictation::commands::dictation_status,
@@ -312,6 +316,36 @@ mod dev_hooks {
                     .map(|_| session.id)
                 });
                 eprintln!("dev agent: send result {result:?}");
+            });
+        }
+
+        // ARYA_DEV_RAG=<query>: reindex the workspace, then run a timed search.
+        if let Ok(query) = std::env::var("ARYA_DEV_RAG") {
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
+                let start = std::time::Instant::now();
+                let indexed = crate::rag::commands::reindex_blocking_public(&handle, &pool);
+                eprintln!("dev rag: indexed {indexed:?} in {:?}", start.elapsed());
+                let start = std::time::Instant::now();
+                let hits = crate::rag::commands::search_blocking(&pool, &query, 5);
+                let elapsed = start.elapsed();
+                match hits {
+                    Ok(hits) => {
+                        eprintln!("dev rag: search took {elapsed:?}, {} hits", hits.len());
+                        for hit in hits.iter().take(3) {
+                            eprintln!(
+                                "dev rag: [{}:{}] {:.2} {}",
+                                hit.source_kind,
+                                hit.title,
+                                hit.score,
+                                hit.content.chars().take(80).collect::<String>()
+                            );
+                        }
+                    }
+                    Err(e) => eprintln!("dev rag: search failed {e}"),
+                }
             });
         }
 
