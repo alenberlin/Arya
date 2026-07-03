@@ -59,6 +59,8 @@ export function NotesWorkspace() {
   const [systemAudioWarning, setSystemAudioWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activeNoteRef = useRef<string | null>(null);
+  activeNoteRef.current = activeNoteId;
 
   const refreshNotes = useCallback(async () => {
     try {
@@ -90,7 +92,15 @@ export function NotesWorkspace() {
       void refreshNotes();
       if (event.payload.status === "ready") {
         setLivePreview(null);
-        void openNote(event.payload.noteId);
+        // Don't clobber the note the user is actively editing; only auto-open
+        // a freshly-ready note if it isn't the current buffer.
+        if (activeNoteRef.current !== event.payload.noteId) {
+          void openNote(event.payload.noteId);
+        } else {
+          void getNoteTurns(event.payload.noteId)
+            .then(setTurns)
+            .catch(() => {});
+        }
       }
     });
     const unlistenMeeting = listen<{ appName: string }>("meeting:detected", (event) => {
@@ -120,6 +130,7 @@ export function NotesWorkspace() {
       void unlistenPreview.then((fn) => fn());
       void unlistenSystemWarn.then((fn) => fn());
       clearInterval(poll);
+      if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [refreshNotes, openNote]);
 

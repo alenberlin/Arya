@@ -10,9 +10,44 @@
 //! Sub-turn speaker changes are out of scope for v1 (documented limitation);
 //! turn-level labels cover the dominant meeting shape.
 
+use std::sync::{Arc, Mutex, OnceLock};
+
 use sqlx::SqlitePool;
 
 use crate::speech::models::ModelSpec;
+
+/// Process-wide cached speaker-embedding extractor. Loading the 29 MB CAM++
+/// ONNX model costs hundreds of ms, so build it once and reuse it across
+/// notes and enrollments (mirrors the whisper engine cache). The sherpa
+/// extractor is not `Sync`; a `Mutex` serializes the (fast) embed calls.
+type SharedExtractor = Arc<Mutex<sherpa_rs::speaker_id::EmbeddingExtractor>>;
+
+fn extractor_cache() -> &'static Mutex<Option<(String, SharedExtractor)>> {
+    static CACHE: OnceLock<Mutex<Option<(String, SharedExtractor)>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+/// Returns the cached extractor for `model_path`, loading it on first use.
+pub fn get_or_load_extractor(model_path: &str) -> Result<SharedExtractor, String> {
+    {
+        let guard = extractor_cache().lock().expect("extractor cache lock");
+        if let Some((path, extractor)) = guard.as_ref() {
+            if path == model_path {
+                return Ok(Arc::clone(extractor));
+            }
+        }
+    }
+    let extractor =
+        sherpa_rs::speaker_id::EmbeddingExtractor::new(sherpa_rs::speaker_id::ExtractorConfig {
+            model: model_path.to_string(),
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())?;
+    let shared = Arc::new(Mutex::new(extractor));
+    *extractor_cache().lock().expect("extractor cache lock") =
+        Some((model_path.to_string(), Arc::clone(&shared)));
+    Ok(shared)
+}
 
 /// Pinned speaker-embedding model (sha256 computed from the official
 /// k2-fsa/sherpa-onnx release artifact).

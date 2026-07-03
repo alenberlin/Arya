@@ -34,8 +34,11 @@ pub fn account_begin_signin(app: tauri::AppHandle) -> Result<(), String> {
     super::signin_flow::begin(app, &url)
 }
 
-/// Dev/local: store a token directly (used by the loopback callback and by
-/// tests). No-op-safe.
+/// Dev-only: store a token directly (tests / local scripting). Gated out of
+/// release builds so a content-injection in the webview can't hijack the
+/// account by calling it; the real sign-in path is the loopback callback in
+/// signin_flow, which validates a CSRF `state`.
+#[cfg(debug_assertions)]
 #[tauri::command]
 pub fn account_set_token(token: String) -> Result<(), String> {
     tokens::store(&token)

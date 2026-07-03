@@ -58,15 +58,57 @@ pub struct Receipt {
     pub replay: bool,
 }
 
-/// Reserves an estimated amount for an action. (Balance enforcement joins in
-/// M12 with the wallet; the hold discipline and shapes are fixed now.)
+/// A denied authorization, distinct from an infrastructure error so the
+/// caller can map it to 402 rather than 503.
+#[derive(Debug)]
+pub enum AuthorizeError {
+    InsufficientCredits { remaining: i64, estimate: u64 },
+    Db(sqlx::Error),
+}
+
+impl From<sqlx::Error> for AuthorizeError {
+    fn from(e: sqlx::Error) -> Self {
+        AuthorizeError::Db(e)
+    }
+}
+
+/// Reserves an estimated amount, enforcing the balance transactionally so
+/// concurrent requests can't collectively overspend (no check-then-act
+/// TOCTOU). `budget_credits` is the wallet's spendable total (included +
+/// top-up); `None` means the wallet does not enforce a balance (local mode).
 pub async fn authorize(
     pool: &SqlitePool,
     user_id: &str,
     action: &str,
     estimate_credits: u64,
     ttl_seconds: i64,
-) -> Result<Hold, sqlx::Error> {
+    budget_credits: Option<i64>,
+) -> Result<Hold, AuthorizeError> {
+    let mut tx = pool.begin().await?;
+    if let Some(budget) = budget_credits {
+        // Spendable = budget - settled charges - open (unexpired) holds.
+        let settled = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(credits), 0) FROM charges WHERE user_id = ?1",
+        )
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let open_holds = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(cap_credits), 0) FROM holds
+             WHERE user_id = ?1 AND settled = 0
+               AND expires_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+        )
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let remaining = budget - settled - open_holds;
+        if remaining < estimate_credits as i64 {
+            return Err(AuthorizeError::InsufficientCredits {
+                remaining,
+                estimate: estimate_credits,
+            });
+        }
+    }
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query(
         "INSERT INTO holds (id, user_id, action, cap_credits, expires_at)
@@ -77,12 +119,39 @@ pub async fn authorize(
     .bind(action)
     .bind(estimate_credits as i64)
     .bind(ttl_seconds)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(Hold {
         id,
         cap_credits: estimate_credits,
     })
+}
+
+/// Looks up an already-settled charge by idempotency key, if any. Used to
+/// short-circuit a duplicate request BEFORE calling the upstream provider, so
+/// a retry never pays the provider twice.
+pub async fn existing_charge(
+    pool: &SqlitePool,
+    idempotency_key: &str,
+) -> Result<Option<u64>, sqlx::Error> {
+    let found =
+        sqlx::query_scalar::<_, i64>("SELECT credits FROM charges WHERE idempotency_key = ?1")
+            .bind(idempotency_key)
+            .fetch_optional(pool)
+            .await?;
+    Ok(found.map(|c| c as u64))
+}
+
+/// Releases expired, unsettled holds so they stop counting against balance.
+pub async fn reap_expired_holds(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "DELETE FROM holds WHERE settled = 0
+         AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 /// Settles actual usage exactly once. A repeated idempotency key returns the
@@ -96,6 +165,10 @@ pub async fn settle(
     idempotency_key: &str,
 ) -> Result<Receipt, sqlx::Error> {
     let clamped = actual_credits.min(hold.cap_credits.max(1));
+    // Charge insert and hold settle in one transaction: a crash between them
+    // must not leave a charge with an un-settled hold (which would distort
+    // the balance math above).
+    let mut tx = pool.begin().await?;
     let inserted = sqlx::query(
         "INSERT OR IGNORE INTO charges (idempotency_key, user_id, action, credits)
          VALUES (?1, ?2, ?3, ?4)",
@@ -104,16 +177,17 @@ pub async fn settle(
     .bind(user_id)
     .bind(action)
     .bind(clamped as i64)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
 
     sqlx::query("UPDATE holds SET settled = 1 WHERE id = ?1")
         .bind(&hold.id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
     if inserted == 1 {
+        tx.commit().await?;
         Ok(Receipt {
             credits: clamped,
             replay: false,
@@ -122,8 +196,9 @@ pub async fn settle(
         let original =
             sqlx::query_scalar::<_, i64>("SELECT credits FROM charges WHERE idempotency_key = ?1")
                 .bind(idempotency_key)
-                .fetch_one(pool)
+                .fetch_one(&mut *tx)
                 .await?;
+        tx.commit().await?;
         Ok(Receipt {
             credits: original as u64,
             replay: true,
@@ -163,7 +238,9 @@ mod tests {
     #[tokio::test]
     async fn settle_is_exactly_once_under_forced_retry() {
         let pool = pool().await;
-        let hold = authorize(&pool, "u1", "agent_chat", 500, 60).await.unwrap();
+        let hold = authorize(&pool, "u1", "agent_chat", 500, 60, None)
+            .await
+            .unwrap();
 
         let first = settle(&pool, &hold, "u1", "agent_chat", 123, "key-1")
             .await
@@ -185,11 +262,49 @@ mod tests {
     #[tokio::test]
     async fn settle_clamps_to_hold_cap() {
         let pool = pool().await;
-        let hold = authorize(&pool, "u1", "agent_chat", 100, 60).await.unwrap();
+        let hold = authorize(&pool, "u1", "agent_chat", 100, 60, None)
+            .await
+            .unwrap();
         let receipt = settle(&pool, &hold, "u1", "agent_chat", 5_000, "key-2")
             .await
             .unwrap();
         assert_eq!(receipt.credits, 100);
+    }
+
+    #[tokio::test]
+    async fn authorize_rejects_when_budget_exhausted() {
+        let pool = pool().await;
+        // Budget 1000, spend 900, then a 200-credit estimate must be denied.
+        let hold = authorize(&pool, "u1", "agent_chat", 900, 60, Some(1000))
+            .await
+            .unwrap();
+        settle(&pool, &hold, "u1", "agent_chat", 900, "k1")
+            .await
+            .unwrap();
+        let denied = authorize(&pool, "u1", "agent_chat", 200, 60, Some(1000)).await;
+        assert!(matches!(
+            denied,
+            Err(AuthorizeError::InsufficientCredits { .. })
+        ));
+        // A small estimate within remaining still passes.
+        assert!(authorize(&pool, "u1", "agent_chat", 50, 60, Some(1000))
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn concurrent_holds_count_against_balance() {
+        let pool = pool().await;
+        // Two 600-credit holds against a 1000 budget: the second is denied
+        // because open holds count, closing the overspend TOCTOU.
+        let _h1 = authorize(&pool, "u1", "agent_chat", 600, 60, Some(1000))
+            .await
+            .unwrap();
+        let second = authorize(&pool, "u1", "agent_chat", 600, 60, Some(1000)).await;
+        assert!(matches!(
+            second,
+            Err(AuthorizeError::InsufficientCredits { .. })
+        ));
     }
 
     #[test]

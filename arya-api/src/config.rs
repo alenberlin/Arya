@@ -13,8 +13,15 @@ pub struct Config {
 }
 
 pub enum AuthMode {
-    Local { token: String },
-    Clerk { issuer: String, jwks_url: String },
+    Local {
+        token: String,
+    },
+    Clerk {
+        issuer: String,
+        jwks_url: String,
+        /// Expected `aud`; only tokens for this audience are accepted.
+        audience: String,
+    },
 }
 
 impl Config {
@@ -24,6 +31,8 @@ impl Config {
                 issuer: std::env::var("CLERK_ISSUER").expect("CLERK_ISSUER required in clerk mode"),
                 jwks_url: std::env::var("CLERK_JWKS_URL")
                     .expect("CLERK_JWKS_URL required in clerk mode"),
+                audience: std::env::var("CLERK_AUDIENCE")
+                    .expect("CLERK_AUDIENCE required in clerk mode"),
             },
             _ => AuthMode::Local {
                 token: std::env::var("ARYA_API_LOCAL_TOKEN")
@@ -43,6 +52,27 @@ impl Config {
             ollama_url: std::env::var("ARYA_OLLAMA_URL")
                 .unwrap_or_else(|_| "http://127.0.0.1:11434".into()),
         }
+    }
+
+    /// The local ollama upstream must be a loopback address: the proxy
+    /// forwards a client-controlled body to it, so a routable URL would be an
+    /// SSRF pivot into the deploy's network. Called at startup.
+    pub fn validate(&self) -> Result<(), String> {
+        let host = self
+            .ollama_url
+            .strip_prefix("http://")
+            .or_else(|| self.ollama_url.strip_prefix("https://"))
+            .unwrap_or(&self.ollama_url);
+        let host = host.split([':', '/']).next().unwrap_or("");
+        let is_loopback =
+            host == "localhost" || host == "127.0.0.1" || host == "::1" || host.starts_with("127.");
+        if !is_loopback {
+            return Err(format!(
+                "ARYA_OLLAMA_URL must be loopback (got '{}'); a routable ollama upstream is an SSRF risk",
+                self.ollama_url
+            ));
+        }
+        Ok(())
     }
 
     pub fn auth_mode_label(&self) -> &'static str {

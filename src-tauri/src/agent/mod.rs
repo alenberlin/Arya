@@ -6,7 +6,7 @@ pub mod ecosystem;
 pub mod sidecar;
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -18,7 +18,7 @@ use sidecar::{Sidecar, WriteMode};
 /// accumulation buffers used to persist assistant turns.
 #[derive(Default)]
 pub struct AgentRuntime {
-    sidecars: Mutex<HashMap<WriteMode, Sidecar>>,
+    sidecars: Mutex<HashMap<WriteMode, Arc<Sidecar>>>,
     accumulators: Mutex<HashMap<String, TurnAccumulator>>,
 }
 
@@ -30,20 +30,25 @@ struct TurnAccumulator {
 }
 
 impl AgentRuntime {
-    /// Returns (spawning on demand) the sidecar for `mode`.
-    pub fn ensure(&self, app: &AppHandle, mode: WriteMode) -> Result<(), String> {
-        let mut guard = self.sidecars.lock().expect("sidecars lock");
-        if let Some(existing) = guard.get_mut(&mode) {
-            if existing.is_alive() {
-                return Ok(());
+    /// Returns (spawning on demand) an `Arc` to the sidecar for `mode`. The
+    /// map lock is held only long enough to look up or insert; the caller
+    /// makes the blocking round-trip against the returned handle with no lock
+    /// held, so cancel/steer on the same mode never wait behind a long call.
+    fn get_or_spawn(&self, app: &AppHandle, mode: WriteMode) -> Result<Arc<Sidecar>, String> {
+        {
+            let mut guard = self.sidecars.lock().expect("sidecars lock");
+            if let Some(existing) = guard.get(&mode) {
+                if existing.is_alive() {
+                    return Ok(Arc::clone(existing));
+                }
+                guard.remove(&mode);
             }
-            guard.remove(&mode);
         }
         let script = sidecar::sidecar_script()?;
         let workspace = agent_workspace(app)?;
         let app_for_events = app.clone();
         let app_for_context = app.clone();
-        let sidecar = Sidecar::spawn(
+        let sidecar = Arc::new(Sidecar::spawn(
             &script,
             mode,
             &workspace,
@@ -56,9 +61,17 @@ impl AgentRuntime {
                 let hits = crate::rag::commands::search_blocking(&pool, &query, limit as usize)?;
                 Ok(serde_json::json!({ "hits": hits }))
             },
-        )?;
-        guard.insert(mode, sidecar);
-        Ok(())
+        )?);
+        let mut guard = self.sidecars.lock().expect("sidecars lock");
+        // Another thread may have spawned concurrently; keep whichever is in
+        // the map so both callers talk to the same process.
+        let entry = guard.entry(mode).or_insert_with(|| Arc::clone(&sidecar));
+        Ok(Arc::clone(entry))
+    }
+
+    /// Spawns the sidecar for `mode` if it isn't already running.
+    pub fn ensure(&self, app: &AppHandle, mode: WriteMode) -> Result<(), String> {
+        self.get_or_spawn(app, mode).map(|_| ())
     }
 
     pub fn request(
@@ -68,9 +81,9 @@ impl AgentRuntime {
         method: &str,
         params: Value,
     ) -> Result<Value, String> {
-        self.ensure(app, mode)?;
-        let guard = self.sidecars.lock().expect("sidecars lock");
-        let sidecar = guard.get(&mode).ok_or("sidecar missing after ensure")?;
+        let sidecar = self.get_or_spawn(app, mode)?;
+        // No map lock held here — the blocking round-trip can't serialize
+        // other commands (cancel/steer) for this mode.
         sidecar.request(method, params)
     }
 }

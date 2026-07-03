@@ -39,26 +39,34 @@ impl WriteMode {
 }
 
 /// Seatbelt profile: everything allowed except writes, which are confined to
-/// the agent workspace, temp locations, and devices node needs.
+/// the agent workspace and the few device nodes node needs. We deliberately
+/// do NOT grant the shared temp roots (`/tmp`, `/private/var/folders`): those
+/// are world/other-app writable and would let a "sandboxed" agent drop files
+/// another process consumes. node's scratch is redirected into the workspace
+/// via TMPDIR (see spawn), so it needs nothing outside.
 pub fn seatbelt_profile(workspace: &Path) -> String {
+    // The kernel matches subpaths against the REAL path, so canonicalize
+    // (resolves symlinks like /var -> /private/var on macOS); otherwise a
+    // symlinked workspace ancestor makes the allow rule silently miss.
+    let canonical = std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf());
     format!(
         r#"(version 1)
 (allow default)
 (deny file-write*)
 (allow file-write*
     (subpath "{workspace}")
-    (subpath "/private/tmp")
-    (subpath "/private/var/folders")
-    (subpath "/dev")
     (literal "/dev/null")
-    (literal "/dev/urandom"))
+    (literal "/dev/urandom")
+    (literal "/dev/dtracehelper")
+    (literal "/dev/tty"))
 "#,
-        workspace = workspace.display()
+        workspace = canonical.display()
     )
 }
 
 pub struct Sidecar {
-    child: Child,
+    // Behind a Mutex so liveness checks and kills work through a shared Arc.
+    child: Mutex<Child>,
     stdin: Arc<Mutex<ChildStdin>>,
     next_id: AtomicU64,
     pending: PendingMap,
@@ -77,6 +85,11 @@ impl Sidecar {
         std::fs::create_dir_all(workspace).map_err(|e| e.to_string())?;
         let node = which_node()?;
 
+        // Redirect node's scratch into the jailed workspace so it never needs
+        // write access to the shared temp roots.
+        let tmp_dir = workspace.join(".tmp");
+        std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+
         let mut command = if mode == WriteMode::Sandboxed && cfg!(target_os = "macos") {
             let mut c = Command::new("/usr/bin/sandbox-exec");
             c.arg("-p").arg(seatbelt_profile(workspace)).arg(&node);
@@ -88,6 +101,9 @@ impl Sidecar {
             .arg(script)
             .current_dir(workspace)
             .env("ARYA_MODE", mode.as_str())
+            .env("TMPDIR", &tmp_dir)
+            .env("TMP", &tmp_dir)
+            .env("TEMP", &tmp_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -171,7 +187,7 @@ impl Sidecar {
             .map_err(|e| e.to_string())?;
 
         Ok(Self {
-            child,
+            child: Mutex::new(child),
             stdin,
             next_id: AtomicU64::new(1),
             pending,
@@ -192,20 +208,17 @@ impl Sidecar {
             .map_err(|_| "sidecar did not respond".to_string())?
     }
 
-    pub fn is_alive(&mut self) -> bool {
-        matches!(self.child.try_wait(), Ok(None))
-    }
-
-    pub fn shutdown(mut self) {
-        let _ = self.request("runtime.shutdown", json!({}));
-        std::thread::sleep(std::time::Duration::from_millis(200));
-        let _ = self.child.kill();
+    /// Liveness via `&self` so it works through a shared `Arc`.
+    pub fn is_alive(&self) -> bool {
+        matches!(self.child.lock().expect("child lock").try_wait(), Ok(None))
     }
 }
 
 impl Drop for Sidecar {
     fn drop(&mut self) {
-        let _ = self.child.kill();
+        if let Ok(mut child) = self.child.lock() {
+            let _ = child.kill();
+        }
     }
 }
 
@@ -295,6 +308,20 @@ mod tests {
             .expect("sandbox-exec runs");
         assert!(status_inside.success(), "write INSIDE the jail must work");
         assert!(inside.exists());
+
+        // The shared temp roots must NOT be writable (regression guard for
+        // the sandbox-escape finding): /tmp is world-shared.
+        let tmp_escape =
+            std::path::PathBuf::from(format!("/tmp/arya-jail-tmp-{}.txt", uuid::Uuid::new_v4()));
+        let status_tmp = Command::new("/usr/bin/sandbox-exec")
+            .arg("-p")
+            .arg(&profile)
+            .arg("/usr/bin/touch")
+            .arg(&tmp_escape)
+            .status()
+            .expect("sandbox-exec runs");
+        assert!(!status_tmp.success(), "write to /tmp must be denied");
+        assert!(!tmp_escape.exists(), "no file may appear in /tmp");
 
         std::fs::remove_dir_all(&workspace).unwrap();
     }

@@ -362,35 +362,54 @@ pub async fn recover_recording_inner(
     pool: &SqlitePool,
     session_id: &str,
 ) -> Result<String, String> {
-    let (note_id, partial_path) = sqlx::query_as::<_, (String, String)>(
-        "SELECT s.note_id, a.path FROM recording_sessions s
+    // A meeting-mode session has two partial artifacts (microphone, system).
+    // Recover every one that carries data; drop only silent/empty tracks.
+    let rows = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT s.note_id, a.source, a.path FROM recording_sessions s
          JOIN audio_artifacts a ON a.session_id = s.id AND a.status = 'partial'
          WHERE s.id = ?1",
     )
     .bind(session_id)
-    .fetch_one(pool)
+    .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())?;
+    let note_id = rows
+        .first()
+        .map(|(note_id, _, _)| note_id.clone())
+        .ok_or_else(|| "no partial artifacts for session".to_string())?;
 
-    let partial = std::path::PathBuf::from(&partial_path);
-    wav_file::repair_header(&partial).map_err(|e| e.to_string())?;
-    let final_path = partial.with_file_name("microphone.wav");
-    std::fs::rename(&partial, &final_path).map_err(|e| e.to_string())?;
-
-    sqlx::query(
-        "UPDATE audio_artifacts SET path = ?2, status = 'final', size_bytes = ?3
-         WHERE session_id = ?1 AND source = 'microphone'",
-    )
-    .bind(session_id)
-    .bind(final_path.to_string_lossy().to_string())
-    .bind(
-        std::fs::metadata(&final_path)
-            .map(|m| m.len() as i64)
-            .unwrap_or(0),
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
+    let mut recovered_any = false;
+    for (_, source, partial_path) in &rows {
+        let partial = std::path::PathBuf::from(partial_path);
+        // An empty/header-only track (repair returns Empty) is skipped, not
+        // fatal, so one silent source can't block recovering the other.
+        if wav_file::repair_header(&partial).is_err() {
+            continue;
+        }
+        let final_path = partial.with_file_name(format!("{source}.wav"));
+        if std::fs::rename(&partial, &final_path).is_err() {
+            continue;
+        }
+        recovered_any = true;
+        sqlx::query(
+            "UPDATE audio_artifacts SET path = ?3, status = 'final', size_bytes = ?4
+             WHERE session_id = ?1 AND source = ?2",
+        )
+        .bind(session_id)
+        .bind(source)
+        .bind(final_path.to_string_lossy().to_string())
+        .bind(
+            std::fs::metadata(&final_path)
+                .map(|m| m.len() as i64)
+                .unwrap_or(0),
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    if !recovered_any {
+        return Err("no recoverable audio in this session".to_string());
+    }
     sqlx::query("UPDATE recording_sessions SET status = 'finished', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1")
         .bind(session_id)
         .execute(pool)
@@ -510,14 +529,10 @@ pub fn enroll_blocking(
             &models_dir,
         ))
         .map_err(|e| e.to_string())?;
-        let mut extractor = sherpa_rs::speaker_id::EmbeddingExtractor::new(
-            sherpa_rs::speaker_id::ExtractorConfig {
-                model: model_path.to_string_lossy().to_string(),
-                ..Default::default()
-            },
-        )
-        .map_err(|e| e.to_string())?;
+        let extractor = super::diarize::get_or_load_extractor(&model_path.to_string_lossy())?;
         let embedding = extractor
+            .lock()
+            .expect("extractor lock")
             .compute_speaker_embedding(clip.samples, crate::speech::AudioClip::SAMPLE_RATE)
             .map_err(|e| e.to_string())?;
         let blob = super::diarize::f32_to_blob(&embedding);

@@ -16,6 +16,7 @@ pub mod proxy;
 
 use std::sync::Arc;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post};
 use axum::Router;
 
@@ -38,6 +39,8 @@ pub fn build_app(state: AppState) -> Router {
         .route("/v1/models", get(catalog::list_models))
         .route("/v1/account", get(proxy::account))
         .route("/v1/{provider}/{*path}", post(proxy::forward))
+        // Cap request bodies so an authenticated client can't exhaust memory.
+        .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(state)
 }
 
