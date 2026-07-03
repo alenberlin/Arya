@@ -79,10 +79,12 @@ checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 name = "arya"
 version = "0.1.0"
 dependencies = [
+ "core-foundation",
  "core-graphics",
  "cpal",
  "futures-util",
  "hound",
+ "libc",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",

@@ -54,9 +54,28 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> 
     let turns = if existing_turns.is_empty() {
         set_status_blocking(pool, note_id, "transcribing", None);
         emit(app, note_id, "transcribing", None);
-        let wav_path = latest_final_artifact(pool, note_id)?
-            .ok_or_else(|| "no audio artifact for note".to_string())?;
-        let turns = transcribe_artifact(app, Path::new(&wav_path))?;
+        let artifacts = final_artifacts(pool, note_id)?;
+        if artifacts.is_empty() {
+            return Err("no audio artifact for note".to_string());
+        }
+        let mut turns: Vec<TurnText> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+        for (source, path) in &artifacts {
+            match transcribe_artifact(app, Path::new(path), source) {
+                Ok(mut source_turns) => turns.append(&mut source_turns),
+                Err(message) => {
+                    // A silent or unreadable source (e.g. the system track
+                    // when the TCC grant is missing) must not fail the note
+                    // as long as another source produced speech.
+                    eprintln!("processing: source {source} skipped: {message}");
+                    errors.push(format!("{source}: {message}"));
+                }
+            }
+        }
+        if turns.is_empty() {
+            return Err(errors.join("; "));
+        }
+        turns.sort_by_key(|t| t.start_ms);
         store_turns(pool, note_id, &turns)?;
         turns
     } else {
@@ -92,11 +111,15 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> 
     Ok(())
 }
 
-fn transcribe_artifact(app: &AppHandle, wav_path: &Path) -> Result<Vec<TurnText>, String> {
+fn transcribe_artifact(
+    app: &AppHandle,
+    wav_path: &Path,
+    source: &str,
+) -> Result<Vec<TurnText>, String> {
     let clip = wav_file::load_normalized(wav_path).map_err(|e| e.to_string())?;
     let spans = detect_turns(&clip, &TurnConfig::default());
     if spans.is_empty() {
-        return Err("no speech detected in the recording".to_string());
+        return Err("no speech detected".to_string());
     }
 
     let model_path = default_model_path(app)?;
@@ -127,6 +150,7 @@ fn transcribe_artifact(app: &AppHandle, wav_path: &Path) -> Result<Vec<TurnText>
             turns.push(TurnText {
                 start_ms: span.start_ms,
                 end_ms: span.end_ms,
+                source: source.to_string(),
                 text,
             });
         }
@@ -137,7 +161,7 @@ fn transcribe_artifact(app: &AppHandle, wav_path: &Path) -> Result<Vec<TurnText>
     Ok(turns)
 }
 
-fn default_model_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+pub fn default_model_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     let spec = models::find("whisper-base.en").expect("catalog has base.en");
     let models_dir = app
         .path()
@@ -166,16 +190,19 @@ pub fn set_status_blocking(pool: &SqlitePool, note_id: &str, status: &str, error
     });
 }
 
-fn latest_final_artifact(pool: &SqlitePool, note_id: &str) -> Result<Option<String>, String> {
+fn final_artifacts(pool: &SqlitePool, note_id: &str) -> Result<Vec<(String, String)>, String> {
     tauri::async_runtime::block_on(async {
-        sqlx::query_scalar::<_, String>(
-            "SELECT a.path FROM audio_artifacts a
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT a.source, a.path FROM audio_artifacts a
              JOIN recording_sessions s ON s.id = a.session_id
              WHERE s.note_id = ?1 AND a.status = 'final'
-             ORDER BY a.created_at DESC LIMIT 1",
+               AND s.id = (SELECT id FROM recording_sessions
+                           WHERE note_id = ?1 AND status = 'finished'
+                           ORDER BY started_at DESC LIMIT 1)
+             ORDER BY a.source",
         )
         .bind(note_id)
-        .fetch_optional(pool)
+        .fetch_all(pool)
         .await
         .map_err(|e| e.to_string())
     })
@@ -183,17 +210,18 @@ fn latest_final_artifact(pool: &SqlitePool, note_id: &str) -> Result<Option<Stri
 
 fn fetch_turn_texts(pool: &SqlitePool, note_id: &str) -> Result<Vec<TurnText>, String> {
     tauri::async_runtime::block_on(async {
-        sqlx::query_as::<_, (i64, i64, String)>(
-            "SELECT start_ms, end_ms, text FROM transcript_turns WHERE note_id = ?1 ORDER BY turn_index",
+        sqlx::query_as::<_, (i64, i64, String, String)>(
+            "SELECT start_ms, end_ms, source, text FROM transcript_turns WHERE note_id = ?1 ORDER BY turn_index",
         )
         .bind(note_id)
         .fetch_all(pool)
         .await
         .map(|rows| {
             rows.into_iter()
-                .map(|(start_ms, end_ms, text)| TurnText {
+                .map(|(start_ms, end_ms, source, text)| TurnText {
                     start_ms: start_ms as u64,
                     end_ms: end_ms as u64,
+                    source,
                     text,
                 })
                 .collect()
@@ -207,10 +235,11 @@ fn store_turns(pool: &SqlitePool, note_id: &str, turns: &[TurnText]) -> Result<(
         for (index, turn) in turns.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO transcript_turns (id, note_id, source, turn_index, start_ms, end_ms, text)
-                 VALUES (?1, ?2, 'microphone', ?3, ?4, ?5, ?6)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )
             .bind(uuid::Uuid::new_v4().to_string())
             .bind(note_id)
+            .bind(&turn.source)
             .bind(index as i64)
             .bind(turn.start_ms as i64)
             .bind(turn.end_ms as i64)

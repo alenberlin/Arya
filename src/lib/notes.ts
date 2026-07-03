@@ -80,8 +80,12 @@ export const deleteFolder = (id: string) => invoke<void>("delete_folder", { id }
 export const assignNoteToFolder = (noteId: string, folderId: string | null) =>
   invoke<void>("assign_note_to_folder", { noteId, folderId });
 
-export const startRecording = (noteId?: string) =>
-  invoke<string>("start_recording", { noteId: noteId ?? null });
+export type SourceMode = "microphone-only" | "microphone-and-system";
+export const startRecording = (noteId?: string, sourceMode?: SourceMode) =>
+  invoke<string>("start_recording", {
+    noteId: noteId ?? null,
+    sourceMode: sourceMode ?? null,
+  });
 export const pauseRecording = () => invoke<void>("pause_recording");
 export const resumeRecording = () => invoke<void>("resume_recording");
 export const finishRecording = () => invoke<string>("finish_recording");

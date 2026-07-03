@@ -53,6 +53,9 @@ export function NotesWorkspace() {
     elapsedMs: 0,
   });
   const [recoverables, setRecoverables] = useState<RecoverableRecording[]>([]);
+  const [meeting, setMeeting] = useState<{ appName: string } | null>(null);
+  const [livePreview, setLivePreview] = useState<string | null>(null);
+  const [systemAudioWarning, setSystemAudioWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -85,9 +88,20 @@ export function NotesWorkspace() {
     const unlisten = listen<{ noteId: string; status: string }>("note:processing", (event) => {
       void refreshNotes();
       if (event.payload.status === "ready") {
+        setLivePreview(null);
         void openNote(event.payload.noteId);
       }
     });
+    const unlistenMeeting = listen<{ appName: string }>("meeting:detected", (event) => {
+      setMeeting(event.payload);
+    });
+    const unlistenCleared = listen("meeting:cleared", () => setMeeting(null));
+    const unlistenPreview = listen<{ noteId: string; text: string }>("note:live-preview", (event) =>
+      setLivePreview(event.payload.text),
+    );
+    const unlistenSystemWarn = listen<string>("recording:system-audio-unavailable", (event) =>
+      setSystemAudioWarning(event.payload),
+    );
     const poll = setInterval(() => {
       void recordingStatus()
         .then((s) => setRecorder({ state: s.state, elapsedMs: s.elapsedMs }))
@@ -95,6 +109,10 @@ export function NotesWorkspace() {
     }, 500);
     return () => {
       void unlisten.then((fn) => fn());
+      void unlistenMeeting.then((fn) => fn());
+      void unlistenCleared.then((fn) => fn());
+      void unlistenPreview.then((fn) => fn());
+      void unlistenSystemWarn.then((fn) => fn());
       clearInterval(poll);
     };
   }, [refreshNotes, openNote]);
@@ -124,10 +142,13 @@ export function NotesWorkspace() {
     }, 600);
   };
 
-  const onRecord = async () => {
+  const onRecord = async (sourceMode?: "microphone-only" | "microphone-and-system") => {
     try {
       if (recorder.state === "idle") {
-        const noteId = await startRecording(activeNoteId ?? undefined);
+        setSystemAudioWarning(null);
+        setLivePreview(null);
+        const noteId = await startRecording(activeNoteId ?? undefined, sourceMode);
+        setMeeting(null);
         await refreshNotes();
         await openNote(noteId);
       } else {
@@ -145,9 +166,19 @@ export function NotesWorkspace() {
     <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
       <aside style={{ width: 220, flexShrink: 0 }}>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button type="button" onClick={onRecord} aria-label="record">
+          <button type="button" onClick={() => void onRecord()} aria-label="record">
             {recorder.state === "idle" ? "● Record" : `■ Stop ${formatElapsed(recorder.elapsedMs)}`}
           </button>
+          {recorder.state === "idle" ? (
+            <button
+              type="button"
+              aria-label="record meeting"
+              title="Record microphone plus system audio"
+              onClick={() => void onRecord("microphone-and-system")}
+            >
+              ● Meeting
+            </button>
+          ) : null}
           {recorder.state === "recording" ? (
             <button type="button" onClick={() => void pauseRecording()}>
               Pause
@@ -159,6 +190,25 @@ export function NotesWorkspace() {
             </button>
           ) : null}
         </div>
+
+        {meeting && recorder.state === "idle" ? (
+          <div role="status" style={{ margin: "8px 0", padding: 8, background: "#dbeafe" }}>
+            <strong>Meeting detected in {meeting.appName}.</strong>{" "}
+            <button type="button" onClick={() => void onRecord("microphone-and-system")}>
+              Record meeting
+            </button>
+            <button type="button" onClick={() => setMeeting(null)}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
+
+        {systemAudioWarning ? (
+          <div role="alert" style={{ margin: "8px 0", padding: 8, background: "#fee2e2" }}>
+            System audio unavailable ({systemAudioWarning}); recording microphone only. Grant
+            "System Audio Recording" in System Settings for meeting capture.
+          </div>
+        ) : null}
 
         {recoverables.length > 0 ? (
           <div role="alert" style={{ margin: "8px 0", padding: 8, background: "#fef3c7" }}>
@@ -269,6 +319,11 @@ export function NotesWorkspace() {
             ) : null}
             {["transcribing", "generating", "recording"].includes(detail.processingStatus) ? (
               <p>{STATUS_LABEL[detail.processingStatus]}</p>
+            ) : null}
+            {recorder.state !== "idle" && livePreview ? (
+              <blockquote aria-label="live preview" style={{ color: "#6b7280" }}>
+                {livePreview}
+              </blockquote>
             ) : null}
             <label>
               Manual notes
