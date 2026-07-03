@@ -1,0 +1,55 @@
+/* Design tokens. Single source of truth for color, space, radius, type.
+   Light values are the default; [data-theme="dark"] overrides. */
+:root {
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+
+  --text-sm: 12px;
+  --text-base: 14px;
+  --text-lg: 18px;
+  --text-xl: 24px;
+
+  /* Semantic colors (light). */
+  --bg: #ffffff;
+  --bg-subtle: #f6f7f9;
+  --bg-elevated: #ffffff;
+  --surface: #f1f3f5;
+  --border: #e3e6ea;
+  --text: #1a1d21;
+  --text-muted: #62697a;
+  --accent: #c25a33;
+  --accent-contrast: #ffffff;
+  --danger: #dc2626;
+  --success: #16a34a;
+  --warning-bg: #fef3c7;
+  --info-bg: #dbeafe;
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="dark"] {
+  --bg: #17181b;
+  --bg-subtle: #1e2024;
+  --bg-elevated: #212429;
+  --surface: #262a30;
+  --border: #33383f;
+  --text: #f2f3f5;
+  --text-muted: #9aa1ad;
+  --accent: #e2764f;
+  --accent-contrast: #17181b;
+  --danger: #f87171;
+  --success: #4ade80;
+  --warning-bg: #3b3016;
+  --info-bg: #1c2b40;
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}

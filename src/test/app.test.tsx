@@ -90,6 +90,8 @@ describe("app shell", () => {
     backend.notes = [];
     backend.recorder = { state: "idle", elapsedMs: 0 };
     backend.recovered = [];
+    // Skip first-run onboarding for the shell tests.
+    localStorage.setItem("arya-onboarded", "true");
   });
 
   it("shows the brand name and the notes workspace", async () => {
