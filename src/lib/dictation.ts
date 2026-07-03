@@ -49,3 +49,14 @@ export const createDictionaryEntry = (pattern: string, replacement: string) =>
   invoke<DictionaryItem>("create_dictionary_entry", { pattern, replacement });
 export const deleteDictionaryEntry = (id: string) =>
   invoke<void>("delete_dictionary_entry", { id });
+
+export interface SpeakerProfile {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
+export const enrollSpeakerProfile = (name: string, seconds?: number) =>
+  invoke<SpeakerProfile>("enroll_speaker_profile", { name, seconds: seconds ?? null });
+export const listSpeakerProfiles = () => invoke<SpeakerProfile[]>("list_speaker_profiles");
+export const deleteSpeakerProfile = (id: string) => invoke<void>("delete_speaker_profile", { id });

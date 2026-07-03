@@ -34,6 +34,7 @@ pub struct NoteDetail {
     pub processing_status: String,
     pub processing_error: Option<String>,
     pub folder_id: Option<String>,
+    pub calendar_context: Option<String>,
     pub created_at: String,
 }
 
@@ -44,6 +45,7 @@ pub struct TranscriptTurn {
     pub source: String,
     pub start_ms: i64,
     pub end_ms: i64,
+    pub speaker: Option<String>,
     pub text: String,
 }
 
@@ -91,7 +93,7 @@ pub async fn list_notes(pool: State<'_, SqlitePool>) -> Result<Vec<NoteSummary>,
 pub async fn get_note(pool: State<'_, SqlitePool>, id: String) -> Result<NoteDetail, String> {
     sqlx::query_as::<_, NoteDetail>(
         "SELECT id, title, body_md, manual_notes, processing_status, processing_error,
-                folder_id, created_at
+                folder_id, calendar_context, created_at
          FROM notes WHERE id = ?1",
     )
     .bind(id)
@@ -106,7 +108,7 @@ pub async fn get_note_turns(
     id: String,
 ) -> Result<Vec<TranscriptTurn>, String> {
     sqlx::query_as::<_, TranscriptTurn>(
-        "SELECT turn_index, source, start_ms, end_ms, text
+        "SELECT turn_index, source, start_ms, end_ms, speaker, text
          FROM transcript_turns WHERE note_id = ?1 ORDER BY turn_index",
     )
     .bind(id)
@@ -299,7 +301,7 @@ mod tests {
         .await
         .unwrap();
         let turns = sqlx::query_as::<_, TranscriptTurn>(
-            "SELECT turn_index, source, start_ms, end_ms, text
+            "SELECT turn_index, source, start_ms, end_ms, speaker, text
              FROM transcript_turns WHERE note_id = ?1 ORDER BY turn_index",
         )
         .bind(&note.id)
