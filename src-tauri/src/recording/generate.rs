@@ -20,6 +20,7 @@ pub struct TurnText {
     pub start_ms: u64,
     pub end_ms: u64,
     pub source: String,
+    pub speaker: Option<String>,
     pub text: String,
 }
 
@@ -51,12 +52,30 @@ impl NoteGenerator for FallbackGenerator {
             body.push_str("\n\n");
         }
         body.push_str("## Transcript\n\n");
+        let labeled = turns
+            .iter()
+            .any(|t| t.source == "system" || t.speaker.is_some());
         for turn in turns {
-            body.push_str(&format!(
-                "**[{}]** {}\n\n",
-                format_ms(turn.start_ms),
-                turn.text
-            ));
+            if labeled {
+                let speaker = turn.speaker.clone().unwrap_or_else(|| {
+                    if turn.source == "system" {
+                        "Them".to_string()
+                    } else {
+                        "Me".to_string()
+                    }
+                });
+                body.push_str(&format!(
+                    "**[{}] {speaker}:** {}\n\n",
+                    format_ms(turn.start_ms),
+                    turn.text
+                ));
+            } else {
+                body.push_str(&format!(
+                    "**[{}]** {}\n\n",
+                    format_ms(turn.start_ms),
+                    turn.text
+                ));
+            }
         }
         GeneratedNote {
             title,
@@ -87,12 +106,20 @@ impl OllamaGenerator {
     }
 
     fn try_generate(&self, turns: &[TurnText], manual_notes: &str) -> Option<GeneratedNote> {
-        let multi_source = turns.iter().any(|t| t.source == "system");
+        let labeled = turns
+            .iter()
+            .any(|t| t.source == "system" || t.speaker.is_some());
         let transcript: String = turns
             .iter()
             .map(|t| {
-                if multi_source {
-                    let speaker = if t.source == "system" { "Them" } else { "Me" };
+                if labeled {
+                    let speaker = t.speaker.clone().unwrap_or_else(|| {
+                        if t.source == "system" {
+                            "Them".to_string()
+                        } else {
+                            "Me".to_string()
+                        }
+                    });
                     format!("[{}] {speaker}: {}", format_ms(t.start_ms), t.text)
                 } else {
                     format!("[{}] {}", format_ms(t.start_ms), t.text)
@@ -167,12 +194,14 @@ mod tests {
                 start_ms: 0,
                 end_ms: 9_000,
                 source: "microphone".into(),
+                speaker: None,
                 text: "Let's review the launch plan for next week.".into(),
             },
             TurnText {
                 start_ms: 65_000,
                 end_ms: 71_000,
                 source: "microphone".into(),
+                speaker: None,
                 text: "Marketing needs the assets by Friday.".into(),
             },
         ]

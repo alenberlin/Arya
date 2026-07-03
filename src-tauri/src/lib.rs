@@ -1,4 +1,5 @@
 pub mod audio;
+mod calendar;
 pub mod cleanup;
 mod db;
 mod dictation;
@@ -7,6 +8,9 @@ mod notes;
 mod paste;
 mod recording;
 pub mod speech;
+
+/// Re-export for diagnostic integration tests.
+pub use recording::diarize as recording_diarize;
 
 use std::sync::Arc;
 
@@ -40,6 +44,7 @@ pub fn run() {
                 app.handle().clone(),
                 std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             );
+            spawn_calendar_poller(app.handle().clone());
             position_hud_top_center(app.handle());
             #[cfg(debug_assertions)]
             dev_hooks::install(app.handle().clone());
@@ -68,6 +73,11 @@ pub fn run() {
             recording::commands::discard_recording,
             recording::commands::get_generation_settings,
             recording::commands::set_generation_settings,
+            recording::commands::enroll_speaker_profile,
+            recording::commands::list_speaker_profiles,
+            recording::commands::delete_speaker_profile,
+            recording::commands::calendar_access_status,
+            recording::commands::request_calendar_access,
             dictation::commands::get_dictation_settings,
             dictation::commands::set_dictation_settings,
             dictation::commands::dictation_status,
@@ -80,6 +90,36 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Emits `calendar:upcoming` when an event starts within five minutes (and
+/// nothing is being recorded), so the UI can offer one-click capture.
+fn spawn_calendar_poller(app: tauri::AppHandle) {
+    use tauri::Emitter;
+    std::thread::Builder::new()
+        .name("arya-calendar".into())
+        .spawn(move || {
+            let mut last_title: Option<String> = None;
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(60));
+                let recording = app
+                    .try_state::<recording::recorder::Recorder>()
+                    .map(|r| r.status().state != recording::recorder::RecorderState::Idle)
+                    .unwrap_or(false);
+                if recording {
+                    continue;
+                }
+                match calendar::current_or_upcoming_event(5) {
+                    Some(event) if last_title.as_deref() != Some(event.title.as_str()) => {
+                        last_title = Some(event.title.clone());
+                        let _ = app.emit("calendar:upcoming", event);
+                    }
+                    Some(_) => {}
+                    None => last_title = None,
+                }
+            }
+        })
+        .expect("spawn calendar poller");
 }
 
 /// Places the (hidden) dictation HUD at the top-center of the primary
@@ -160,6 +200,35 @@ mod dev_hooks {
                     ),
                 );
                 eprintln!("dev record forever: started {started:?}");
+            });
+        }
+
+        // ARYA_DEV_ENROLL=<name>:<seconds>: enroll a voice profile from the mic.
+        if let Ok(spec) = std::env::var("ARYA_DEV_ENROLL") {
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let (name, secs) = spec.split_once(':').unwrap_or((spec.as_str(), "6"));
+                let seconds = secs.parse::<u32>().unwrap_or(6);
+                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
+                let result =
+                    crate::recording::commands::enroll_blocking(&handle, &pool, name, seconds);
+                eprintln!("dev enroll: {result:?}");
+            });
+        }
+
+        // ARYA_DEV_CALENDAR=1: print calendar access + current event.
+        if std::env::var("ARYA_DEV_CALENDAR").as_deref() == Ok("1") {
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                eprintln!(
+                    "dev calendar: access={:?}",
+                    crate::calendar::access_status()
+                );
+                eprintln!(
+                    "dev calendar: event={:?}",
+                    crate::calendar::current_or_upcoming_event(10)
+                );
             });
         }
 

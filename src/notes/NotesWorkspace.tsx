@@ -54,6 +54,7 @@ export function NotesWorkspace() {
   });
   const [recoverables, setRecoverables] = useState<RecoverableRecording[]>([]);
   const [meeting, setMeeting] = useState<{ appName: string } | null>(null);
+  const [upcoming, setUpcoming] = useState<{ title: string; startsInMin: number } | null>(null);
   const [livePreview, setLivePreview] = useState<string | null>(null);
   const [systemAudioWarning, setSystemAudioWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -96,6 +97,10 @@ export function NotesWorkspace() {
       setMeeting(event.payload);
     });
     const unlistenCleared = listen("meeting:cleared", () => setMeeting(null));
+    const unlistenUpcoming = listen<{ title: string; startsInMin: number }>(
+      "calendar:upcoming",
+      (event) => setUpcoming(event.payload),
+    );
     const unlistenPreview = listen<{ noteId: string; text: string }>("note:live-preview", (event) =>
       setLivePreview(event.payload.text),
     );
@@ -111,6 +116,7 @@ export function NotesWorkspace() {
       void unlisten.then((fn) => fn());
       void unlistenMeeting.then((fn) => fn());
       void unlistenCleared.then((fn) => fn());
+      void unlistenUpcoming.then((fn) => fn());
       void unlistenPreview.then((fn) => fn());
       void unlistenSystemWarn.then((fn) => fn());
       clearInterval(poll);
@@ -190,6 +196,18 @@ export function NotesWorkspace() {
             </button>
           ) : null}
         </div>
+
+        {upcoming && recorder.state === "idle" ? (
+          <div role="status" style={{ margin: "8px 0", padding: 8, background: "#ede9fe" }}>
+            <strong>{upcoming.title}</strong> starts in {Math.max(0, upcoming.startsInMin)} min.{" "}
+            <button type="button" onClick={() => void onRecord("microphone-and-system")}>
+              Record it
+            </button>
+            <button type="button" onClick={() => setUpcoming(null)}>
+              Dismiss
+            </button>
+          </div>
+        ) : null}
 
         {meeting && recorder.state === "idle" ? (
           <div role="status" style={{ margin: "8px 0", padding: 8, background: "#dbeafe" }}>
@@ -309,6 +327,23 @@ export function NotesWorkspace() {
               onChange={(e) => editDetail({ title: e.target.value })}
               style={{ fontSize: 20, width: "100%" }}
             />
+            {detail.calendarContext
+              ? (() => {
+                  try {
+                    const ctx = JSON.parse(detail.calendarContext) as {
+                      title: string;
+                      attendees: string[];
+                    };
+                    return ctx.attendees.length > 0 ? (
+                      <p>
+                        <small>Attendees: {ctx.attendees.join(", ")}</small>
+                      </p>
+                    ) : null;
+                  } catch {
+                    return null;
+                  }
+                })()
+              : null}
             {detail.processingStatus === "failed" ? (
               <p role="alert">
                 Processing failed: {detail.processingError}{" "}
@@ -380,7 +415,9 @@ export function NotesWorkspace() {
                 <ul aria-label="transcript turns">
                   {turns.map((turn) => (
                     <li key={turn.turnIndex}>
-                      <small>{formatElapsed(turn.startMs)}</small> {turn.text}
+                      <small>{formatElapsed(turn.startMs)}</small>{" "}
+                      {turn.speaker ? <strong>{turn.speaker}: </strong> : null}
+                      {turn.text}
                     </li>
                   ))}
                 </ul>

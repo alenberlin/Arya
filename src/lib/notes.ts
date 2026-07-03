@@ -24,6 +24,7 @@ export interface NoteDetail {
   processingStatus: string;
   processingError: string | null;
   folderId: string | null;
+  calendarContext: string | null;
   createdAt: string;
 }
 
@@ -32,6 +33,7 @@ export interface TranscriptTurn {
   source: string;
   startMs: number;
   endMs: number;
+  speaker: string | null;
   text: string;
 }
 

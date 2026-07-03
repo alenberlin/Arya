@@ -6,12 +6,16 @@ import {
   type DictionaryItem,
   deleteDictationHistoryItem,
   deleteDictionaryEntry,
+  deleteSpeakerProfile,
+  enrollSpeakerProfile,
   getDictationSettings,
   getDictationStatus,
   type HistoryItem,
   listDictationHistory,
   listDictionaryEntries,
+  listSpeakerProfiles,
   openAccessibilitySettings,
+  type SpeakerProfile,
   setDictationSettings,
 } from "../lib/dictation";
 
@@ -24,6 +28,9 @@ export function DictationPanel() {
   const [status, setStatus] = useState<DictationStatus | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [dictionary, setDictionary] = useState<DictionaryItem[]>([]);
+  const [profiles, setProfiles] = useState<SpeakerProfile[]>([]);
+  const [profileName, setProfileName] = useState("");
+  const [enrolling, setEnrolling] = useState(false);
   const [pattern, setPattern] = useState("");
   const [replacement, setReplacement] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -31,16 +38,18 @@ export function DictationPanel() {
 
   const refresh = useCallback(async () => {
     try {
-      const [s, st, h, d] = await Promise.all([
+      const [s, st, h, d, sp] = await Promise.all([
         getDictationSettings(),
         getDictationStatus(),
         listDictationHistory(),
         listDictionaryEntries(),
+        listSpeakerProfiles(),
       ]);
       setSettings(s);
       setStatus(st);
       setHistory(h);
       setDictionary(d);
+      setProfiles(sp);
     } catch (e) {
       setError(String(e));
     }
@@ -169,6 +178,53 @@ export function DictationPanel() {
               <button
                 type="button"
                 onClick={() => void deleteDictionaryEntry(entry.id).then(refresh)}
+              >
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      </fieldset>
+
+      <fieldset>
+        <legend>Voice profiles</legend>
+        <p>
+          <small>
+            Enroll voices so meeting notes use real names. Speak naturally for six seconds after
+            pressing Enroll.
+          </small>
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!profileName.trim()) return;
+            setEnrolling(true);
+            void enrollSpeakerProfile(profileName.trim())
+              .then(() => {
+                setProfileName("");
+                return refresh();
+              })
+              .catch((err) => setError(String(err)))
+              .finally(() => setEnrolling(false));
+          }}
+        >
+          <input
+            placeholder="name"
+            value={profileName}
+            onChange={(e) => setProfileName(e.target.value)}
+            aria-label="profile name"
+          />{" "}
+          <button type="submit" disabled={enrolling}>
+            {enrolling ? "Listening…" : "Enroll (6s)"}
+          </button>
+        </form>
+        <ul aria-label="voice profiles">
+          {profiles.map((profile) => (
+            <li key={profile.id}>
+              {profile.name}{" "}
+              <button
+                type="button"
+                onClick={() => void deleteSpeakerProfile(profile.id).then(refresh)}
               >
                 Delete
               </button>

@@ -7,6 +7,7 @@ use std::path::Path;
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager};
 
+use super::diarize;
 use super::generate::{FallbackGenerator, NoteGenerator, OllamaGenerator, TurnText};
 use crate::audio::turns::{detect_turns, slice_turn, TurnConfig};
 use crate::audio::wav_file;
@@ -59,10 +60,17 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> 
             return Err("no audio artifact for note".to_string());
         }
         let mut turns: Vec<TurnText> = Vec::new();
+        let mut samples_by_turn: Vec<Vec<f32>> = Vec::new();
         let mut errors: Vec<String> = Vec::new();
+        let multi_source = artifacts.len() > 1;
         for (source, path) in &artifacts {
             match transcribe_artifact(app, Path::new(path), source) {
-                Ok(mut source_turns) => turns.append(&mut source_turns),
+                Ok(source_turns) => {
+                    for (turn, samples) in source_turns {
+                        turns.push(turn);
+                        samples_by_turn.push(samples);
+                    }
+                }
                 Err(message) => {
                     // A silent or unreadable source (e.g. the system track
                     // when the TCC grant is missing) must not fail the note
@@ -75,7 +83,15 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> 
         if turns.is_empty() {
             return Err(errors.join("; "));
         }
-        turns.sort_by_key(|t| t.start_ms);
+        // Speaker labels only make sense for meetings (multi-source intent).
+        if multi_source {
+            if let Err(message) = assign_speakers(app, pool, &mut turns, &samples_by_turn) {
+                eprintln!("processing: diarization skipped: {message}");
+            }
+        }
+        let mut order: Vec<usize> = (0..turns.len()).collect();
+        order.sort_by_key(|i| turns[*i].start_ms);
+        let turns: Vec<TurnText> = order.into_iter().map(|i| turns[i].clone()).collect();
         store_turns(pool, note_id, &turns)?;
         turns
     } else {
@@ -111,11 +127,13 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> 
     Ok(())
 }
 
+type TurnWithSamples = (TurnText, Vec<f32>);
+
 fn transcribe_artifact(
     app: &AppHandle,
     wav_path: &Path,
     source: &str,
-) -> Result<Vec<TurnText>, String> {
+) -> Result<Vec<TurnWithSamples>, String> {
     let clip = wav_file::load_normalized(wav_path).map_err(|e| e.to_string())?;
     let spans = detect_turns(&clip, &TurnConfig::default());
     if spans.is_empty() {
@@ -147,12 +165,16 @@ fn transcribe_artifact(
             }
         }
         if !text.is_empty() {
-            turns.push(TurnText {
-                start_ms: span.start_ms,
-                end_ms: span.end_ms,
-                source: source.to_string(),
-                text,
-            });
+            turns.push((
+                TurnText {
+                    start_ms: span.start_ms,
+                    end_ms: span.end_ms,
+                    source: source.to_string(),
+                    speaker: None,
+                    text,
+                },
+                sliced.samples,
+            ));
         }
     }
     if turns.is_empty() {
@@ -174,6 +196,123 @@ pub fn default_model_path(app: &AppHandle) -> Result<std::path::PathBuf, String>
             .map_err(|e| e.to_string())?;
     }
     Ok(target)
+}
+
+/// Labels turns with speakers: embeddings per qualifying turn, per-source
+/// clustering, profile matching for names. Mic turns fall back to the best
+/// profile match or "Me"; system clusters get profiles or "Speaker N".
+fn assign_speakers(
+    app: &AppHandle,
+    pool: &SqlitePool,
+    turns: &mut [TurnText],
+    samples_by_turn: &[Vec<f32>],
+) -> Result<(), String> {
+    let models_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("models");
+    let model_path = tauri::async_runtime::block_on(crate::speech::models::ensure_model(
+        &diarize::SPEAKER_MODEL,
+        &models_dir,
+    ))
+    .map_err(|e| e.to_string())?;
+
+    let mut extractor =
+        sherpa_rs::speaker_id::EmbeddingExtractor::new(sherpa_rs::speaker_id::ExtractorConfig {
+            model: model_path.to_string_lossy().to_string(),
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())?;
+
+    let profiles =
+        tauri::async_runtime::block_on(diarize::load_profiles(pool)).map_err(|e| e.to_string())?;
+
+    // Embeddings for turns long enough to carry identity, grouped by source.
+    let min_samples =
+        (crate::speech::AudioClip::SAMPLE_RATE as u64 * diarize::MIN_EMBED_MS / 1000) as usize;
+    for source in ["system", "microphone"] {
+        let indices: Vec<usize> = (0..turns.len())
+            .filter(|i| turns[*i].source == source)
+            .collect();
+        if indices.is_empty() {
+            continue;
+        }
+        let mut embeddings: Vec<Vec<f32>> = Vec::new();
+        let mut embedded_indices: Vec<usize> = Vec::new();
+        for &i in &indices {
+            if samples_by_turn[i].len() >= min_samples {
+                match extractor.compute_speaker_embedding(
+                    samples_by_turn[i].clone(),
+                    crate::speech::AudioClip::SAMPLE_RATE,
+                ) {
+                    Ok(embedding) => {
+                        embeddings.push(embedding);
+                        embedded_indices.push(i);
+                    }
+                    Err(e) => eprintln!("diarize: embedding failed: {e}"),
+                }
+            }
+        }
+        if embeddings.is_empty() {
+            // No usable embeddings: mic keeps "Me", system keeps "Them".
+            continue;
+        }
+        let labels = diarize::cluster_embeddings(&embeddings, diarize::SAME_SPEAKER_THRESHOLD);
+        let cluster_centroids = diarize::centroids(&embeddings, &labels);
+        #[cfg(debug_assertions)]
+        {
+            let pairwise: Vec<String> = embeddings
+                .iter()
+                .enumerate()
+                .flat_map(|(i, a)| {
+                    embeddings
+                        .iter()
+                        .skip(i + 1)
+                        .map(move |b| format!("{:.2}", diarize::cosine_similarity(a, b)))
+                })
+                .collect();
+            eprintln!(
+                "diarize: source={source} embeddings={} clusters={} pairwise=[{}]",
+                embeddings.len(),
+                cluster_centroids.len(),
+                pairwise.join(",")
+            );
+        }
+        let mut cluster_names: Vec<String> = Vec::with_capacity(cluster_centroids.len());
+        let mut anonymous = 0usize;
+        for centroid in &cluster_centroids {
+            match diarize::match_profile(centroid, &profiles, diarize::SAME_SPEAKER_THRESHOLD) {
+                Some(name) => cluster_names.push(name.to_string()),
+                None if source == "microphone" => cluster_names.push("Me".to_string()),
+                None => {
+                    anonymous += 1;
+                    cluster_names.push(format!("Speaker {anonymous}"));
+                }
+            }
+        }
+        // Short turns without embeddings inherit their source's dominant label.
+        let dominant = {
+            let mut counts = vec![0usize; cluster_names.len()];
+            for label in &labels {
+                counts[*label] += 1;
+            }
+            counts
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, c)| **c)
+                .map(|(i, _)| cluster_names[i].clone())
+        };
+        for (position, &i) in embedded_indices.iter().enumerate() {
+            turns[i].speaker = Some(cluster_names[labels[position]].clone());
+        }
+        for &i in &indices {
+            if turns[i].speaker.is_none() {
+                turns[i].speaker = dominant.clone();
+            }
+        }
+    }
+    Ok(())
 }
 
 pub fn set_status_blocking(pool: &SqlitePool, note_id: &str, status: &str, error: Option<String>) {
@@ -210,18 +349,19 @@ fn final_artifacts(pool: &SqlitePool, note_id: &str) -> Result<Vec<(String, Stri
 
 fn fetch_turn_texts(pool: &SqlitePool, note_id: &str) -> Result<Vec<TurnText>, String> {
     tauri::async_runtime::block_on(async {
-        sqlx::query_as::<_, (i64, i64, String, String)>(
-            "SELECT start_ms, end_ms, source, text FROM transcript_turns WHERE note_id = ?1 ORDER BY turn_index",
+        sqlx::query_as::<_, (i64, i64, String, Option<String>, String)>(
+            "SELECT start_ms, end_ms, source, speaker, text FROM transcript_turns WHERE note_id = ?1 ORDER BY turn_index",
         )
         .bind(note_id)
         .fetch_all(pool)
         .await
         .map(|rows| {
             rows.into_iter()
-                .map(|(start_ms, end_ms, source, text)| TurnText {
+                .map(|(start_ms, end_ms, source, speaker, text)| TurnText {
                     start_ms: start_ms as u64,
                     end_ms: end_ms as u64,
                     source,
+                    speaker,
                     text,
                 })
                 .collect()
@@ -234,8 +374,8 @@ fn store_turns(pool: &SqlitePool, note_id: &str, turns: &[TurnText]) -> Result<(
     tauri::async_runtime::block_on(async {
         for (index, turn) in turns.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO transcript_turns (id, note_id, source, turn_index, start_ms, end_ms, text)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO transcript_turns (id, note_id, source, turn_index, start_ms, end_ms, speaker, text)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             )
             .bind(uuid::Uuid::new_v4().to_string())
             .bind(note_id)
@@ -243,6 +383,7 @@ fn store_turns(pool: &SqlitePool, note_id: &str, turns: &[TurnText]) -> Result<(
             .bind(index as i64)
             .bind(turn.start_ms as i64)
             .bind(turn.end_ms as i64)
+            .bind(&turn.speaker)
             .bind(&turn.text)
             .execute(pool)
             .await
