@@ -23,6 +23,7 @@ export class Session {
   constructor(
     private config: SessionConfig,
     private emit: (event: AgentEvent) => void,
+    private searchWorkspace: (query: string, limit: number) => Promise<string>,
     private mcp?: McpManager,
   ) {
     for (const item of config.history ?? []) {
@@ -61,6 +62,7 @@ export class Session {
       broker: this.broker,
       emit: this.emit,
       nextCallId,
+      searchWorkspace: this.searchWorkspace,
     });
     let tools: Record<string, Tool> = builtins;
     if (this.mcp) {

@@ -42,9 +42,21 @@ impl AgentRuntime {
         let script = sidecar::sidecar_script()?;
         let workspace = agent_workspace(app)?;
         let app_for_events = app.clone();
-        let sidecar = Sidecar::spawn(&script, mode, &workspace, move |params| {
-            handle_event(&app_for_events, &params);
-        })?;
+        let app_for_context = app.clone();
+        let sidecar = Sidecar::spawn(
+            &script,
+            mode,
+            &workspace,
+            move |params| {
+                handle_event(&app_for_events, &params);
+            },
+            move |query, limit| {
+                // Answer the agent's search_workspace tool via local RAG.
+                let pool = app_for_context.state::<SqlitePool>().inner().clone();
+                let hits = crate::rag::commands::search_blocking(&pool, &query, limit as usize)?;
+                Ok(serde_json::json!({ "hits": hits }))
+            },
+        )?;
         guard.insert(mode, sidecar);
         Ok(())
     }

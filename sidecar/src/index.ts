@@ -12,6 +12,35 @@ import { Session } from "./session.js";
 const sessions = new Map<string, Session>();
 const mcp = new McpManager();
 
+// Reverse RPC: sidecar -> shell for workspace context search.
+let reverseId = 0;
+const reverseCalls = new Map<string, (result: unknown, error?: string) => void>();
+
+function searchWorkspace(query: string, limit: number): Promise<string> {
+  return new Promise((resolvePromise) => {
+    const id = `rev-${++reverseId}`;
+    reverseCalls.set(id, (result, error) => {
+      if (error) {
+        resolvePromise(`workspace search failed: ${error}`);
+        return;
+      }
+      const hits = (result as { hits?: Array<Record<string, unknown>> })?.hits ?? [];
+      if (hits.length === 0) {
+        resolvePromise("No matching passages found in the workspace.");
+        return;
+      }
+      const rendered = hits
+        .map(
+          (h) =>
+            `[${h.sourceKind}:${h.title}] (score ${Number(h.score).toFixed(2)})\n${h.content}`,
+        )
+        .join("\n\n");
+      resolvePromise(rendered);
+    });
+    send({ jsonrpc: "2.0", id, method: "context.search", params: { query, limit } });
+  });
+}
+
 function send(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
 }
@@ -56,7 +85,12 @@ async function dispatch(request: RpcRequest): Promise<void> {
         }
         sessions.set(
           config.sessionId,
-          new Session(config, (event) => notifyEvent(config.sessionId, event), mcp),
+          new Session(
+            config,
+            (event) => notifyEvent(config.sessionId, event),
+            searchWorkspace,
+            mcp,
+          ),
         );
         if (id !== null) ok(id, { started: true });
         return;
@@ -122,13 +156,22 @@ const reader = createInterface({ input: process.stdin });
 reader.on("line", (line) => {
   const trimmed = line.trim();
   if (!trimmed) return;
-  let request: RpcRequest;
+  let parsed: RpcRequest & { result?: unknown; error?: { message: string } };
   try {
-    request = JSON.parse(trimmed) as RpcRequest;
+    parsed = JSON.parse(trimmed);
   } catch {
     return;
   }
-  void dispatch(request);
+  // Reverse-RPC response from the shell.
+  if (typeof parsed.id === "string" && parsed.id.startsWith("rev-")) {
+    const handler = reverseCalls.get(parsed.id);
+    if (handler) {
+      reverseCalls.delete(parsed.id);
+      handler(parsed.result, parsed.error?.message);
+    }
+    return;
+  }
+  void dispatch(parsed as RpcRequest);
 });
 reader.on("close", () => process.exit(0));
 
