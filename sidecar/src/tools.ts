@@ -6,6 +6,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { ApprovalBroker } from "./approvals.js";
 import type { AgentEvent } from "./protocol.js";
+import { generateImageToWorkspace, imageGenerationAvailable } from "./images.js";
 import { resolveInWorkspace, resolveReadable } from "./paths.js";
 
 const execAsync = promisify(exec);
@@ -117,6 +118,30 @@ export function buildTools(ctx: ToolContext) {
       inputSchema: z.object({ query: z.string(), limit: z.number().default(6) }),
       execute: async ({ query, limit }) => {
         return ctx.searchWorkspace(query, limit ?? 6);
+      },
+    }),
+
+    generate_image: tool({
+      description: imageGenerationAvailable()
+        ? "Generate an image from a text prompt; saves a PNG into the workspace and returns its path."
+        : "Generate an image from a text prompt (currently unavailable: no cloud image model configured).",
+      inputSchema: z.object({
+        prompt: z.string(),
+        size: z.string().optional().describe("e.g. 1024x1024"),
+      }),
+      execute: async ({ prompt, size }) => {
+        try {
+          const result = await generateImageToWorkspace(ctx.workspace, prompt, size);
+          ctx.emit({
+            kind: "tool-result",
+            callId: ctx.nextCallId(),
+            name: "image-saved",
+            result: result.path,
+          });
+          return `image saved to ${result.path} (${result.bytes} bytes)`;
+        } catch (error) {
+          return `image generation failed: ${String(error)}`;
+        }
       },
     }),
 

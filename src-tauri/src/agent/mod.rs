@@ -126,6 +126,43 @@ pub fn agent_workspace_list(
     Ok(entries)
 }
 
+/// Generates an image via the sidecar and returns its workspace path.
+#[tauri::command]
+pub fn agent_generate_image(
+    app: AppHandle,
+    runtime: tauri::State<'_, AgentRuntime>,
+    prompt: String,
+    size: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let workspace = agent_workspace(&app)?;
+    runtime.request(
+        &app,
+        sidecar::WriteMode::Sandboxed,
+        "image.generate",
+        serde_json::json!({
+            "workspace": workspace.to_string_lossy(),
+            "prompt": prompt,
+            "size": size,
+        }),
+    )
+}
+
+/// Reads a workspace file as base64 (for inline image rendering).
+#[tauri::command]
+pub fn agent_workspace_read_b64(app: AppHandle, path: String) -> Result<String, String> {
+    let base = agent_workspace(&app)?;
+    let target = base.join(&path).canonicalize().map_err(|e| e.to_string())?;
+    if !target.starts_with(&base) {
+        return Err("path escapes workspace".into());
+    }
+    let bytes = std::fs::read(&target).map_err(|e| e.to_string())?;
+    if bytes.len() > 8 * 1024 * 1024 {
+        return Err("file too large".into());
+    }
+    use base64::Engine;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
 /// Reads a workspace text file for preview (capped).
 #[tauri::command]
 pub fn agent_workspace_read(app: AppHandle, path: String) -> Result<String, String> {
