@@ -97,6 +97,8 @@ pub fn run() {
             agent::commands::agent_delete_session,
             agent::agent_workspace_list,
             agent::agent_workspace_read,
+            agent::agent_workspace_read_b64,
+            agent::agent_generate_image,
             agent::ecosystem::mcp_list_servers,
             agent::ecosystem::mcp_add_server,
             agent::ecosystem::mcp_remove_server,

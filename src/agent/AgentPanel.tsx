@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -43,6 +44,7 @@ export function AgentPanel() {
   const [input, setInput] = useState("");
   const [steerText, setSteerText] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [images, setImages] = useState<Record<string, string>>({});
   const activeRef = useRef<string | null>(null);
   activeRef.current = active?.id ?? null;
 
@@ -152,6 +154,30 @@ export function AgentPanel() {
     if (!active || !input.trim()) return;
     const text = input.trim();
     setInput("");
+    // /image <prompt>: direct text-to-image without engaging the model.
+    if (text.startsWith("/image ")) {
+      const prompt = text.slice(7).trim();
+      try {
+        const result = await invoke<{ path: string }>("agent_generate_image", {
+          prompt,
+          size: null,
+        });
+        setImages((m) => ({ ...m, [result.path]: "" }));
+        void loadImage(result.path);
+        setMessages((mm) => [
+          ...mm,
+          {
+            id: `local-img-${Date.now()}`,
+            role: "assistant",
+            contentJson: JSON.stringify({ text: `Image saved to ${result.path}`, tools: [] }),
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      } catch (e) {
+        setError(String(e));
+      }
+      return;
+    }
     setMessages((m) => [
       ...m,
       {
@@ -165,6 +191,15 @@ export function AgentPanel() {
       await agentSend(active.id, text);
     } catch (e) {
       setError(String(e));
+    }
+  };
+
+  const loadImage = async (path: string) => {
+    try {
+      const b64 = await invoke<string>("agent_workspace_read_b64", { path });
+      setImages((m) => ({ ...m, [path]: `data:image/png;base64,${b64}` }));
+    } catch {
+      // leave placeholder
     }
   };
 
@@ -214,12 +249,26 @@ export function AgentPanel() {
             <pre style={{ whiteSpace: "pre-wrap" }}>{content.reasoning}</pre>
           </details>
         ) : null}
-        {(content.tools ?? []).map((tool) => (
-          <div key={tool.callId} style={{ fontFamily: "monospace", fontSize: 12 }}>
-            ⚙ {tool.name}({JSON.stringify(tool.args)})
-            {tool.result ? ` → ${tool.result.slice(0, 120)}` : ""}
-          </div>
-        ))}
+        {(content.tools ?? []).map((tool) => {
+          const match = tool.result?.match(/images\/[\w.-]+\.png/);
+          if (match && images[match[0]] === undefined) {
+            setImages((m) => ({ ...m, [match[0]]: "" }));
+            void loadImage(match[0]);
+          }
+          return (
+            <div key={tool.callId} style={{ fontFamily: "monospace", fontSize: 12 }}>
+              ⚙ {tool.name}({JSON.stringify(tool.args)})
+              {tool.result ? ` → ${tool.result.slice(0, 120)}` : ""}
+              {match && images[match[0]] ? (
+                <img
+                  src={images[match[0]]}
+                  alt={`generated ${match[0]}`}
+                  style={{ display: "block", maxWidth: 360, marginTop: 4 }}
+                />
+              ) : null}
+            </div>
+          );
+        })}
         <div style={{ whiteSpace: "pre-wrap" }}>{content.text}</div>
       </article>
     );

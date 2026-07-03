@@ -35,6 +35,7 @@ rubato = "0.16"
 tauri-plugin-global-shortcut = "2"
 libc = "0.2"
 sherpa-rs = { version = "0.6", default-features = false, features = ["download-binaries"] }
+base64 = "0.22"
 
 [profile.release]
 strip = true
