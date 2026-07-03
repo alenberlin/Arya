@@ -24,6 +24,7 @@ import {
   type TranscriptTurn,
   updateNote,
 } from "../lib/notes";
+import { MeetingIcon, NotesIcon, RecordIcon, StopIcon } from "../ui/icons";
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "",
@@ -178,115 +179,161 @@ export function NotesWorkspace() {
 
   const visibleNotes = activeFolder ? notes.filter((n) => n.folderId === activeFolder) : notes;
   const tabTitle = (id: string) => notes.find((n) => n.id === id)?.title ?? "Note";
+  const recording = recorder.state !== "idle";
 
   return (
-    <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
-      <aside style={{ width: 220, flexShrink: 0 }}>
-        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <button type="button" onClick={() => void onRecord()} aria-label="record">
-            {recorder.state === "idle" ? "● Record" : `■ Stop ${formatElapsed(recorder.elapsedMs)}`}
-          </button>
-          {recorder.state === "idle" ? (
-            <button
-              type="button"
-              aria-label="record meeting"
-              title="Record microphone plus system audio"
-              onClick={() => void onRecord("microphone-and-system")}
-            >
-              ● Meeting
-            </button>
-          ) : null}
-          {recorder.state === "recording" ? (
-            <button type="button" onClick={() => void pauseRecording()}>
-              Pause
-            </button>
-          ) : null}
-          {recorder.state === "paused" ? (
-            <button type="button" onClick={() => void resumeRecording()}>
-              Resume
-            </button>
-          ) : null}
+    <div className="split">
+      <aside className="stack">
+        <div className="recorder-bar">
+          {!recording ? (
+            <>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => void onRecord()}
+                aria-label="record"
+              >
+                <RecordIcon className="rec" /> Record
+              </button>
+              <button
+                type="button"
+                aria-label="record meeting"
+                title="Record microphone plus system audio"
+                onClick={() => void onRecord("microphone-and-system")}
+              >
+                <MeetingIcon /> Meeting
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={() => void onRecord()}
+                aria-label="record"
+              >
+                <StopIcon /> Stop · {formatElapsed(recorder.elapsedMs)}
+              </button>
+              {recorder.state === "recording" ? (
+                <button type="button" className="btn-sm" onClick={() => void pauseRecording()}>
+                  Pause
+                </button>
+              ) : (
+                <button type="button" className="btn-sm" onClick={() => void resumeRecording()}>
+                  Resume
+                </button>
+              )}
+            </>
+          )}
         </div>
 
-        {upcoming && recorder.state === "idle" ? (
-          <div role="status" style={{ margin: "8px 0", padding: 8, background: "#ede9fe" }}>
-            <strong>{upcoming.title}</strong> starts in {Math.max(0, upcoming.startsInMin)} min.{" "}
-            <button type="button" onClick={() => void onRecord("microphone-and-system")}>
-              Record it
-            </button>
-            <button type="button" onClick={() => setUpcoming(null)}>
-              Dismiss
-            </button>
+        {upcoming && !recording ? (
+          <div className="banner banner-info" role="status">
+            <span>
+              <strong>{upcoming.title}</strong> starts in {Math.max(0, upcoming.startsInMin)} min.
+            </span>
+            <div className="hstack">
+              <button
+                type="button"
+                className="btn-sm btn-primary"
+                onClick={() => void onRecord("microphone-and-system")}
+              >
+                Record it
+              </button>
+              <button type="button" className="btn-sm" onClick={() => setUpcoming(null)}>
+                Dismiss
+              </button>
+            </div>
           </div>
         ) : null}
 
-        {meeting && recorder.state === "idle" ? (
-          <div role="status" style={{ margin: "8px 0", padding: 8, background: "#dbeafe" }}>
-            <strong>Meeting detected in {meeting.appName}.</strong>{" "}
-            <button type="button" onClick={() => void onRecord("microphone-and-system")}>
-              Record meeting
-            </button>
-            <button type="button" onClick={() => setMeeting(null)}>
-              Dismiss
-            </button>
+        {meeting && !recording ? (
+          <div className="banner banner-info" role="status">
+            <span className="banner-title">Meeting detected in {meeting.appName}</span>
+            <div className="hstack">
+              <button
+                type="button"
+                className="btn-sm btn-primary"
+                onClick={() => void onRecord("microphone-and-system")}
+              >
+                Record meeting
+              </button>
+              <button type="button" className="btn-sm" onClick={() => setMeeting(null)}>
+                Dismiss
+              </button>
+            </div>
           </div>
         ) : null}
 
         {systemAudioWarning ? (
-          <div role="alert" style={{ margin: "8px 0", padding: 8, background: "#fee2e2" }}>
-            System audio unavailable ({systemAudioWarning}); recording microphone only. Grant
-            "System Audio Recording" in System Settings for meeting capture.
+          <div className="banner banner-warning" role="alert">
+            <span className="banner-title">System audio unavailable</span>
+            <small>
+              Recording microphone only. Grant "System audio recording" in System Settings for
+              meeting capture.
+            </small>
           </div>
         ) : null}
 
         {recoverables.length > 0 ? (
-          <div role="alert" style={{ margin: "8px 0", padding: 8, background: "#fef3c7" }}>
-            <strong>Interrupted recording found.</strong>
+          <div className="banner banner-warning" role="alert">
+            <span className="banner-title">Interrupted recording found</span>
             {recoverables.map((r) => (
-              <div key={r.sessionId}>
-                {r.noteTitle} ({Math.round(r.sizeBytes / 1024)} KB)
-                <button
-                  type="button"
-                  onClick={() =>
-                    void recoverRecording(r.sessionId).then(() => {
-                      setRecoverables((list) => list.filter((x) => x.sessionId !== r.sessionId));
-                      return refreshNotes();
-                    })
-                  }
-                >
-                  Recover
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void discardRecording(r.sessionId).then(() => {
-                      setRecoverables((list) => list.filter((x) => x.sessionId !== r.sessionId));
-                    })
-                  }
-                >
-                  Discard
-                </button>
+              <div key={r.sessionId} className="hstack spread">
+                <small>
+                  {r.noteTitle} · {Math.round(r.sizeBytes / 1024)} KB
+                </small>
+                <div className="hstack">
+                  <button
+                    type="button"
+                    className="btn-sm btn-primary"
+                    onClick={() =>
+                      void recoverRecording(r.sessionId).then(() => {
+                        setRecoverables((list) => list.filter((x) => x.sessionId !== r.sessionId));
+                        return refreshNotes();
+                      })
+                    }
+                  >
+                    Recover
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-sm"
+                    onClick={() =>
+                      void discardRecording(r.sessionId).then(() => {
+                        setRecoverables((list) => list.filter((x) => x.sessionId !== r.sessionId));
+                      })
+                    }
+                  >
+                    Discard
+                  </button>
+                </div>
               </div>
             ))}
           </div>
         ) : null}
 
-        <nav aria-label="folders" style={{ margin: "12px 0" }}>
-          <button type="button" onClick={() => setActiveFolder(null)} disabled={!activeFolder}>
+        <nav aria-label="folders" className="hstack wrap">
+          <button
+            type="button"
+            className={activeFolder ? "btn-sm btn-ghost" : "btn-sm btn-primary"}
+            onClick={() => setActiveFolder(null)}
+          >
             All notes
           </button>
           {folders.map((folder) => (
             <button
               key={folder.id}
               type="button"
+              className={activeFolder === folder.id ? "btn-sm btn-primary" : "btn-sm btn-ghost"}
               onClick={() => setActiveFolder(folder.id)}
-              disabled={activeFolder === folder.id}
             >
               {folder.name}
             </button>
           ))}
           <button
             type="button"
+            className="btn-sm btn-ghost"
             onClick={() => {
               const name = window.prompt("Folder name");
               if (name) void createFolder(name).then(refreshNotes);
@@ -296,28 +343,59 @@ export function NotesWorkspace() {
           </button>
         </nav>
 
-        <ul aria-label="notes" style={{ listStyle: "none", padding: 0 }}>
-          {visibleNotes.map((note) => (
-            <li key={note.id} style={{ marginBottom: 4 }}>
-              <button type="button" onClick={() => void openNote(note.id)}>
-                {note.title}
-              </button>{" "}
-              <small>{STATUS_LABEL[note.processingStatus] ?? note.processingStatus}</small>
-            </li>
-          ))}
+        <ul aria-label="notes" className="plain stack" style={{ gap: 2 }}>
+          {visibleNotes.map((note) => {
+            const status = STATUS_LABEL[note.processingStatus] ?? note.processingStatus;
+            return (
+              <li key={note.id}>
+                <button
+                  type="button"
+                  className="row"
+                  aria-current={note.id === activeNoteId ? "true" : undefined}
+                  onClick={() => void openNote(note.id)}
+                >
+                  <NotesIcon className="muted" />
+                  <span
+                    style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                  >
+                    {note.title}
+                  </span>
+                  {status ? (
+                    <span
+                      className={`badge note-list-status ${
+                        note.processingStatus === "failed" ? "badge-danger" : ""
+                      }`}
+                    >
+                      {status}
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            );
+          })}
+          {visibleNotes.length === 0 ? (
+            <li className="empty">No notes yet. Press Record to capture one.</li>
+          ) : null}
         </ul>
       </aside>
 
-      <section style={{ flex: 1, minWidth: 0 }}>
+      <section style={{ minWidth: 0 }}>
         {openTabs.length > 0 ? (
-          <div role="tablist" style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+          <div role="tablist" className="tabstrip">
             {openTabs.map((id) => (
-              <span key={id} role="tab" aria-selected={id === activeNoteId} tabIndex={0}>
-                <button type="button" onClick={() => void openNote(id)}>
+              <span
+                key={id}
+                role="tab"
+                className="tab"
+                aria-selected={id === activeNoteId}
+                tabIndex={0}
+              >
+                <button type="button" className="tab" onClick={() => void openNote(id)}>
                   {tabTitle(id)}
                 </button>
                 <button
                   type="button"
+                  className="tab-close"
                   aria-label={`close ${tabTitle(id)}`}
                   onClick={() => closeTab(id)}
                 >
@@ -331,12 +409,12 @@ export function NotesWorkspace() {
         {error ? <p role="alert">{error}</p> : null}
 
         {detail ? (
-          <article>
+          <article className="stack">
             <input
               aria-label="note title"
+              className="note-title"
               value={detail.title}
               onChange={(e) => editDetail({ title: e.target.value })}
-              style={{ fontSize: 20, width: "100%" }}
             />
             {detail.calendarContext
               ? (() => {
@@ -346,9 +424,7 @@ export function NotesWorkspace() {
                       attendees: string[];
                     };
                     return ctx.attendees.length > 0 ? (
-                      <p>
-                        <small>Attendees: {ctx.attendees.join(", ")}</small>
-                      </p>
+                      <small>Attendees: {ctx.attendees.join(", ")}</small>
                     ) : null;
                   } catch {
                     return null;
@@ -356,18 +432,24 @@ export function NotesWorkspace() {
                 })()
               : null}
             {detail.processingStatus === "failed" ? (
-              <p role="alert">
-                Processing failed: {detail.processingError}{" "}
-                <button type="button" onClick={() => void retryProcessing(detail.id)}>
+              <div className="banner banner-danger" role="alert">
+                <span>Processing failed: {detail.processingError}</span>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => void retryProcessing(detail.id)}
+                >
                   Retry
                 </button>
-              </p>
+              </div>
             ) : null}
             {["transcribing", "generating", "recording"].includes(detail.processingStatus) ? (
-              <p>{STATUS_LABEL[detail.processingStatus]}</p>
+              <span className="badge badge-accent badge-dot">
+                {STATUS_LABEL[detail.processingStatus]}
+              </span>
             ) : null}
-            {recorder.state !== "idle" && livePreview ? (
-              <blockquote aria-label="live preview" style={{ color: "#6b7280" }}>
+            {recording && livePreview ? (
+              <blockquote aria-label="live preview" className="live-preview">
                 {livePreview}
               </blockquote>
             ) : null}
@@ -378,7 +460,6 @@ export function NotesWorkspace() {
                 value={detail.manualNotes}
                 onChange={(e) => editDetail({ manualNotes: e.target.value })}
                 rows={3}
-                style={{ width: "100%" }}
               />
             </label>
             <label>
@@ -388,47 +469,52 @@ export function NotesWorkspace() {
                 value={detail.bodyMd}
                 onChange={(e) => editDetail({ bodyMd: e.target.value })}
                 rows={14}
-                style={{ width: "100%" }}
               />
             </label>
-            <select
-              aria-label="note folder"
-              value={detail.folderId ?? ""}
-              onChange={(e) => {
-                const folderId = e.target.value || null;
-                void assignNoteToFolder(detail.id, folderId).then(refreshNotes);
-                setDetail({ ...detail, folderId });
-              }}
-            >
-              <option value="">No folder</option>
-              {folders.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => {
-                if (window.confirm("Delete this note?")) {
-                  void deleteNote(detail.id).then(() => {
-                    closeTab(detail.id);
-                    return refreshNotes();
-                  });
-                }
-              }}
-            >
-              Delete note
-            </button>
+            <div className="hstack spread">
+              <select
+                aria-label="note folder"
+                value={detail.folderId ?? ""}
+                style={{ width: "auto" }}
+                onChange={(e) => {
+                  const folderId = e.target.value || null;
+                  void assignNoteToFolder(detail.id, folderId).then(refreshNotes);
+                  setDetail({ ...detail, folderId });
+                }}
+              >
+                <option value="">No folder</option>
+                {folders.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="btn-danger btn-sm"
+                onClick={() => {
+                  if (window.confirm("Delete this note?")) {
+                    void deleteNote(detail.id).then(() => {
+                      closeTab(detail.id);
+                      return refreshNotes();
+                    });
+                  }
+                }}
+              >
+                Delete note
+              </button>
+            </div>
             {turns.length > 0 ? (
               <details>
-                <summary>Transcript ({turns.length} turns)</summary>
-                <ul aria-label="transcript turns">
+                <summary>Transcript · {turns.length} turns</summary>
+                <ul aria-label="transcript turns" className="transcript">
                   {turns.map((turn) => (
                     <li key={turn.turnIndex}>
-                      <small>{formatElapsed(turn.startMs)}</small>{" "}
-                      {turn.speaker ? <strong>{turn.speaker}: </strong> : null}
-                      {turn.text}
+                      <span className="ts">{formatElapsed(turn.startMs)}</span>
+                      <span>
+                        {turn.speaker ? <strong>{turn.speaker}: </strong> : null}
+                        {turn.text}
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -436,7 +522,10 @@ export function NotesWorkspace() {
             ) : null}
           </article>
         ) : (
-          <p>Select a note, or press Record to capture one.</p>
+          <div className="empty">
+            <NotesIcon className="muted" />
+            <p style={{ marginTop: 8 }}>Select a note, or press Record to capture one.</p>
+          </div>
         )}
       </section>
     </div>

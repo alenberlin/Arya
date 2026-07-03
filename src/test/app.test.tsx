@@ -96,8 +96,9 @@ describe("app shell", () => {
 
   it("shows the brand name and the notes workspace", async () => {
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "Arya" })).toBeInTheDocument();
+    // Brand appears in the sidebar; the Notes pillar is the active nav item.
     expect(await screen.findByRole("button", { name: "record" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Notes" })).toBeInTheDocument();
   });
 
   it("starts a recording and opens its note", async () => {
