@@ -9,6 +9,7 @@ mod notes;
 mod paste;
 mod recording;
 pub mod speech;
+mod tray;
 
 /// Re-export for diagnostic integration tests.
 pub use recording::diarize as recording_diarize;
@@ -41,12 +42,16 @@ pub fn run() {
             app.manage(Recorder::spawn());
             app.manage(recording::commands::SystemCaptureSlot::default());
             app.manage(agent::AgentRuntime::default());
+            spawn_agent_scheduler(app.handle().clone());
             #[cfg(target_os = "macos")]
             meeting_detect::macos::spawn_poller(
                 app.handle().clone(),
                 std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             );
             spawn_calendar_poller(app.handle().clone());
+            if let Err(e) = tray::setup(app.handle()) {
+                eprintln!("tray setup failed: {e}");
+            }
             position_hud_top_center(app.handle());
             #[cfg(debug_assertions)]
             dev_hooks::install(app.handle().clone());
@@ -89,6 +94,17 @@ pub fn run() {
             agent::commands::agent_cancel,
             agent::commands::agent_resolve_approval,
             agent::commands::agent_delete_session,
+            agent::agent_workspace_list,
+            agent::agent_workspace_read,
+            agent::ecosystem::mcp_list_servers,
+            agent::ecosystem::mcp_add_server,
+            agent::ecosystem::mcp_remove_server,
+            agent::ecosystem::routine_list,
+            agent::ecosystem::routine_create,
+            agent::ecosystem::routine_set_enabled,
+            agent::ecosystem::routine_delete,
+            agent::ecosystem::routine_runs,
+            agent::ecosystem::agent_branch_session,
             dictation::commands::get_dictation_settings,
             dictation::commands::set_dictation_settings,
             dictation::commands::dictation_status,
@@ -101,6 +117,27 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Ticks the routine scheduler every 30s and reconnects MCP servers once at
+/// startup so agent sessions have their tools immediately.
+fn spawn_agent_scheduler(app: tauri::AppHandle) {
+    std::thread::Builder::new()
+        .name("arya-agent-scheduler".into())
+        .spawn(move || {
+            let pool = app.state::<sqlx::SqlitePool>().inner().clone();
+            let runtime = app.state::<agent::AgentRuntime>();
+            // Reconnect persisted MCP servers (best effort; sidecar spawns lazily).
+            tauri::async_runtime::block_on(agent::ecosystem::reconnect_all(&app, &pool, &runtime));
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                let runtime = app.state::<agent::AgentRuntime>();
+                tauri::async_runtime::block_on(agent::ecosystem::run_due_routines(
+                    &app, &pool, &runtime,
+                ));
+            }
+        })
+        .expect("spawn agent scheduler");
 }
 
 /// Emits `calendar:upcoming` when an event starts within five minutes (and

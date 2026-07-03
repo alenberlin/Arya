@@ -2,6 +2,7 @@
 //! Vercel AI SDK), spawned per write-mode, Seatbelt-jailed by default.
 
 pub mod commands;
+pub mod ecosystem;
 pub mod sidecar;
 
 use std::collections::HashMap;
@@ -68,6 +69,64 @@ pub fn agent_workspace(app: &AppHandle) -> Result<std::path::PathBuf, String> {
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("agent/workspace"))
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+/// Lists the agent workspace directory (one level), for the file browser UI.
+#[tauri::command]
+pub fn agent_workspace_list(
+    app: AppHandle,
+    sub_path: Option<String>,
+) -> Result<Vec<WorkspaceEntry>, String> {
+    let base = agent_workspace(&app)?;
+    let dir = match sub_path {
+        Some(p) => {
+            let joined = base.join(p);
+            let canonical = joined.canonicalize().map_err(|e| e.to_string())?;
+            if !canonical.starts_with(&base) {
+                return Err("path escapes workspace".into());
+            }
+            canonical
+        }
+        None => base.clone(),
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let mut entries: Vec<WorkspaceEntry> = std::fs::read_dir(&dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| {
+            let meta = entry.metadata().ok();
+            WorkspaceEntry {
+                name: entry.file_name().to_string_lossy().to_string(),
+                is_dir: meta.as_ref().map(|m| m.is_dir()).unwrap_or(false),
+                size: meta.map(|m| m.len()).unwrap_or(0),
+            }
+        })
+        .collect();
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
+    Ok(entries)
+}
+
+/// Reads a workspace text file for preview (capped).
+#[tauri::command]
+pub fn agent_workspace_read(app: AppHandle, path: String) -> Result<String, String> {
+    let base = agent_workspace(&app)?;
+    let target = base.join(&path).canonicalize().map_err(|e| e.to_string())?;
+    if !target.starts_with(&base) {
+        return Err("path escapes workspace".into());
+    }
+    let bytes = std::fs::read(&target).map_err(|e| e.to_string())?;
+    if bytes.len() > 256 * 1024 {
+        return Err("file too large to preview".into());
+    }
+    Ok(String::from_utf8_lossy(&bytes).to_string())
 }
 
 /// Routes a sidecar event: forward to the UI, accumulate, and persist the

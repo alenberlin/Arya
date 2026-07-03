@@ -1,10 +1,13 @@
-import { useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { useEffect, useState } from "react";
 import brand from "../brand.json";
 import { AgentPanel } from "./agent/AgentPanel";
+import { McpPanel } from "./agent/McpPanel";
+import { RoutinesPanel } from "./agent/RoutinesPanel";
 import { DictationPanel } from "./dictation/DictationPanel";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
 
-type Tab = "notes" | "agent" | "dictation";
+type Tab = "notes" | "agent" | "routines" | "mcp" | "dictation";
 
 /**
  * Main-window shell: Notes workspace (M4) and Dictation panel (M3).
@@ -12,6 +15,13 @@ type Tab = "notes" | "agent" | "dictation";
  */
 export function App() {
   const [tab, setTab] = useState<Tab>("notes");
+
+  useEffect(() => {
+    const unlisten = listen("tray:new-session", () => setTab("agent"));
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
 
   return (
     <main style={{ fontFamily: "system-ui", padding: "1.5rem", maxWidth: 1000, margin: "0 auto" }}>
@@ -24,12 +34,28 @@ export function App() {
           <button type="button" onClick={() => setTab("agent")} disabled={tab === "agent"}>
             Agent
           </button>
+          <button type="button" onClick={() => setTab("routines")} disabled={tab === "routines"}>
+            Routines
+          </button>
+          <button type="button" onClick={() => setTab("mcp")} disabled={tab === "mcp"}>
+            MCP
+          </button>
           <button type="button" onClick={() => setTab("dictation")} disabled={tab === "dictation"}>
             Dictation
           </button>
         </nav>
       </header>
-      {tab === "notes" ? <NotesWorkspace /> : tab === "agent" ? <AgentPanel /> : <DictationPanel />}
+      {tab === "notes" ? (
+        <NotesWorkspace />
+      ) : tab === "agent" ? (
+        <AgentPanel />
+      ) : tab === "routines" ? (
+        <RoutinesPanel />
+      ) : tab === "mcp" ? (
+        <McpPanel />
+      ) : (
+        <DictationPanel />
+      )}
     </main>
   );
 }

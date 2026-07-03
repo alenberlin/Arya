@@ -5,10 +5,12 @@
  */
 import { createInterface } from "node:readline";
 import type { AgentEvent, ApprovalDecision, RpcRequest, SessionConfig } from "./protocol.js";
+import { McpManager, type McpServerSpec } from "./mcp.js";
 import { listOllamaModels } from "./providers.js";
 import { Session } from "./session.js";
 
 const sessions = new Map<string, Session>();
+const mcp = new McpManager();
 
 function send(payload: unknown): void {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
@@ -54,7 +56,7 @@ async function dispatch(request: RpcRequest): Promise<void> {
         }
         sessions.set(
           config.sessionId,
-          new Session(config, (event) => notifyEvent(config.sessionId, event)),
+          new Session(config, (event) => notifyEvent(config.sessionId, event), mcp),
         );
         if (id !== null) ok(id, { started: true });
         return;
@@ -90,7 +92,19 @@ async function dispatch(request: RpcRequest): Promise<void> {
         if (id !== null) ok(id, { resolved });
         return;
       }
+      case "mcp.connect": {
+        const spec = params as unknown as McpServerSpec;
+        const toolNames = await mcp.connect(spec);
+        if (id !== null) ok(id, { tools: toolNames });
+        return;
+      }
+      case "mcp.disconnect": {
+        await mcp.disconnect(String(params.name));
+        if (id !== null) ok(id, { disconnected: true });
+        return;
+      }
       case "runtime.shutdown": {
+        await mcp.closeAll();
         for (const session of sessions.values()) session.cancel();
         if (id !== null) ok(id, { bye: true });
         process.exit(0);
