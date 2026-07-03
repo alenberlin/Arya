@@ -362,6 +362,16 @@ pub async fn recover_recording_inner(
     pool: &SqlitePool,
     session_id: &str,
 ) -> Result<String, String> {
+    let note_id = recover_artifacts(pool, session_id).await?;
+    spawn_processing(app.clone(), pool.clone(), note_id.clone());
+    Ok(note_id)
+}
+
+/// The pure recovery core (no AppHandle): repair + promote every partial
+/// artifact of a crashed session, mark it finished, return the note id.
+/// Separated so the multi-artifact data-loss fix is covered by a fast,
+/// deterministic test instead of a flaky live-audio E2E.
+pub async fn recover_artifacts(pool: &SqlitePool, session_id: &str) -> Result<String, String> {
     // A meeting-mode session has two partial artifacts (microphone, system).
     // Recover every one that carries data; drop only silent/empty tracks.
     let rows = sqlx::query_as::<_, (String, String, String)>(
@@ -415,9 +425,126 @@ pub async fn recover_recording_inner(
         .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
-
-    spawn_processing(app.clone(), pool.clone(), note_id.clone());
     Ok(note_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_pool;
+
+    /// Writes a canonical 16-bit PCM WAV, then zeroes the RIFF/data size
+    /// fields the way a `kill -9` leaves a torn file.
+    fn crashed_partial(path: &std::path::Path, seconds: u32) {
+        let spec = hound::WavSpec {
+            channels: 1,
+            sample_rate: 16_000,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).unwrap();
+        for i in 0..(16_000 * seconds) {
+            // A loud tone so the bytes are unambiguously real audio.
+            let v = ((i as f32 * 0.05).sin() * 12_000.0) as i16;
+            writer.write_sample(v).unwrap();
+        }
+        writer.finalize().unwrap();
+        let mut bytes = std::fs::read(path).unwrap();
+        bytes[4..8].copy_from_slice(&[0, 0, 0, 0]);
+        bytes[40..44].copy_from_slice(&[0, 0, 0, 0]);
+        std::fs::write(path, bytes).unwrap();
+    }
+
+    async fn seed_session(pool: &SqlitePool, dir: &std::path::Path, sources: &[&str]) -> String {
+        let note_id = uuid::Uuid::new_v4().to_string();
+        let session_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO notes (id, title, created_at) VALUES (?1, 'New recording', '2026-01-01T00:00:00Z')")
+            .bind(&note_id).execute(pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO recording_sessions (id, note_id, status, source_mode, sample_rate, channels, started_at, updated_at)
+             VALUES (?1, ?2, 'recording', 'microphone-and-system', 16000, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        ).bind(&session_id).bind(&note_id).execute(pool).await.unwrap();
+        for source in sources {
+            let partial = dir.join(format!("{source}.partial.wav"));
+            crashed_partial(&partial, 2);
+            sqlx::query("INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at) VALUES (?1, ?2, ?3, ?4, 'partial', '2026-01-01T00:00:00Z')")
+                .bind(uuid::Uuid::new_v4().to_string()).bind(&session_id).bind(*source)
+                .bind(partial.to_string_lossy().to_string()).execute(pool).await.unwrap();
+        }
+        session_id
+    }
+
+    /// The C2 regression guard: a crashed meeting session's mic AND system
+    /// tracks must both be promoted to final (the data-loss bug that dropped
+    /// the system track).
+    #[tokio::test]
+    async fn recovery_promotes_all_source_artifacts() {
+        let pool = test_pool().await;
+        let dir = std::env::temp_dir().join(format!("arya-rec-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let session_id = seed_session(&pool, &dir, &["microphone", "system"]).await;
+
+        recover_artifacts(&pool, &session_id).await.unwrap();
+
+        let finals = sqlx::query_as::<_, (String, String)>(
+            "SELECT source, status FROM audio_artifacts WHERE session_id = ?1 ORDER BY source",
+        )
+        .bind(&session_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(finals.len(), 2);
+        assert!(
+            finals.iter().all(|(_, status)| status == "final"),
+            "both tracks must be final: {finals:?}"
+        );
+        // Each promoted to <source>.wav with real bytes.
+        assert!(dir.join("microphone.wav").exists());
+        assert!(dir.join("system.wav").exists());
+        let session_status =
+            sqlx::query_scalar::<_, String>("SELECT status FROM recording_sessions WHERE id = ?1")
+                .bind(&session_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(session_status, "finished");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// One silent/empty track must not block recovering the other.
+    #[tokio::test]
+    async fn recovery_skips_empty_track_but_keeps_the_good_one() {
+        let pool = test_pool().await;
+        let dir = std::env::temp_dir().join(format!("arya-rec-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let session_id = seed_session(&pool, &dir, &["microphone", "system"]).await;
+        // Truncate the system track to a header-only (empty) file.
+        std::fs::write(dir.join("system.partial.wav"), vec![0u8; 44]).unwrap();
+
+        let note_id = recover_artifacts(&pool, &session_id).await.unwrap();
+        assert!(!note_id.is_empty());
+
+        let mic = sqlx::query_scalar::<_, String>(
+            "SELECT status FROM audio_artifacts WHERE session_id = ?1 AND source = 'microphone'",
+        )
+        .bind(&session_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let sys = sqlx::query_scalar::<_, String>(
+            "SELECT status FROM audio_artifacts WHERE session_id = ?1 AND source = 'system'",
+        )
+        .bind(&session_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(mic, "final", "the good mic track must recover");
+        assert_eq!(
+            sys, "partial",
+            "the empty system track stays partial (skipped)"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }
 
 /// Discards a crashed session's audio and marks it discarded.
