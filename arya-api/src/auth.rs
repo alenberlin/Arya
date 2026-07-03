@@ -11,8 +11,14 @@ pub struct Verifier {
 }
 
 enum VerifierMode {
-    Local { token: String },
-    Clerk { issuer: String, keys: Vec<Jwk> },
+    Local {
+        token: String,
+    },
+    Clerk {
+        issuer: String,
+        audience: String,
+        keys: Vec<Jwk>,
+    },
 }
 
 #[derive(Clone, serde::Deserialize)]
@@ -33,7 +39,11 @@ impl Verifier {
             AuthMode::Local { token } => VerifierMode::Local {
                 token: token.clone(),
             },
-            AuthMode::Clerk { issuer, jwks_url } => {
+            AuthMode::Clerk {
+                issuer,
+                jwks_url,
+                audience,
+            } => {
                 #[derive(serde::Deserialize)]
                 struct Jwks {
                     keys: Vec<Jwk>,
@@ -48,6 +58,7 @@ impl Verifier {
                     .keys;
                 VerifierMode::Clerk {
                     issuer: issuer.clone(),
+                    audience: audience.clone(),
                     keys,
                 }
             }
@@ -70,15 +81,22 @@ impl Verifier {
                     Err("invalid token".into())
                 }
             }
-            VerifierMode::Clerk { issuer, keys } => {
+            VerifierMode::Clerk {
+                issuer,
+                audience,
+                keys,
+            } => {
                 let header = decode_header(token).map_err(|e| e.to_string())?;
                 let kid = header.kid.ok_or("token missing kid")?;
                 let jwk = keys.iter().find(|k| k.kid == kid).ok_or("unknown kid")?;
                 let key =
                     DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|e| e.to_string())?;
+                // RS256 pinned (alg-confusion safe); issuer AND audience bound
+                // so a token minted for another app on the same Clerk instance
+                // is rejected.
                 let mut validation = Validation::new(Algorithm::RS256);
                 validation.set_issuer(&[issuer]);
-                validation.validate_aud = false;
+                validation.set_audience(&[audience]);
                 let data = decode::<Claims>(token, &key, &validation).map_err(|e| e.to_string())?;
                 Ok(data.claims.sub)
             }

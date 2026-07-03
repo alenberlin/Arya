@@ -120,6 +120,10 @@ pub fn repair_header(path: &Path) -> Result<u64, WavFileError> {
     if data_len == 0 {
         return Err(WavFileError::Empty);
     }
+    // Canonical WAV sizes are u32; refuse absurd lengths rather than wrapping.
+    if len - 8 > u32::MAX as u64 {
+        return Err(WavFileError::NotCanonical);
+    }
     file.seek(SeekFrom::Start(4))?;
     file.write_all(&((len - 8) as u32).to_le_bytes())?;
     file.seek(SeekFrom::Start(40))?;
@@ -133,6 +137,9 @@ pub fn repair_header(path: &Path) -> Result<u64, WavFileError> {
 pub fn load_normalized(path: &Path) -> Result<crate::speech::AudioClip, WavFileError> {
     let mut reader = hound::WavReader::open(path)?;
     let spec = reader.spec();
+    if !matches!(spec.bits_per_sample, 8 | 16 | 24 | 32) {
+        return Err(WavFileError::NotCanonical);
+    }
     let raw: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Int => {
             let max = (1i64 << (spec.bits_per_sample - 1)) as f32;

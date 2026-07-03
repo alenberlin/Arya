@@ -1,0 +1,32 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            arya-api
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter arya-sidecar build
+      # Full gate: brand + key scan, lint, typecheck, TS tests, Rust shell,
+      # sidecar, and arya-api. Mirrors `make verify`.
+      - run: make verify

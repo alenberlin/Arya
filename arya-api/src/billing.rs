@@ -57,16 +57,21 @@ pub struct AccountSnapshot {
 pub trait Wallet: Send + Sync {
     /// The account snapshot the desktop shows (tier, balance, usage).
     fn snapshot(&self, user_id: &str, used_credits: i64) -> AccountSnapshot;
-    /// Whether an action of `estimate` credits may proceed. Local mode always
-    /// allows; Stripe mode checks the real balance.
-    fn can_spend(&self, snapshot: &AccountSnapshot, estimate: i64) -> bool;
+    /// The spendable budget (included + top-up credits) the metering layer
+    /// enforces holds against, or `None` when this wallet does not enforce a
+    /// balance. Returning `None` is only safe when the wallet genuinely has
+    /// no metered spend (pure local, no cloud keys).
+    fn budget_credits(&self, snapshot: &AccountSnapshot) -> Option<i64>;
 }
 
-/// Dev/open-source wallet: everyone is effectively funded so the product is
-/// fully usable without Stripe. Tier is read from an env override for demos.
+/// Dev/open-source wallet: users are on a tier with real included credits,
+/// and the metering layer enforces that budget (so even in local mode a user
+/// cannot run unbounded paid-provider calls). `enforce = false` is a
+/// deliberate, no-cloud dev escape hatch.
 pub struct LocalWallet {
     tier: Tier,
     topup: i64,
+    enforce: bool,
 }
 
 impl LocalWallet {
@@ -76,7 +81,21 @@ impl LocalWallet {
             Ok("free") => Tier::Free,
             _ => Tier::Pro,
         };
-        Self { tier, topup: 0 }
+        // Enforce the budget whenever a real cloud provider key is present -
+        // otherwise a local wallet in front of paid keys is unmetered access.
+        // Explicit opt-out only via ARYA_LOCAL_UNMETERED=1 for offline dev.
+        let has_cloud = std::env::var("ANTHROPIC_API_KEY")
+            .map(|k| !k.is_empty())
+            .unwrap_or(false)
+            || std::env::var("OPENAI_API_KEY")
+                .map(|k| !k.is_empty())
+                .unwrap_or(false);
+        let opt_out = std::env::var("ARYA_LOCAL_UNMETERED").as_deref() == Ok("1");
+        Self {
+            tier,
+            topup: 0,
+            enforce: has_cloud && !opt_out,
+        }
     }
 }
 
@@ -94,10 +113,12 @@ impl Wallet for LocalWallet {
         }
     }
 
-    fn can_spend(&self, _snapshot: &AccountSnapshot, _estimate: i64) -> bool {
-        // Local mode is always funded; the metering ledger still records
-        // usage so the UI shows a real number.
-        true
+    fn budget_credits(&self, snapshot: &AccountSnapshot) -> Option<i64> {
+        if self.enforce {
+            Some(snapshot.included_credits + snapshot.topup_credits)
+        } else {
+            None
+        }
     }
 }
 
@@ -126,13 +147,26 @@ mod tests {
         let wallet = LocalWallet {
             tier: Tier::Pro,
             topup: 10_000,
+            enforce: false,
         };
         let snap = wallet.snapshot("u1", 30_000);
         assert_eq!(snap.included_credits, 500_000);
         assert_eq!(snap.topup_credits, 10_000);
         assert_eq!(snap.remaining_credits, 480_000);
         assert!(snap.subscribed);
-        assert!(wallet.can_spend(&snap, 999_999));
+        // Unmetered dev wallet exposes no budget cap.
+        assert_eq!(wallet.budget_credits(&snap), None);
+    }
+
+    #[test]
+    fn enforcing_wallet_exposes_budget() {
+        let wallet = LocalWallet {
+            tier: Tier::Pro,
+            topup: 10_000,
+            enforce: true,
+        };
+        let snap = wallet.snapshot("u1", 0);
+        assert_eq!(wallet.budget_credits(&snap), Some(510_000));
     }
 
     #[test]
@@ -140,6 +174,7 @@ mod tests {
         let wallet = LocalWallet {
             tier: Tier::Free,
             topup: 0,
+            enforce: false,
         };
         let snap = wallet.snapshot("u1", 0);
         assert!(!snap.subscribed);

@@ -2,6 +2,13 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capabilities for the main window",
-  "windows": ["main", "hud"],
-  "permissions": ["core:default"]
+  "windows": [
+    "main",
+    "hud"
+  ],
+  "permissions": [
+    "core:default",
+    "updater:default",
+    "process:default"
+  ]
 }

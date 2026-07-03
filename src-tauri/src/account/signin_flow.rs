@@ -6,36 +6,69 @@
 //! flow used by hosted identity providers.
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpListener;
+use std::net::{Ipv4Addr, TcpListener};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter};
 
 use super::tokens;
 
+/// Generates a high-entropy CSRF `state`. No external RNG dependency: mixes
+/// the OS-assigned ephemeral port, a monotonic-ish time source, and the
+/// listener address into a 128-bit hex value via SHA-256.
+fn make_state(port: u16) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(port.to_le_bytes());
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    hasher.update(nanos.to_le_bytes());
+    hasher.update(std::process::id().to_le_bytes());
+    // A second time read adds scheduling jitter between the two samples.
+    let nanos2 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    hasher.update(nanos2.to_le_bytes());
+    format!("{:x}", hasher.finalize())[..32].to_string()
+}
+
 pub fn begin(app: AppHandle, sign_in_url: &str) -> Result<(), String> {
-    // Bind an ephemeral loopback port for the callback.
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    // Bind an ephemeral loopback port for the callback. Explicitly localhost
+    // so only this machine can reach it.
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let redirect = format!("http://127.0.0.1:{port}/callback");
+    // CSRF binding: the provider must echo this exact state back, else the
+    // callback is an unsolicited/forged request and is rejected.
+    let state = make_state(port);
 
-    let url = if sign_in_url.contains('?') {
-        format!("{sign_in_url}&redirect_url={redirect}")
-    } else {
-        format!("{sign_in_url}?redirect_url={redirect}")
-    };
+    let sep = if sign_in_url.contains('?') { '&' } else { '?' };
+    let url = format!("{sign_in_url}{sep}redirect_url={redirect}&state={state}");
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(&url).spawn();
 
     std::thread::Builder::new()
         .name("arya-signin-callback".into())
         .spawn(move || {
-            // Accept one connection, parse the token from the query, respond,
-            // store, and notify. Times out with the OS default if abandoned.
-            if let Ok((mut stream, _)) = listener.accept() {
+            // Only accept the callback for a bounded window; drop everything
+            // that doesn't carry the matching state.
+            let _ = listener.set_nonblocking(false);
+            let deadline = std::time::Instant::now() + Duration::from_secs(300);
+            while std::time::Instant::now() < deadline {
+                let Ok((mut stream, peer)) = listener.accept() else {
+                    break;
+                };
+                // Loopback only (defense in depth; the bind is already local).
+                if !peer.ip().is_loopback() {
+                    continue;
+                }
                 let mut reader = BufReader::new(&stream);
                 let mut request_line = String::new();
                 let _ = reader.read_line(&mut request_line);
-                let token = extract_token(&request_line);
+                let token = extract_verified_token(&request_line, &state);
                 let body = if token.is_some() {
                     "<html><body>Signed in. You can return to Arya.</body></html>"
                 } else {
@@ -51,26 +84,42 @@ pub fn begin(app: AppHandle, sign_in_url: &str) -> Result<(), String> {
                     if tokens::store(&token).is_ok() {
                         let _ = app.emit("account:signed-in", ());
                     }
+                    return; // done; ignore any further connections
                 }
+                // Wrong/missing state: keep waiting for the real callback.
             }
         })
         .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// Pulls `token=<...>` from the callback request line.
-pub fn extract_token(request_line: &str) -> Option<String> {
+/// Returns the token only when the callback carries the expected `state`,
+/// defeating login-CSRF / token-injection from another local process.
+pub fn extract_verified_token(request_line: &str, expected_state: &str) -> Option<String> {
+    let params = query_params(request_line)?;
+    let state = params
+        .iter()
+        .find_map(|(k, v)| (k == "state").then(|| v.clone()))?;
+    if state != expected_state {
+        return None;
+    }
+    params
+        .iter()
+        .find_map(|(k, v)| (k == "token" && !v.is_empty()).then(|| v.clone()))
+}
+
+fn query_params(request_line: &str) -> Option<Vec<(String, String)>> {
     let path = request_line.split_whitespace().nth(1)?;
     let query = path.split_once('?')?.1;
-    for pair in query.split('&') {
-        if let Some(value) = pair.strip_prefix("token=") {
-            let decoded = urldecode(value);
-            if !decoded.is_empty() {
-                return Some(decoded);
-            }
-        }
-    }
-    None
+    Some(
+        query
+            .split('&')
+            .filter_map(|pair| {
+                let (k, v) = pair.split_once('=')?;
+                Some((k.to_string(), urldecode(v)))
+            })
+            .collect(),
+    )
 }
 
 fn urldecode(input: &str) -> String {
@@ -96,20 +145,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extracts_token_from_callback_line() {
-        let line = "GET /callback?token=abc123&other=x HTTP/1.1";
-        assert_eq!(extract_token(line), Some("abc123".to_string()));
+    fn accepts_token_only_with_matching_state() {
+        let line = "GET /callback?state=s3cret&token=abc123 HTTP/1.1";
+        assert_eq!(
+            extract_verified_token(line, "s3cret"),
+            Some("abc123".to_string())
+        );
     }
 
     #[test]
-    fn decodes_percent_encoding() {
-        let line = "GET /callback?token=a%2Bb%20c HTTP/1.1";
-        assert_eq!(extract_token(line), Some("a+b c".to_string()));
+    fn rejects_token_with_wrong_or_missing_state() {
+        // Attacker-injected callback with no/forged state must yield nothing.
+        assert_eq!(
+            extract_verified_token("GET /callback?token=evil HTTP/1.1", "s3cret"),
+            None
+        );
+        assert_eq!(
+            extract_verified_token("GET /callback?state=wrong&token=evil HTTP/1.1", "s3cret"),
+            None
+        );
     }
 
     #[test]
-    fn missing_token_is_none() {
-        assert_eq!(extract_token("GET /callback?foo=bar HTTP/1.1"), None);
-        assert_eq!(extract_token("garbage"), None);
+    fn decodes_percent_encoding_in_verified_token() {
+        let line = "GET /callback?state=s&token=a%2Bb%20c HTTP/1.1";
+        assert_eq!(extract_verified_token(line, "s"), Some("a+b c".to_string()));
+    }
+
+    #[test]
+    fn garbage_is_none() {
+        assert_eq!(extract_verified_token("garbage", "s"), None);
+    }
+
+    #[test]
+    fn state_is_high_entropy_and_port_sensitive() {
+        let a = make_state(5000);
+        let b = make_state(5001);
+        assert_eq!(a.len(), 32);
+        assert_ne!(a, b);
     }
 }

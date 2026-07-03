@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type AgentEvent,
   type AgentMessage,
@@ -30,6 +30,87 @@ interface LiveTurn {
   reasoning: string;
   tools: ToolInfo[];
 }
+
+interface MessageViewProps {
+  message: AgentMessage;
+  branchable: boolean;
+  images: Record<string, string>;
+  onBranch: (messageId: string) => void;
+  onNeedImage: (path: string) => void;
+}
+
+/**
+ * A single settled message. Memoized so streaming token deltas (which only
+ * change the separate live block) never re-render the whole history.
+ * contentJson is parsed once here, not on every parent render.
+ */
+const MessageView = memo(function MessageView({
+  message,
+  branchable,
+  images,
+  onBranch,
+  onNeedImage,
+}: MessageViewProps) {
+  const content = useMemo<{ text?: string; reasoning?: string | null; tools?: ToolInfo[] }>(() => {
+    try {
+      return JSON.parse(message.contentJson);
+    } catch {
+      return { text: message.contentJson };
+    }
+  }, [message.contentJson]);
+
+  const imagePaths = useMemo(
+    () =>
+      (content.tools ?? [])
+        .map((tool) => tool.result?.match(/images\/[\w.-]+\.png/)?.[0])
+        .filter((p): p is string => Boolean(p)),
+    [content.tools],
+  );
+  useEffect(() => {
+    for (const path of imagePaths) onNeedImage(path);
+  }, [imagePaths, onNeedImage]);
+
+  return (
+    <article
+      style={{
+        margin: "8px 0",
+        padding: 8,
+        borderRadius: 8,
+        background: message.role === "user" ? "var(--info-bg)" : "var(--bg-subtle)",
+      }}
+    >
+      <small>{message.role === "user" ? "You" : "Arya"}</small>{" "}
+      {branchable ? (
+        <button type="button" style={{ fontSize: 11 }} onClick={() => onBranch(message.id)}>
+          Branch here
+        </button>
+      ) : null}
+      {content.reasoning ? (
+        <details>
+          <summary>Reasoning</summary>
+          <pre style={{ whiteSpace: "pre-wrap" }}>{content.reasoning}</pre>
+        </details>
+      ) : null}
+      {(content.tools ?? []).map((tool) => {
+        const match = tool.result?.match(/images\/[\w.-]+\.png/)?.[0];
+        return (
+          <div key={tool.callId} style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
+            ⚙ {tool.name}({JSON.stringify(tool.args)})
+            {tool.result ? ` → ${tool.result.slice(0, 120)}` : ""}
+            {match && images[match] ? (
+              <img
+                src={images[match]}
+                alt={`generated ${match}`}
+                style={{ display: "block", maxWidth: 360, marginTop: 4 }}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+      <div style={{ whiteSpace: "pre-wrap" }}>{content.text}</div>
+    </article>
+  );
+});
 
 /** Agent chat: sessions, streaming turns, tool approvals, steering. */
 export function AgentPanel() {
@@ -209,70 +290,18 @@ export function AgentPanel() {
     void agentResolveApproval(active.id, callId, decision).catch((e) => setError(String(e)));
   };
 
-  const renderMessage = (message: AgentMessage) => {
-    let content: { text?: string; reasoning?: string | null; tools?: ToolInfo[] } = {};
-    try {
-      content = JSON.parse(message.contentJson);
-    } catch {
-      content = { text: message.contentJson };
-    }
-    return (
-      <article
-        key={message.id}
-        style={{
-          margin: "8px 0",
-          padding: 8,
-          borderRadius: 8,
-          background: message.role === "user" ? "#eef2ff" : "#f8fafc",
-        }}
-      >
-        <small>{message.role === "user" ? "You" : "Arya"}</small>{" "}
-        {active && !message.id.startsWith("local-") ? (
-          <button
-            type="button"
-            style={{ fontSize: 11 }}
-            onClick={() =>
-              void agentBranchSession(active.id, message.id)
-                .then((s) => {
-                  void refreshSessions();
-                  return openSession(s);
-                })
-                .catch((e) => setError(String(e)))
-            }
-          >
-            Branch here
-          </button>
-        ) : null}
-        {content.reasoning ? (
-          <details>
-            <summary>Reasoning</summary>
-            <pre style={{ whiteSpace: "pre-wrap" }}>{content.reasoning}</pre>
-          </details>
-        ) : null}
-        {(content.tools ?? []).map((tool) => {
-          const match = tool.result?.match(/images\/[\w.-]+\.png/);
-          if (match && images[match[0]] === undefined) {
-            setImages((m) => ({ ...m, [match[0]]: "" }));
-            void loadImage(match[0]);
-          }
-          return (
-            <div key={tool.callId} style={{ fontFamily: "monospace", fontSize: 12 }}>
-              ⚙ {tool.name}({JSON.stringify(tool.args)})
-              {tool.result ? ` → ${tool.result.slice(0, 120)}` : ""}
-              {match && images[match[0]] ? (
-                <img
-                  src={images[match[0]]}
-                  alt={`generated ${match[0]}`}
-                  style={{ display: "block", maxWidth: 360, marginTop: 4 }}
-                />
-              ) : null}
-            </div>
-          );
-        })}
-        <div style={{ whiteSpace: "pre-wrap" }}>{content.text}</div>
-      </article>
-    );
-  };
+  const onBranch = useCallback(
+    (messageId: string) => {
+      if (!active) return;
+      void agentBranchSession(active.id, messageId)
+        .then((s) => {
+          void refreshSessions();
+          return openSession(s);
+        })
+        .catch((e) => setError(String(e)));
+    },
+    [active, refreshSessions, openSession],
+  );
 
   return (
     <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
@@ -332,7 +361,21 @@ export function AgentPanel() {
               <strong>{active.title}</strong> · {active.model} · {active.mode}
             </p>
             <div role="log" aria-label="agent conversation">
-              {messages.map(renderMessage)}
+              {messages.map((message) => (
+                <MessageView
+                  key={message.id}
+                  message={message}
+                  branchable={!message.id.startsWith("local-")}
+                  images={images}
+                  onBranch={onBranch}
+                  onNeedImage={(path) => {
+                    if (images[path] === undefined) {
+                      setImages((m) => ({ ...m, [path]: "" }));
+                      void loadImage(path);
+                    }
+                  }}
+                />
+              ))}
               {live ? (
                 <article style={{ margin: "8px 0", padding: 8, background: "#f0fdf4" }}>
                   <small>Arya (working…)</small>

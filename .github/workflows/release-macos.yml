@@ -1,0 +1,52 @@
+name: release-macos
+
+# Builds, signs, and notarizes the macOS DMG and publishes it plus the
+# signed update manifest to the public releases repo. Manual dispatch; the
+# secrets below must be configured before the first real release.
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        type: choice
+        options: [stable, rc]
+        default: rc
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter arya-sidecar build
+
+      # Guard: no provider key may ship in the desktop bundle.
+      - run: node scripts/scan-keys.mjs
+
+      - name: Build, sign, notarize
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Apple Developer ID signing + notarization.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Ed25519 key for signing the auto-update manifest.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          # The releases repo is separate and public so the unauthenticated
+          # updater GET succeeds even while this repo is private.
+          releaseDraft: false
+          tagName: ${{ github.event.inputs.channel == 'stable' && 'v__VERSION__' || 'rc' }}
+          args: ${{ github.event.inputs.channel == 'stable' && '' || '--config src-tauri/tauri.rc.conf.json' }}

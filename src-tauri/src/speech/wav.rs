@@ -24,6 +24,12 @@ pub fn load_16k_mono(path: &Path) -> Result<AudioClip, SpeechError> {
             spec.channels
         )));
     }
+    if !matches!(spec.bits_per_sample, 8 | 16 | 24 | 32) {
+        return Err(SpeechError::InvalidAudio(format!(
+            "unsupported bit depth {}",
+            spec.bits_per_sample
+        )));
+    }
     let samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Int => {
             let max = (1i64 << (spec.bits_per_sample - 1)) as f32;

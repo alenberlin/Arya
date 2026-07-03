@@ -1,15 +1,55 @@
-import { isAbsolute, normalize, resolve, sep } from "node:path";
+import { realpathSync } from "node:fs";
+import { dirname, isAbsolute, normalize, resolve, sep } from "node:path";
+
+/** Lexical containment check (no symlink resolution). */
+function isLexicallyInside(base: string, target: string): boolean {
+  return target === base || target.startsWith(base + sep);
+}
 
 /**
  * Resolves a tool-supplied path against the workspace and proves it stays
- * inside. The Seatbelt jail is the hard boundary; this is the polite first
- * line that gives the model a clean error instead of EPERM.
+ * inside — including after symlink resolution, so an in-workspace symlink
+ * can't redirect a write outside. The Seatbelt jail is the hard boundary;
+ * this gives the model a clean error instead of EPERM and closes the symlink
+ * gap the jail alone wouldn't (for the paths it does permit).
  */
 export function resolveInWorkspace(workspace: string, requested: string): string {
-  const base = resolve(workspace);
+  const base = realBase(workspace);
   const target = isAbsolute(requested) ? normalize(requested) : resolve(base, requested);
-  if (target !== base && !target.startsWith(base + sep)) {
+  // Compare on realpath-normalized forms so OS-level ancestor symlinks (e.g.
+  // /tmp -> /private/tmp) and in-workspace symlinks are handled consistently:
+  // a lexically-inside path that resolves outside is rejected.
+  const realTarget = realpathOfNearest(target);
+  if (!isLexicallyInside(base, realTarget)) {
     throw new Error(`path escapes the workspace: ${requested}`);
+  }
+  return target;
+}
+
+function realBase(workspace: string): string {
+  // Resolve through the same nearest-existing-ancestor logic as targets, so
+  // an OS-level symlink on an ancestor (e.g. /tmp -> /private/tmp on macOS)
+  // normalizes both sides consistently.
+  return realpathOfNearest(resolve(workspace));
+}
+
+/** realpath of `target`, or of its nearest existing ancestor when the leaf
+ * doesn't exist yet (a write creating a new file). */
+function realpathOfNearest(target: string): string {
+  let current = target;
+  // Walk up until an existing path is found.
+  for (let i = 0; i < 64; i++) {
+    try {
+      const real = realpathSync(current);
+      // Re-append the not-yet-existing tail relative to the resolved ancestor.
+      if (current === target) return real;
+      const tail = target.slice(current.length);
+      return real + tail;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
   }
   return target;
 }

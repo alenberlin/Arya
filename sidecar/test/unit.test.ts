@@ -1,3 +1,6 @@
+import { mkdtempSync, symlinkSync, mkdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApprovalBroker } from "../src/approvals.js";
 import { resolveInWorkspace } from "../src/paths.js";
@@ -7,8 +10,8 @@ describe("workspace path jail", () => {
   const ws = "/tmp/arya-ws";
 
   it("resolves relative paths inside the workspace", () => {
-    expect(resolveInWorkspace(ws, "notes/a.md")).toBe("/tmp/arya-ws/notes/a.md");
-    expect(resolveInWorkspace(ws, ".")).toBe("/tmp/arya-ws");
+    expect(resolveInWorkspace(ws, "notes/a.md").endsWith("/arya-ws/notes/a.md")).toBe(true);
+    expect(resolveInWorkspace(ws, ".").endsWith("/arya-ws")).toBe(true);
   });
 
   it("rejects traversal escapes", () => {
@@ -23,7 +26,34 @@ describe("workspace path jail", () => {
   });
 
   it("accepts absolute paths inside the workspace", () => {
-    expect(resolveInWorkspace(ws, "/tmp/arya-ws/sub/file")).toBe("/tmp/arya-ws/sub/file");
+    expect(resolveInWorkspace(ws, "/tmp/arya-ws/sub/file").endsWith("/arya-ws/sub/file")).toBe(
+      true,
+    );
+  });
+
+  it("rejects writes through an in-workspace symlink that points outside", () => {
+    const realWs = mkdtempSync(join(tmpdir(), "arya-ws-"));
+    const outside = mkdtempSync(join(tmpdir(), "arya-out-"));
+    // A symlink inside the workspace pointing at an external dir.
+    symlinkSync(outside, join(realWs, "link"));
+    try {
+      // Lexically "inside", but resolves out via the link — must be rejected.
+      expect(() => resolveInWorkspace(realWs, "link/evil.txt")).toThrow(/link|escapes/);
+    } finally {
+      rmSync(realWs, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("allows a new file whose parent exists inside the workspace", () => {
+    const realWs = mkdtempSync(join(tmpdir(), "arya-ws-"));
+    mkdirSync(join(realWs, "notes"));
+    try {
+      const resolved = resolveInWorkspace(realWs, "notes/new.md");
+      expect(resolved.endsWith("/notes/new.md")).toBe(true);
+    } finally {
+      rmSync(realWs, { recursive: true, force: true });
+    }
   });
 });
 

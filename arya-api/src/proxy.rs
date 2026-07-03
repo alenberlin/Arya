@@ -79,8 +79,27 @@ pub async fn forward(
     let digest = body_digest(&body);
     let idempotency_key = format!("{action}:{user_id}:{digest}");
 
-    // Balance gate: reject before doing any provider work if the wallet
-    // can't cover the estimate. Local mode always passes.
+    // Duplicate/retry guard: if this exact request already settled, return the
+    // receipt WITHOUT calling the provider again (a retry must never bill the
+    // upstream twice).
+    if let Ok(Some(credits)) = metering::existing_charge(&state.pool, &idempotency_key).await {
+        return Ok(Json(serde_json::json!({
+            "success": true,
+            "data": serde_json::Value::Null,
+            "meta": {
+                "creditsCharged": credits,
+                "idempotentReplay": true,
+                "model": entry.id,
+                "privacyTier": entry.privacy_tier,
+                "note": "duplicate request; upstream not re-invoked",
+            }
+        })));
+    }
+
+    // Balance-enforced hold: authorize() checks the wallet's budget against
+    // settled charges + open holds transactionally, so concurrent requests
+    // can't collectively overspend. A `None` budget means the wallet does not
+    // meter (offline dev with no cloud keys).
     let snapshot = billing::account_snapshot(&state.pool, state.wallet.as_ref(), &user_id)
         .await
         .map_err(|e| {
@@ -90,23 +109,24 @@ pub async fn forward(
                 &e.to_string(),
             )
         })?;
-    if !state.wallet.can_spend(&snapshot, 500) {
-        return Err(error(
-            StatusCode::PAYMENT_REQUIRED,
-            "insufficient_credits",
-            "not enough credits; top up or upgrade to continue",
-        ));
-    }
-
-    let hold = metering::authorize(&state.pool, &user_id, action, 500, 60)
-        .await
-        .map_err(|e| {
-            error(
+    let budget = state.wallet.budget_credits(&snapshot);
+    let hold = match metering::authorize(&state.pool, &user_id, action, 500, 60, budget).await {
+        Ok(hold) => hold,
+        Err(metering::AuthorizeError::InsufficientCredits { .. }) => {
+            return Err(error(
+                StatusCode::PAYMENT_REQUIRED,
+                "insufficient_credits",
+                "not enough credits; top up or upgrade to continue",
+            ))
+        }
+        Err(metering::AuthorizeError::Db(e)) => {
+            return Err(error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "metering_failure",
                 &e.to_string(),
-            )
-        })?;
+            ))
+        }
+    };
 
     // Call upstream with the server-held key. Body forwarded as-is minus any
     // client-supplied identity fields (structural anonymization).

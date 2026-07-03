@@ -1,6 +1,8 @@
 //! RAG commands: reindex the workspace, semantic search, and the status the
 //! settings UI shows.
 
+use std::sync::{Mutex, OnceLock};
+
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, State};
 
@@ -8,6 +10,26 @@ use super::embed::{Embedder, OllamaEmbedder};
 use super::{blob_to_f32, chunk_text, cosine, f32_to_blob, SearchHit};
 
 const OLLAMA_URL: &str = "http://127.0.0.1:11434";
+
+/// In-memory cache of parsed chunk embeddings so search doesn't re-load and
+/// re-deserialize every blob from SQLite on each query. Invalidated on
+/// reindex. Bounded by the workspace's chunk count.
+struct CachedChunk {
+    source_kind: String,
+    source_id: String,
+    title: String,
+    content: String,
+    embedding: Vec<f32>,
+}
+
+fn cache() -> &'static Mutex<Option<Vec<CachedChunk>>> {
+    static CACHE: OnceLock<Mutex<Option<Vec<CachedChunk>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn invalidate_cache() {
+    *cache().lock().expect("rag cache lock") = None;
+}
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,6 +75,7 @@ fn reindex_blocking(app: &AppHandle, pool: &SqlitePool) -> Result<i64, String> {
         return Err("local embedding model (Ollama) is not running".into());
     }
 
+    invalidate_cache();
     let documents = tauri::async_runtime::block_on(collect_documents(pool))?;
     let _ = app.emit(
         "rag:progress",
@@ -94,6 +117,8 @@ fn reindex_blocking(app: &AppHandle, pool: &SqlitePool) -> Result<i64, String> {
             total += 1;
         }
     }
+    // Drop the stale cache; the next search repopulates from the new rows.
+    invalidate_cache();
     let _ = app.emit(
         "rag:progress",
         serde_json::json!({ "stage": "done", "total": total }),
@@ -127,26 +152,19 @@ pub fn search_blocking(
         .next()
         .ok_or("no embedding for query")?;
 
-    let rows = tauri::async_runtime::block_on(async {
-        sqlx::query_as::<_, (String, String, String, String, Vec<u8>)>(
-            "SELECT source_kind, source_id, title, content, embedding FROM rag_chunks",
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(|e| e.to_string())
-    })?;
+    // Populate the embedding cache once (per reindex), then score in memory.
+    ensure_cache_loaded(pool)?;
+    let guard = cache().lock().expect("rag cache lock");
+    let chunks = guard.as_ref().expect("cache loaded");
 
-    let mut scored: Vec<SearchHit> = rows
-        .into_iter()
-        .map(|(kind, id, title, content, blob)| {
-            let score = cosine(&query_embedding, &blob_to_f32(&blob));
-            SearchHit {
-                source_kind: kind,
-                source_id: id,
-                title,
-                content,
-                score,
-            }
+    let mut scored: Vec<SearchHit> = chunks
+        .iter()
+        .map(|c| SearchHit {
+            source_kind: c.source_kind.clone(),
+            source_id: c.source_id.clone(),
+            title: c.title.clone(),
+            content: c.content.clone(),
+            score: cosine(&query_embedding, &c.embedding),
         })
         .collect();
     scored.sort_by(|a, b| {
@@ -156,6 +174,35 @@ pub fn search_blocking(
     });
     scored.truncate(limit);
     Ok(scored)
+}
+
+/// Loads chunk embeddings into the in-memory cache if not already present.
+fn ensure_cache_loaded(pool: &SqlitePool) -> Result<(), String> {
+    if cache().lock().expect("rag cache lock").is_some() {
+        return Ok(());
+    }
+    let rows = tauri::async_runtime::block_on(async {
+        sqlx::query_as::<_, (String, String, String, String, Vec<u8>)>(
+            "SELECT source_kind, source_id, title, content, embedding FROM rag_chunks",
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())
+    })?;
+    let chunks: Vec<CachedChunk> = rows
+        .into_iter()
+        .map(
+            |(source_kind, source_id, title, content, blob)| CachedChunk {
+                source_kind,
+                source_id,
+                title,
+                content,
+                embedding: blob_to_f32(&blob),
+            },
+        )
+        .collect();
+    *cache().lock().expect("rag cache lock") = Some(chunks);
+    Ok(())
 }
 
 struct Document {

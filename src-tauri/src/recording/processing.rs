@@ -218,12 +218,7 @@ fn assign_speakers(
     ))
     .map_err(|e| e.to_string())?;
 
-    let mut extractor =
-        sherpa_rs::speaker_id::EmbeddingExtractor::new(sherpa_rs::speaker_id::ExtractorConfig {
-            model: model_path.to_string_lossy().to_string(),
-            ..Default::default()
-        })
-        .map_err(|e| e.to_string())?;
+    let extractor = diarize::get_or_load_extractor(&model_path.to_string_lossy())?;
 
     let profiles =
         tauri::async_runtime::block_on(diarize::load_profiles(pool)).map_err(|e| e.to_string())?;
@@ -242,10 +237,13 @@ fn assign_speakers(
         let mut embedded_indices: Vec<usize> = Vec::new();
         for &i in &indices {
             if samples_by_turn[i].len() >= min_samples {
-                match extractor.compute_speaker_embedding(
-                    samples_by_turn[i].clone(),
-                    crate::speech::AudioClip::SAMPLE_RATE,
-                ) {
+                match extractor
+                    .lock()
+                    .expect("extractor lock")
+                    .compute_speaker_embedding(
+                        samples_by_turn[i].clone(),
+                        crate::speech::AudioClip::SAMPLE_RATE,
+                    ) {
                     Ok(embedding) => {
                         embeddings.push(embedding);
                         embedded_indices.push(i);
@@ -371,7 +369,11 @@ fn fetch_turn_texts(pool: &SqlitePool, note_id: &str) -> Result<Vec<TurnText>, S
 }
 
 fn store_turns(pool: &SqlitePool, note_id: &str, turns: &[TurnText]) -> Result<(), String> {
+    // All-or-nothing: a crash or a mid-loop failure must not leave a *prefix*
+    // of turns, because retry sees any existing turns and skips
+    // re-transcription (run()), which would silently truncate the note.
     tauri::async_runtime::block_on(async {
+        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
         for (index, turn) in turns.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO transcript_turns (id, note_id, source, turn_index, start_ms, end_ms, speaker, text)
@@ -385,11 +387,11 @@ fn store_turns(pool: &SqlitePool, note_id: &str, turns: &[TurnText]) -> Result<(
             .bind(turn.end_ms as i64)
             .bind(&turn.speaker)
             .bind(&turn.text)
-            .execute(pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| e.to_string())?;
         }
-        Ok(())
+        tx.commit().await.map_err(|e| e.to_string())
     })
 }
 
