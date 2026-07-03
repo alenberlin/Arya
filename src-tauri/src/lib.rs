@@ -1,3 +1,4 @@
+mod account;
 pub mod agent;
 pub mod audio;
 mod calendar;
@@ -43,6 +44,7 @@ pub fn run() {
             app.manage(Recorder::spawn());
             app.manage(recording::commands::SystemCaptureSlot::default());
             app.manage(agent::AgentRuntime::default());
+            app.manage(account::commands::AccountState::default());
             spawn_agent_scheduler(app.handle().clone());
             #[cfg(target_os = "macos")]
             meeting_detect::macos::spawn_poller(
@@ -111,6 +113,12 @@ pub fn run() {
             rag::commands::rag_status,
             rag::commands::rag_reindex,
             rag::commands::rag_search,
+            account::commands::account_signin_state,
+            account::commands::account_begin_signin,
+            account::commands::account_set_token,
+            account::commands::account_sign_out,
+            account::commands::account_snapshot,
+            account::commands::account_open_billing,
             dictation::commands::get_dictation_settings,
             dictation::commands::set_dictation_settings,
             dictation::commands::dictation_status,

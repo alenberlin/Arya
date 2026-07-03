@@ -30,6 +30,7 @@ async fn app_with(anthropic: bool, openai: bool) -> axum::Router {
         pool,
         http: reqwest::Client::new(),
         verifier,
+        wallet: Arc::new(arya_api::billing::LocalWallet::from_env()),
     })
 }
 
@@ -73,6 +74,26 @@ async fn rejects_unpriced_model_before_touching_provider() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     let json = body_json(response).await;
     assert_eq!(json["errors"][0]["code"], "model_not_priced");
+}
+
+#[tokio::test]
+async fn account_endpoint_returns_snapshot() {
+    let app = app_with(true, true).await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/v1/account")
+                .header("authorization", "Bearer test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = body_json(response).await;
+    assert_eq!(json["success"], true);
+    assert!(json["data"]["remainingCredits"].as_i64().unwrap() > 0);
+    assert!(json["data"]["tier"].is_string());
 }
 
 #[tokio::test]

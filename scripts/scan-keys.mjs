@@ -3,11 +3,7 @@
 // Run in CI before packaging (M14).
 import { execSync } from "node:child_process";
 
-const KEY_PATTERNS = [
-  "sk-ant-[A-Za-z0-9-]{20,}",
-  "sk-[A-Za-z0-9]{32,}",
-  "AKIA[0-9A-Z]{16}",
-];
+const KEY_PATTERNS = ["sk-ant-[A-Za-z0-9-]{20,}", "sk-[A-Za-z0-9]{32,}", "AKIA[0-9A-Z]{16}"];
 const SCAN_DIRS = ["src", "src-tauri/src", "sidecar/src"];
 
 let failed = false;

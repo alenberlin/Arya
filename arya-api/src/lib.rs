@@ -8,6 +8,7 @@
 //! calling old shapes forever.
 
 pub mod auth;
+pub mod billing;
 pub mod catalog;
 pub mod config;
 pub mod metering;
@@ -24,6 +25,7 @@ pub struct AppState {
     pub pool: sqlx::SqlitePool,
     pub http: reqwest::Client,
     pub verifier: Arc<auth::Verifier>,
+    pub wallet: Arc<dyn billing::Wallet>,
 }
 
 /// Builds the router for a given state (shared by main and tests).
@@ -34,6 +36,7 @@ pub fn build_app(state: AppState) -> Router {
             get(|| async { axum::Json(serde_json::json!({ "ok": true, "service": "arya-api" })) }),
         )
         .route("/v1/models", get(catalog::list_models))
+        .route("/v1/account", get(proxy::account))
         .route("/v1/{provider}/{*path}", post(proxy::forward))
         .with_state(state)
 }
@@ -50,5 +53,6 @@ pub async fn build_state() -> AppState {
         pool,
         http: reqwest::Client::new(),
         verifier,
+        wallet: Arc::new(billing::LocalWallet::from_env()),
     }
 }

@@ -12,7 +12,30 @@ use axum::Json;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use crate::{catalog, metering, AppState};
+use crate::{billing, catalog, metering, AppState};
+
+/// GET /v1/account — the snapshot the desktop shows (tier, credits, usage).
+pub async fn account(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let user_id = state
+        .verifier
+        .verify(&headers)
+        .map_err(|e| error(StatusCode::UNAUTHORIZED, "unauthorized", &e))?;
+    let snapshot = billing::account_snapshot(&state.pool, state.wallet.as_ref(), &user_id)
+        .await
+        .map_err(|e| {
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "metering_failure",
+                &e.to_string(),
+            )
+        })?;
+    Ok(Json(
+        serde_json::json!({ "success": true, "data": snapshot }),
+    ))
+}
 
 pub async fn forward(
     State(state): State<AppState>,
@@ -55,6 +78,25 @@ pub async fn forward(
     let action = "agent_chat";
     let digest = body_digest(&body);
     let idempotency_key = format!("{action}:{user_id}:{digest}");
+
+    // Balance gate: reject before doing any provider work if the wallet
+    // can't cover the estimate. Local mode always passes.
+    let snapshot = billing::account_snapshot(&state.pool, state.wallet.as_ref(), &user_id)
+        .await
+        .map_err(|e| {
+            error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "metering_failure",
+                &e.to_string(),
+            )
+        })?;
+    if !state.wallet.can_spend(&snapshot, 500) {
+        return Err(error(
+            StatusCode::PAYMENT_REQUIRED,
+            "insufficient_credits",
+            "not enough credits; top up or upgrade to continue",
+        ));
+    }
 
     let hold = metering::authorize(&state.pool, &user_id, action, 500, 60)
         .await

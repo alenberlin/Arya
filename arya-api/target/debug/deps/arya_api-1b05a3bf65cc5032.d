@@ -1,9 +1,10 @@
-/Users/alen/2026/Arya/arya-api/target/debug/deps/arya_api-1b05a3bf65cc5032.d: src/lib.rs src/auth.rs src/catalog.rs src/config.rs src/metering.rs src/proxy.rs Cargo.toml
+/Users/alen/2026/Arya/arya-api/target/debug/deps/arya_api-1b05a3bf65cc5032.d: src/lib.rs src/auth.rs src/billing.rs src/catalog.rs src/config.rs src/metering.rs src/proxy.rs Cargo.toml
 
-/Users/alen/2026/Arya/arya-api/target/debug/deps/libarya_api-1b05a3bf65cc5032.rmeta: src/lib.rs src/auth.rs src/catalog.rs src/config.rs src/metering.rs src/proxy.rs Cargo.toml
+/Users/alen/2026/Arya/arya-api/target/debug/deps/libarya_api-1b05a3bf65cc5032.rmeta: src/lib.rs src/auth.rs src/billing.rs src/catalog.rs src/config.rs src/metering.rs src/proxy.rs Cargo.toml
 
 src/lib.rs:
 src/auth.rs:
+src/billing.rs:
 src/catalog.rs:
 src/config.rs:
 src/metering.rs:
