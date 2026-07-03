@@ -226,13 +226,13 @@ async fn call_upstream(
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
         let _ = entry; // entry used above for pricing
+                       // Never surface a provider key: redact the actual key and any
+                       // Bearer/sk- token pattern before forwarding the error to the client.
+        let safe = scrub_secrets(&text.chars().take(500).collect::<String>(), &key);
         return Err(error(
             StatusCode::BAD_GATEWAY,
             "upstream_failure",
-            &format!(
-                "upstream {status}: {}",
-                text.chars().take(500).collect::<String>()
-            ),
+            &format!("upstream {status}: {safe}"),
         ));
     }
     let json: Value = response
@@ -249,6 +249,42 @@ async fn call_upstream(
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     Ok(((input, output), json))
+}
+
+/// Redacts the live provider key and any Bearer/`sk-` token from text that
+/// will be surfaced to the client, so a chatty upstream error can't leak a
+/// secret. Defense in depth: providers don't normally echo the key, but the
+/// proxy must guarantee it regardless.
+fn scrub_secrets(text: &str, key: &str) -> String {
+    let mut out = text.to_string();
+    if key.len() >= 8 {
+        out = out.replace(key, "[redacted]");
+    }
+    // Redact any remaining Bearer token and OpenAI/Anthropic-style key.
+    scrub_pattern(&mut out, "Bearer ");
+    scrub_pattern(&mut out, "sk-");
+    out
+}
+
+/// Replaces `prefix` and the run of token characters after it with a redaction.
+fn scrub_pattern(text: &mut String, prefix: &str) {
+    loop {
+        let Some(start) = text.find(prefix) else {
+            return;
+        };
+        let after = start + prefix.len();
+        let end = text[after..]
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
+            .map(|i| after + i)
+            .unwrap_or(text.len());
+        // Only redact if there's an actual token body after the prefix.
+        if end > after {
+            text.replace_range(start..end, "[redacted]");
+        } else {
+            // Avoid an infinite loop on a bare prefix with no token.
+            return;
+        }
+    }
 }
 
 fn body_digest(body: &Value) -> String {
@@ -281,5 +317,31 @@ mod tests {
             serde_json::json!({ "model": "m", "messages": [{ "role": "user", "content": "yo" }] });
         assert_eq!(body_digest(&a), body_digest(&b));
         assert_ne!(body_digest(&a), body_digest(&c));
+    }
+
+    #[test]
+    fn scrub_redacts_the_live_key_and_token_patterns() {
+        let key = "sk-ant-secretkey1234567890";
+        let text = format!("bad auth for {key} using Bearer {key} (sk-other-abc123)");
+        let scrubbed = scrub_secrets(&text, key);
+        assert!(!scrubbed.contains("secretkey"), "key leaked: {scrubbed}");
+        assert!(
+            !scrubbed.contains("sk-other-abc123"),
+            "token leaked: {scrubbed}"
+        );
+        assert!(scrubbed.contains("[redacted]"));
+    }
+
+    #[test]
+    fn scrub_leaves_ordinary_text_untouched() {
+        let msg = "model overloaded, retry later";
+        assert_eq!(scrub_secrets(msg, "sk-live-xyz"), msg);
+    }
+
+    #[test]
+    fn scrub_handles_bare_prefix_without_hanging() {
+        // A prefix with no token body must not loop forever.
+        let out = scrub_secrets("stray Bearer  and sk-", "");
+        assert!(out.contains("Bearer"));
     }
 }

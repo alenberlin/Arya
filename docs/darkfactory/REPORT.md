@@ -87,16 +87,24 @@ tested seam (see `docs/release.md`):
 - **Anthropic / OpenAI keys + hosting** — cloud inference and live image
   generation, in arya-api's env only.
 
-## Follow-ups (low severity, not release-blocking)
+## Follow-ups — all addressed after the review gate
 
-- MCP: prompt for confirmation on first spawn of a newly-added server (tool
-  *calls* are already approval-gated; server *connect* is not).
-- Swap the hand-rolled loopback urldecode for the `percent-encoding` crate.
-- Scrub any `authorization` header out of surfaced upstream error text.
-- Reuse one `reqwest` client in the embedder across queries (minor; the
-  in-memory cache already removed the dominant search cost).
-- Unify dictation onto the shared speech engine cache (memory, not latency).
-- `cargo audit` + `pnpm audit` on the lockfiles before GA.
+- ✅ MCP: adding a server now confirms before spawning it (shows the command;
+  tool *calls* were already approval-gated).
+- ✅ Loopback urldecode swapped for the `percent-encoding` crate.
+- ✅ Upstream error text is scrubbed of the provider key and any Bearer/`sk-`
+  token before it reaches the client (unit-tested).
+- ✅ The embedder reuses one pooled `reqwest` client across queries.
+- ✅ Dictation shares the process-wide speech engine cache with note
+  transcription, so a model used by both loads into memory once.
+- ✅ `cargo audit` + `pnpm audit` wired into CI (`security-audit.yml`).
+  `pnpm audit --prod` is clean; two Rust advisories are present in lockfiles
+  but unreachable (rsa never compiled; quick-xml parses only our own bundle
+  metadata) — documented with reachability analysis and ignored in
+  `docs/security-audit.md`.
+
+Remaining known low-severity item: none blocking. See `docs/security-audit.md`
+for the advisory dispositions that clear on the next Tauri/sqlx bump.
 
 ## Test inventory
 

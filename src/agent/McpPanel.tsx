@@ -37,6 +37,14 @@ export function McpPanel() {
           e.preventDefault();
           if (!name.trim() || !command.trim()) return;
           const argv = args.trim() ? args.trim().split(/\s+/) : [];
+          // Adding a server launches an external process that gains tool
+          // access to the agent; confirm before spawning it.
+          const ok = window.confirm(
+            `Add and launch the MCP server "${name.trim()}"?\n\n` +
+              `It runs: ${command.trim()} ${argv.join(" ")}\n\n` +
+              "Only add servers you trust — its tools can act on your behalf.",
+          );
+          if (!ok) return;
           void mcpAddServer(name.trim(), command.trim(), argv, {})
             .then((tools) => {
               setLastTools(tools);

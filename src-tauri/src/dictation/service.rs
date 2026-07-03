@@ -16,13 +16,11 @@ use crate::cleanup::ollama::OllamaCleaner;
 use crate::cleanup::{CleanupRequest, DictionaryEntry, TargetContext, TextCleaner};
 use crate::paste::{self, TargetApp};
 use crate::speech::whisper::WhisperEngine;
-use crate::speech::{models, SpeechEngine, TranscribeOptions};
+use crate::speech::{engine_cache, models, SpeechEngine, TranscribeOptions};
 
 pub struct DictationService {
     worker: CaptureWorker,
     settings: Mutex<DictationSettings>,
-    /// (model_id, engine) — reloaded when the configured model changes.
-    engine: Mutex<Option<(String, Arc<WhisperEngine>)>>,
     recording_since: Mutex<Option<Instant>>,
     /// Captured at hotkey-down: the app the user was in, i.e. the paste target.
     target_app: Mutex<Option<TargetApp>>,
@@ -36,7 +34,6 @@ impl DictationService {
         Self {
             worker: CaptureWorker::spawn(),
             settings: Mutex::new(settings),
-            engine: Mutex::new(None),
             recording_since: Mutex::new(None),
             target_app: Mutex::new(None),
             busy: AtomicBool::new(false),
@@ -197,14 +194,6 @@ impl DictationService {
         app: &AppHandle,
         settings: &DictationSettings,
     ) -> Result<Arc<WhisperEngine>, String> {
-        {
-            let guard = self.engine.lock().expect("engine lock");
-            if let Some((id, engine)) = guard.as_ref() {
-                if *id == settings.speech_model {
-                    return Ok(Arc::clone(engine));
-                }
-            }
-        }
         let spec = models::find(&settings.speech_model)
             .ok_or_else(|| format!("unknown speech model {}", settings.speech_model))?;
         let models_dir = app
@@ -218,10 +207,9 @@ impl DictationService {
             tauri::async_runtime::block_on(models::ensure_model(spec, &models_dir))
                 .map_err(|e| e.to_string())?;
         }
-        let engine = Arc::new(WhisperEngine::load(&target).map_err(|e| e.to_string())?);
-        *self.engine.lock().expect("engine lock") =
-            Some((settings.speech_model.clone(), Arc::clone(&engine)));
-        Ok(engine)
+        // Share the process-wide engine cache with note transcription so a
+        // model used by both is loaded into memory only once.
+        engine_cache::get_or_load(&target).map_err(|e| e.to_string())
     }
 
     /// One global ticker publishes live levels to the HUD while recording.

@@ -122,22 +122,13 @@ fn query_params(request_line: &str) -> Option<Vec<(String, String)>> {
     )
 }
 
+/// Percent-decodes a query value (application/x-www-form-urlencoded: `+` is a
+/// space). Uses the `percent-encoding` crate for correct UTF-8 handling.
 fn urldecode(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars();
-    while let Some(c) = chars.next() {
-        match c {
-            '%' => {
-                let hex: String = chars.by_ref().take(2).collect();
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    out.push(byte as char);
-                }
-            }
-            '+' => out.push(' '),
-            other => out.push(other),
-        }
-    }
-    out
+    let plus_decoded = input.replace('+', " ");
+    percent_encoding::percent_decode_str(&plus_decoded)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 #[cfg(test)]
