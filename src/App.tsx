@@ -1,9 +1,10 @@
 import { useState } from "react";
 import brand from "../brand.json";
+import { AgentPanel } from "./agent/AgentPanel";
 import { DictationPanel } from "./dictation/DictationPanel";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
 
-type Tab = "notes" | "dictation";
+type Tab = "notes" | "agent" | "dictation";
 
 /**
  * Main-window shell: Notes workspace (M4) and Dictation panel (M3).
@@ -20,12 +21,15 @@ export function App() {
           <button type="button" onClick={() => setTab("notes")} disabled={tab === "notes"}>
             Notes
           </button>
+          <button type="button" onClick={() => setTab("agent")} disabled={tab === "agent"}>
+            Agent
+          </button>
           <button type="button" onClick={() => setTab("dictation")} disabled={tab === "dictation"}>
             Dictation
           </button>
         </nav>
       </header>
-      {tab === "notes" ? <NotesWorkspace /> : <DictationPanel />}
+      {tab === "notes" ? <NotesWorkspace /> : tab === "agent" ? <AgentPanel /> : <DictationPanel />}
     </main>
   );
 }
