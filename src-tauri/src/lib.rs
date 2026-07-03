@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod audio;
 mod calendar;
 pub mod cleanup;
@@ -39,6 +40,7 @@ pub fn run() {
             }
             app.manage(Recorder::spawn());
             app.manage(recording::commands::SystemCaptureSlot::default());
+            app.manage(agent::AgentRuntime::default());
             #[cfg(target_os = "macos")]
             meeting_detect::macos::spawn_poller(
                 app.handle().clone(),
@@ -78,6 +80,15 @@ pub fn run() {
             recording::commands::delete_speaker_profile,
             recording::commands::calendar_access_status,
             recording::commands::request_calendar_access,
+            agent::commands::agent_list_models,
+            agent::commands::agent_create_session,
+            agent::commands::agent_list_sessions,
+            agent::commands::agent_get_messages,
+            agent::commands::agent_send,
+            agent::commands::agent_steer,
+            agent::commands::agent_cancel,
+            agent::commands::agent_resolve_approval,
+            agent::commands::agent_delete_session,
             dictation::commands::get_dictation_settings,
             dictation::commands::set_dictation_settings,
             dictation::commands::dictation_status,
@@ -200,6 +211,70 @@ mod dev_hooks {
                     ),
                 );
                 eprintln!("dev record forever: started {started:?}");
+            });
+        }
+
+        // ARYA_DEV_AGENT=<prompt>: run one agent turn on a local model,
+        // auto-approving tool requests, for automated E2E checks.
+        if let Ok(prompt) = std::env::var("ARYA_DEV_AGENT") {
+            let handle = handle.clone();
+            let model = std::env::var("ARYA_DEV_AGENT_MODEL")
+                .unwrap_or_else(|_| "ollama:qwen3.6:35b".into());
+            std::thread::spawn(move || {
+                use tauri::Listener;
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                // Auto-approve any tool approval so the run is unattended.
+                let approver = handle.clone();
+                handle.listen("agent:event", move |event| {
+                    let Ok(value) = serde_json::from_str::<serde_json::Value>(event.payload())
+                    else {
+                        return;
+                    };
+                    let ev = &value["event"];
+                    if ev["kind"] == "tool-approval-required" {
+                        eprintln!("dev agent: auto-approving {}", ev["description"]);
+                        let session_id = value["sessionId"].as_str().unwrap_or("").to_string();
+                        let call_id = ev["callId"].as_str().unwrap_or("").to_string();
+                        let runtime = approver.state::<crate::agent::AgentRuntime>();
+                        let _ = runtime.request(
+                            &approver,
+                            crate::agent::sidecar::WriteMode::Sandboxed,
+                            "approval.resolve",
+                            serde_json::json!({
+                                "sessionId": session_id,
+                                "callId": call_id,
+                                "decision": "once",
+                            }),
+                        );
+                    }
+                    if ev["kind"] == "turn-finished" {
+                        eprintln!("dev agent: turn finished");
+                    }
+                });
+                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
+                let runtime_handle = handle.clone();
+                let result = tauri::async_runtime::block_on(async move {
+                    let runtime = runtime_handle.state::<crate::agent::AgentRuntime>();
+                    let session = crate::agent::commands::agent_create_session_inner(
+                        &runtime_handle,
+                        &pool,
+                        &runtime,
+                        model,
+                        None,
+                    )
+                    .await?;
+                    eprintln!("dev agent: session {}", session.id);
+                    crate::agent::commands::agent_send_inner(
+                        &runtime_handle,
+                        &pool,
+                        &runtime,
+                        session.id.clone(),
+                        prompt,
+                    )
+                    .await
+                    .map(|_| session.id)
+                });
+                eprintln!("dev agent: send result {result:?}");
             });
         }
 
