@@ -19,6 +19,7 @@ pub struct GeneratedNote {
 pub struct TurnText {
     pub start_ms: u64,
     pub end_ms: u64,
+    pub source: String,
     pub text: String,
 }
 
@@ -86,9 +87,17 @@ impl OllamaGenerator {
     }
 
     fn try_generate(&self, turns: &[TurnText], manual_notes: &str) -> Option<GeneratedNote> {
+        let multi_source = turns.iter().any(|t| t.source == "system");
         let transcript: String = turns
             .iter()
-            .map(|t| format!("[{}] {}", format_ms(t.start_ms), t.text))
+            .map(|t| {
+                if multi_source {
+                    let speaker = if t.source == "system" { "Them" } else { "Me" };
+                    format!("[{}] {speaker}: {}", format_ms(t.start_ms), t.text)
+                } else {
+                    format!("[{}] {}", format_ms(t.start_ms), t.text)
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n");
         let system = "You turn a raw meeting/voice transcript into a structured \
@@ -157,11 +166,13 @@ mod tests {
             TurnText {
                 start_ms: 0,
                 end_ms: 9_000,
+                source: "microphone".into(),
                 text: "Let's review the launch plan for next week.".into(),
             },
             TurnText {
                 start_ms: 65_000,
                 end_ms: 71_000,
+                source: "microphone".into(),
                 text: "Marketing needs the assets by Friday.".into(),
             },
         ]

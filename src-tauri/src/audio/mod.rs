@@ -5,6 +5,7 @@
 //! recording so HUDs can render meters.
 
 pub mod resample;
+pub mod system_capture;
 pub mod turns;
 pub mod wav_file;
 

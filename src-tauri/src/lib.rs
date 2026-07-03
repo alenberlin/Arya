@@ -2,6 +2,7 @@ pub mod audio;
 pub mod cleanup;
 mod db;
 mod dictation;
+mod meeting_detect;
 mod notes;
 mod paste;
 mod recording;
@@ -33,6 +34,12 @@ pub fn run() {
                 eprintln!("dictation hotkey not registered: {e}");
             }
             app.manage(Recorder::spawn());
+            app.manage(recording::commands::SystemCaptureSlot::default());
+            #[cfg(target_os = "macos")]
+            meeting_detect::macos::spawn_poller(
+                app.handle().clone(),
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            );
             position_hud_top_center(app.handle());
             #[cfg(debug_assertions)]
             dev_hooks::install(app.handle().clone());
@@ -124,9 +131,10 @@ mod dev_hooks {
                 std::thread::sleep(std::time::Duration::from_secs(3));
                 let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
                 let recorder = handle.state::<Recorder>().inner().clone();
+                let mode = std::env::var("ARYA_DEV_RECORD_MODE").ok();
                 let started = tauri::async_runtime::block_on(
                     crate::recording::commands::start_recording_inner(
-                        &handle, &pool, &recorder, None,
+                        &handle, &pool, &recorder, None, mode,
                     ),
                 );
                 eprintln!("dev record: started {started:?}");
@@ -145,9 +153,10 @@ mod dev_hooks {
                 std::thread::sleep(std::time::Duration::from_secs(3));
                 let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
                 let recorder = handle.state::<Recorder>().inner().clone();
+                let mode = std::env::var("ARYA_DEV_RECORD_MODE").ok();
                 let started = tauri::async_runtime::block_on(
                     crate::recording::commands::start_recording_inner(
-                        &handle, &pool, &recorder, None,
+                        &handle, &pool, &recorder, None, mode,
                     ),
                 );
                 eprintln!("dev record forever: started {started:?}");

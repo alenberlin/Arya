@@ -44,6 +44,8 @@ enum Command {
     /// Finalize and rename; replies with the final path.
     Finish(mpsc::Sender<Result<PathBuf, String>>),
     Status(mpsc::Sender<RecorderStatus>),
+    /// Drains the rolling live-preview buffer: (interleaved samples, rate, channels).
+    TakePreview(mpsc::Sender<Option<(Vec<f32>, u32, u16)>>),
 }
 
 #[derive(Clone)]
@@ -62,6 +64,8 @@ struct Active {
     channels: u16,
     written_frames: u64,
     paused: bool,
+    /// Rolling buffer of recent raw samples for the ephemeral live preview.
+    preview: Vec<f32>,
 }
 
 impl Recorder {
@@ -124,6 +128,13 @@ impl Recorder {
 
     pub fn elapsed_ms(&self) -> u64 {
         self.elapsed_ms.load(Ordering::Relaxed)
+    }
+
+    /// Takes whatever live-preview audio accumulated since the last call.
+    pub fn take_preview(&self) -> Option<(Vec<f32>, u32, u16)> {
+        let (tx, rx) = mpsc::channel();
+        self.sender.send(Command::TakePreview(tx)).ok()?;
+        rx.recv().ok().flatten()
     }
 
     fn round_trip(
@@ -232,6 +243,16 @@ fn run_loop(
                 };
                 let _ = reply.send(status);
             }
+            Ok(Command::TakePreview(reply)) => {
+                let payload = active.as_mut().map(|state| {
+                    (
+                        std::mem::take(&mut state.preview),
+                        state.sample_rate,
+                        state.channels,
+                    )
+                });
+                let _ = reply.send(payload);
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
@@ -253,6 +274,7 @@ fn begin(spec: StartSpec) -> Result<Active, String> {
         channels,
         written_frames: 0,
         paused: false,
+        preview: Vec::new(),
     })
 }
 
@@ -317,6 +339,12 @@ fn drain_samples(state: &mut Active, level_out: &AtomicU32, elapsed_out: &Atomic
         latest_level = Some(rms);
         if state.sink.write_f32(&chunk).is_err() {
             eprintln!("recording: failed to write samples");
+        }
+        state.preview.extend_from_slice(&chunk);
+        let cap = (state.sample_rate as usize) * (state.channels as usize) * 30;
+        if state.preview.len() > cap {
+            let excess = state.preview.len() - cap;
+            state.preview.drain(..excess);
         }
         state.written_frames += chunk.len() as u64 / state.channels as u64;
     }
