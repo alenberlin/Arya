@@ -11,12 +11,29 @@ import { loadTheme, saveTheme, type Theme } from "./lib/theme";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
 import { Onboarding, onboardingComplete } from "./onboarding/Onboarding";
 import { SearchPanel } from "./search/SearchPanel";
+import {
+  AccountIcon,
+  AgentIcon,
+  DictationIcon,
+  McpIcon,
+  NotesIcon,
+  RoutinesIcon,
+  SearchIcon,
+} from "./ui/icons";
 
 type Tab = "notes" | "agent" | "search" | "routines" | "mcp" | "dictation" | "account";
 
+const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.JSX.Element }[] = [
+  { id: "notes", label: "Notes", icon: NotesIcon },
+  { id: "agent", label: "Agent", icon: AgentIcon },
+  { id: "search", label: "Search", icon: SearchIcon },
+  { id: "routines", label: "Routines", icon: RoutinesIcon },
+  { id: "mcp", label: "MCP servers", icon: McpIcon },
+  { id: "dictation", label: "Dictation", icon: DictationIcon },
+];
+
 /**
- * Main-window shell: Notes workspace (M4) and Dictation panel (M3).
- * The polished app chrome lands in M13.
+ * Main-window shell: a left sidebar of pillars and an inset content card.
  */
 export function App() {
   const [tab, setTab] = useState<Tab>("notes");
@@ -39,67 +56,66 @@ export function App() {
     return <Onboarding onFinish={() => setOnboarded(true)} />;
   }
 
+  const panel = {
+    notes: <NotesWorkspace />,
+    agent: <AgentPanel />,
+    search: <SearchPanel />,
+    routines: <RoutinesPanel />,
+    mcp: <McpPanel />,
+    dictation: <DictationPanel />,
+    account: <AccountPanel />,
+  }[tab];
+
   return (
     <AccountGate>
-      <main
-        style={{ fontFamily: "system-ui", padding: "1.5rem", maxWidth: 1000, margin: "0 auto" }}
-      >
-        <header style={{ display: "flex", alignItems: "baseline", gap: 16, marginBottom: 12 }}>
-          <h1 style={{ margin: 0 }}>{brand.name}</h1>
-          <nav className="app-nav" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button type="button" onClick={() => setTab("notes")} disabled={tab === "notes"}>
-              Notes
+      <div className="app">
+        <aside className="sidebar">
+          <div className="sidebar-brand">
+            <span className="dot" />
+            {brand.name}
+          </div>
+          {NAV.map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className="nav-item"
+              aria-current={tab === id}
+              onClick={() => setTab(id)}
+            >
+              <Icon />
+              {label}
             </button>
-            <button type="button" onClick={() => setTab("agent")} disabled={tab === "agent"}>
-              Agent
-            </button>
-            <button type="button" onClick={() => setTab("search")} disabled={tab === "search"}>
-              Search
-            </button>
-            <button type="button" onClick={() => setTab("routines")} disabled={tab === "routines"}>
-              Routines
-            </button>
-            <button type="button" onClick={() => setTab("mcp")} disabled={tab === "mcp"}>
-              MCP
-            </button>
+          ))}
+          <div className="sidebar-spacer" />
+          <div className="sidebar-footer">
             <button
               type="button"
-              onClick={() => setTab("dictation")}
-              disabled={tab === "dictation"}
+              className="nav-item"
+              aria-current={tab === "account"}
+              onClick={() => setTab("account")}
             >
-              Dictation
-            </button>
-            <button type="button" onClick={() => setTab("account")} disabled={tab === "account"}>
+              <AccountIcon />
               Account
             </button>
-            <select
-              aria-label="theme"
-              value={theme}
-              onChange={(e) => setTheme(e.target.value as Theme)}
-              style={{ marginLeft: "auto" }}
-            >
-              <option value="system">System theme</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
-          </nav>
-        </header>
-        {tab === "notes" ? (
-          <NotesWorkspace />
-        ) : tab === "agent" ? (
-          <AgentPanel />
-        ) : tab === "search" ? (
-          <SearchPanel />
-        ) : tab === "routines" ? (
-          <RoutinesPanel />
-        ) : tab === "mcp" ? (
-          <McpPanel />
-        ) : tab === "dictation" ? (
-          <DictationPanel />
-        ) : (
-          <AccountPanel />
-        )}
-      </main>
+            <label className="nav-item" style={{ cursor: "default" }}>
+              Theme
+              <select
+                aria-label="theme"
+                value={theme}
+                onChange={(e) => setTheme(e.target.value as Theme)}
+                style={{ width: "auto", marginLeft: "auto" }}
+              >
+                <option value="system">System</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </label>
+          </div>
+        </aside>
+        <main className="content">
+          <div className="content-inner">{panel}</div>
+        </main>
+      </div>
     </AccountGate>
   );
 }

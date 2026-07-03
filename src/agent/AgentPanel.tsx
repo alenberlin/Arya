@@ -76,7 +76,7 @@ const MessageView = memo(function MessageView({
         margin: "8px 0",
         padding: 8,
         borderRadius: 8,
-        background: message.role === "user" ? "var(--info-bg)" : "var(--bg-subtle)",
+        background: message.role === "user" ? "var(--info-soft)" : "var(--surface-2)",
       }}
     >
       <small>{message.role === "user" ? "You" : "Arya"}</small>{" "}
@@ -94,9 +94,10 @@ const MessageView = memo(function MessageView({
       {(content.tools ?? []).map((tool) => {
         const match = tool.result?.match(/images\/[\w.-]+\.png/)?.[0];
         return (
-          <div key={tool.callId} style={{ fontFamily: "var(--font-mono)", fontSize: 12 }}>
-            ⚙ {tool.name}({JSON.stringify(tool.args)})
-            {tool.result ? ` → ${tool.result.slice(0, 120)}` : ""}
+          <div key={tool.callId} className="tool-line">
+            <span className="tool-name">{tool.name}</span>
+            <span className="tool-args">({JSON.stringify(tool.args)})</span>
+            {tool.result ? <span className="tool-result"> → {tool.result.slice(0, 120)}</span> : ""}
             {match && images[match] ? (
               <img
                 src={images[match]}
@@ -377,7 +378,10 @@ export function AgentPanel() {
                 />
               ))}
               {live ? (
-                <article style={{ margin: "8px 0", padding: 8, background: "#f0fdf4" }}>
+                <article
+                  className="card"
+                  style={{ margin: "8px 0", background: "var(--accent-soft)" }}
+                >
                   <small>Arya (working…)</small>
                   {live.reasoning ? (
                     <details open>
@@ -400,8 +404,9 @@ export function AgentPanel() {
               <div
                 key={approval.callId}
                 role="alertdialog"
+                className="banner banner-warning"
                 aria-label={`approve ${approval.name}`}
-                style={{ padding: 8, background: "#fef3c7", margin: "8px 0" }}
+                style={{ margin: "8px 0" }}
               >
                 <strong>Approval needed:</strong> {approval.description}
                 <div style={{ display: "flex", gap: 6, marginTop: 6 }}>

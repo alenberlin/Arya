@@ -63,7 +63,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
         fontFamily: "var(--font-sans)",
         maxWidth: 560,
         margin: "0 auto",
-        padding: "var(--space-6)",
+        padding: "var(--sp-6)",
         textAlign: "center",
       }}
     >
@@ -97,7 +97,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
               through an open-source proxy that keeps keys off your machine.
             </li>
           </ul>
-          <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "center" }}>
+          <div style={{ display: "flex", gap: "var(--sp-2)", justifyContent: "center" }}>
             <button type="button" onClick={() => go("welcome")}>
               Back
             </button>
@@ -112,7 +112,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
         <>
           <h1>Two quick permissions</h1>
           <p>Arya needs these to hear you and to type for you. Grant them when macOS asks.</p>
-          <div style={{ textAlign: "left", margin: "var(--space-4) 0", lineHeight: 1.8 }}>
+          <div style={{ textAlign: "left", margin: "var(--sp-4) 0", lineHeight: 1.8 }}>
             <div>
               {micDevices.length > 0 ? "✓" : "○"} <strong>Microphone</strong> — for dictation and
               meeting notes.
@@ -127,7 +127,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
               ) : null}
             </div>
           </div>
-          <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "center" }}>
+          <div style={{ display: "flex", gap: "var(--sp-2)", justifyContent: "center" }}>
             <button type="button" onClick={() => go("privacy")}>
               Back
             </button>
@@ -154,7 +154,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
               <small>Waiting for your first dictation… (you can skip this)</small>
             </p>
           )}
-          <div style={{ display: "flex", gap: "var(--space-2)", justifyContent: "center" }}>
+          <div style={{ display: "flex", gap: "var(--sp-2)", justifyContent: "center" }}>
             <button type="button" onClick={() => go("permissions")}>
               Back
             </button>
@@ -178,7 +178,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
         </>
       ) : null}
 
-      <p style={{ marginTop: "var(--space-6)" }}>
+      <p style={{ marginTop: "var(--sp-6)" }}>
         <button
           type="button"
           onClick={() => {

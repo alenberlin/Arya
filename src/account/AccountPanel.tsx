@@ -74,12 +74,19 @@ export function AccountPanel() {
           {snapshot.subscribed ? " · subscribed" : ""}
         </p>
         <div style={{ margin: "8px 0" }}>
-          <div style={{ height: 10, background: "#e5e7eb", borderRadius: 5 }}>
+          <div
+            style={{
+              height: 8,
+              background: "var(--surface-sunken)",
+              borderRadius: 999,
+              overflow: "hidden",
+            }}
+          >
             <div
               style={{
                 width: `${usedPct}%`,
                 height: "100%",
-                background: usedPct > 90 ? "#dc2626" : "#2563eb",
+                background: usedPct > 90 ? "var(--danger)" : "var(--accent)",
                 borderRadius: 5,
               }}
             />

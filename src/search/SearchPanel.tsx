@@ -98,13 +98,15 @@ export function SearchPanel() {
         {hits.map((hit) => (
           <li
             key={`${hit.sourceId}-${hit.content.slice(0, 24)}`}
-            style={{ borderTop: "1px solid #e5e7eb", padding: "8px 0" }}
+            style={{ borderTop: "1px solid var(--border)", padding: "8px 0" }}
           >
             <strong>{hit.title}</strong>{" "}
             <small>
               {hit.sourceKind} · score {hit.score.toFixed(2)}
             </small>
-            <div style={{ fontSize: 13, color: "#374151" }}>{hit.content.slice(0, 320)}</div>
+            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+              {hit.content.slice(0, 320)}
+            </div>
           </li>
         ))}
         {hits.length === 0 && !busy ? <li>No results yet.</li> : null}

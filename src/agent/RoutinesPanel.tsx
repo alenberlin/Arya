@@ -113,10 +113,10 @@ export function RoutinesPanel() {
 
       <ul aria-label="routines" style={{ listStyle: "none", padding: 0 }}>
         {routines.map((routine) => (
-          <li key={routine.id} style={{ borderTop: "1px solid #e5e7eb", padding: "8px 0" }}>
+          <li key={routine.id} style={{ borderTop: "1px solid var(--border)", padding: "8px 0" }}>
             <strong>{routine.title}</strong> — every {routine.intervalMinutes} min ·{" "}
             {routine.enabled ? "enabled" : "paused"}
-            <div style={{ fontSize: 12, color: "#6b7280" }}>{routine.prompt}</div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{routine.prompt}</div>
             <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
               <button
                 type="button"
