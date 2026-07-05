@@ -101,7 +101,7 @@ impl OllamaGenerator {
         Self {
             base_url: base_url.into(),
             model: model.into(),
-            client: reqwest::blocking::Client::new(),
+            client: crate::http::blocking_client(),
         }
     }
 

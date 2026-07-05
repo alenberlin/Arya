@@ -1,5 +1,8 @@
 //! Downmix and resample helpers (pure, unit-tested).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use rubato::{Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType};
 
 use crate::speech::AudioClip;
@@ -16,6 +19,15 @@ pub fn downmix_interleaved(samples: &[f32], channels: u16) -> Vec<f32> {
         .collect()
 }
 
+thread_local! {
+    /// Cache resamplers per input rate: `SincFixedIn` precomputes a large sinc
+    /// table at construction, so reuse the instance and clear only its stateful
+    /// delay line (`reset()`) instead of rebuilding on every snapshot during
+    /// streaming. Thread-local avoids a shared lock — each capture/preview
+    /// thread keeps its own.
+    static RESAMPLERS: RefCell<HashMap<u32, SincFixedIn<f32>>> = RefCell::new(HashMap::new());
+}
+
 /// Resamples mono audio from `input_rate` to 16 kHz with a windowed-sinc
 /// filter (anti-aliased). Returns the input untouched when already 16 kHz.
 pub fn resample_to_16k(mono: &[f32], input_rate: u32) -> Result<Vec<f32>, rubato::ResampleError> {
@@ -25,43 +37,49 @@ pub fn resample_to_16k(mono: &[f32], input_rate: u32) -> Result<Vec<f32>, rubato
     if mono.is_empty() {
         return Ok(Vec::new());
     }
-    let params = SincInterpolationParameters {
-        sinc_len: 128,
-        f_cutoff: 0.95,
-        interpolation: SincInterpolationType::Linear,
-        oversampling_factor: 128,
-        window: rubato::WindowFunction::BlackmanHarris2,
-    };
-    let chunk = 1024usize;
+    const CHUNK: usize = 1024;
     let ratio = AudioClip::SAMPLE_RATE as f64 / input_rate as f64;
-    let mut resampler = SincFixedIn::<f32>::new(ratio, 1.1, params, chunk, 1)
-        .expect("valid resampler construction");
+    RESAMPLERS.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        let resampler = cache.entry(input_rate).or_insert_with(|| {
+            let params = SincInterpolationParameters {
+                sinc_len: 128,
+                f_cutoff: 0.95,
+                interpolation: SincInterpolationType::Linear,
+                oversampling_factor: 128,
+                window: rubato::WindowFunction::BlackmanHarris2,
+            };
+            SincFixedIn::<f32>::new(ratio, 1.1, params, CHUNK, 1)
+                .expect("valid resampler construction")
+        });
+        // Independent of the previous call: clear the internal delay line.
+        resampler.reset();
 
-    let delay = resampler.output_delay();
-    let expected_len = (mono.len() as f64 * ratio).round() as usize;
-
-    let mut out = Vec::with_capacity(expected_len + chunk);
-    let mut position = 0usize;
-    while position + chunk <= mono.len() {
-        let frames = resampler.process(&[&mono[position..position + chunk]], None)?;
-        out.extend_from_slice(&frames[0]);
-        position += chunk;
-    }
-    let remainder = &mono[position..];
-    if !remainder.is_empty() {
-        let frames = resampler.process_partial(Some(&[remainder]), None)?;
-        out.extend_from_slice(&frames[0]);
-    }
-    // Flush the internal delay line, then drop the leading delay and pad
-    // artifacts so output aligns with the input signal exactly.
-    while out.len() < delay + expected_len {
-        let frames = resampler.process_partial::<&[f32]>(None, None)?;
-        if frames[0].is_empty() {
-            break;
+        let delay = resampler.output_delay();
+        let expected_len = (mono.len() as f64 * ratio).round() as usize;
+        let mut out = Vec::with_capacity(expected_len + CHUNK);
+        let mut position = 0usize;
+        while position + CHUNK <= mono.len() {
+            let frames = resampler.process(&[&mono[position..position + CHUNK]], None)?;
+            out.extend_from_slice(&frames[0]);
+            position += CHUNK;
         }
-        out.extend_from_slice(&frames[0]);
-    }
-    Ok(out.into_iter().skip(delay).take(expected_len).collect())
+        let remainder = &mono[position..];
+        if !remainder.is_empty() {
+            let frames = resampler.process_partial(Some(&[remainder]), None)?;
+            out.extend_from_slice(&frames[0]);
+        }
+        // Flush the delay line, then drop the leading delay + pad artifacts so
+        // output aligns with the input signal exactly.
+        while out.len() < delay + expected_len {
+            let frames = resampler.process_partial::<&[f32]>(None, None)?;
+            if frames[0].is_empty() {
+                break;
+            }
+            out.extend_from_slice(&frames[0]);
+        }
+        Ok(out.into_iter().skip(delay).take(expected_len).collect())
+    })
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ mod calendar;
 pub mod cleanup;
 mod db;
 mod dictation;
+mod http;
 mod meeting_detect;
 mod notes;
 mod paste;

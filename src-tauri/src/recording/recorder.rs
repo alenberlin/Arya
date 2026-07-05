@@ -318,8 +318,8 @@ fn build_stream(
             .build_input_stream(
                 stream_config,
                 move |data: &[i16], _| {
-                    let floats: Vec<f32> =
-                        data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
+                    // /32768 so i16::MIN maps to exactly -1.0 (not -1.00003).
+                    let floats: Vec<f32> = data.iter().map(|s| *s as f32 / 32768.0).collect();
                     let _ = sample_tx.send(floats);
                 },
                 err_fn,

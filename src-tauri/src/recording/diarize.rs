@@ -44,8 +44,16 @@ pub fn get_or_load_extractor(model_path: &str) -> Result<SharedExtractor, String
         })
         .map_err(|e| e.to_string())?;
     let shared = Arc::new(Mutex::new(extractor));
-    *extractor_cache().lock().expect("extractor cache lock") =
-        Some((model_path.to_string(), Arc::clone(&shared)));
+    let mut guard = extractor_cache().lock().expect("extractor cache lock");
+    // Another thread may have loaded the same model while we were unlocked;
+    // reuse theirs rather than evicting it (which would drop an extractor a
+    // concurrent caller still holds an Arc to).
+    if let Some((path, existing)) = guard.as_ref() {
+        if path == model_path {
+            return Ok(Arc::clone(existing));
+        }
+    }
+    *guard = Some((model_path.to_string(), Arc::clone(&shared)));
     Ok(shared)
 }
 
