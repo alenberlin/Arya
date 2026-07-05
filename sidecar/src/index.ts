@@ -75,6 +75,10 @@ async function dispatch(request: RpcRequest): Promise<void> {
         if (!config.sessionId || !config.model || !config.workspace) {
           throw new Error("sessionId, model, workspace are required");
         }
+        // Replacing an existing session id: cancel the old one first so its
+        // streamText, MCP connections, and parked approvals don't live on
+        // untracked.
+        sessions.get(config.sessionId)?.cancel();
         sessions.set(
           config.sessionId,
           new Session(
@@ -91,8 +95,20 @@ async function dispatch(request: RpcRequest): Promise<void> {
         const session = sessions.get(String(params.sessionId));
         if (!session) throw new Error("unknown session");
         if (id !== null) ok(id, { accepted: true });
-        // Fire and stream; completion arrives as turn-finished.
-        void session.run(String(params.text));
+        // Fire and stream; completion arrives as turn-finished. Guard the
+        // dropped promise so a rejection before run()'s try/catch (e.g. MCP
+        // buildTools) surfaces as an error event instead of an unhandled
+        // rejection that could take down the whole sidecar.
+        void session.run(String(params.text)).catch((error) => {
+          notifyEvent(String(params.sessionId), { kind: "error", message: String(error) });
+        });
+        return;
+      }
+      case "session.end": {
+        const session = sessions.get(String(params.sessionId));
+        session?.cancel();
+        sessions.delete(String(params.sessionId));
+        if (id !== null) ok(id, { ended: true });
         return;
       }
       case "session.steer": {
@@ -153,6 +169,16 @@ async function dispatch(request: RpcRequest): Promise<void> {
     if (id !== null) fail(id, String(error));
   }
 }
+
+// A single failing session must not take down the sidecar for every other
+// session and mode. Log and keep running; the Rust shell respawns the process
+// on demand if it does die.
+process.on("unhandledRejection", (reason) => {
+  process.stderr.write(`sidecar unhandledRejection: ${String(reason)}\n`);
+});
+process.on("uncaughtException", (error) => {
+  process.stderr.write(`sidecar uncaughtException: ${String(error)}\n`);
+});
 
 const reader = createInterface({ input: process.stdin });
 reader.on("line", (line) => {
