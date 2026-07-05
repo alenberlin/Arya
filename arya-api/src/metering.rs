@@ -43,6 +43,19 @@ pub async fn init_pool(path: &str) -> Result<SqlitePool, sqlx::Error> {
     )
     .execute(&pool)
     .await?;
+    // Response cache is deliberately SEPARATE from the charges (billing) ledger:
+    // idempotency dedups billing; this lets an opt-in retry replay the original
+    // response body without re-invoking the provider. Two concerns, two tables.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS response_cache (
+             idempotency_key TEXT PRIMARY KEY,
+             body TEXT NOT NULL,
+             content_type TEXT NOT NULL,
+             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+         )",
+    )
+    .execute(&pool)
+    .await?;
     Ok(pool)
 }
 
@@ -143,6 +156,39 @@ pub async fn existing_charge(
     Ok(found.map(|c| c as u64))
 }
 
+/// Stores the response body for an idempotency key so a later opt-in retry can
+/// replay it without re-invoking the provider.
+pub async fn cache_response(
+    pool: &SqlitePool,
+    idempotency_key: &str,
+    body: &str,
+    content_type: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT OR IGNORE INTO response_cache (idempotency_key, body, content_type)
+         VALUES (?1, ?2, ?3)",
+    )
+    .bind(idempotency_key)
+    .bind(body)
+    .bind(content_type)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Fetches a cached `(body, content_type)` for an idempotency key, if present.
+pub async fn cached_response(
+    pool: &SqlitePool,
+    idempotency_key: &str,
+) -> Result<Option<(String, String)>, sqlx::Error> {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT body, content_type FROM response_cache WHERE idempotency_key = ?1",
+    )
+    .bind(idempotency_key)
+    .fetch_optional(pool)
+    .await
+}
+
 /// Releases expired, unsettled holds so they stop counting against balance.
 pub async fn reap_expired_holds(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
@@ -165,6 +211,16 @@ pub async fn settle(
     idempotency_key: &str,
 ) -> Result<Receipt, sqlx::Error> {
     let clamped = actual_credits.min(hold.cap_credits.max(1));
+    if actual_credits > clamped {
+        // Cost-recovery leak: real usage exceeded the hold cap and is being
+        // eaten. Surface it so the estimate cap can be tuned up.
+        tracing::warn!(
+            hold = %hold.id,
+            actual_credits,
+            cap_credits = hold.cap_credits,
+            "settle clamped actual usage to the hold cap; raise the authorize() estimate to stop under-charging"
+        );
+    }
     // Charge insert and hold settle in one transaction: a crash between them
     // must not leave a charge with an un-settled hold (which would distort
     // the balance math above).
