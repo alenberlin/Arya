@@ -6,10 +6,7 @@ import type { ApprovalDecision } from "./protocol.js";
  * shell (which stores it and replays as session grants), "deny" rejects.
  */
 export class ApprovalBroker {
-  private pending = new Map<
-    string,
-    { resolve: (approved: boolean) => void; toolName: string }
-  >();
+  private pending = new Map<string, { resolve: (approved: boolean) => void; toolName: string }>();
   private sessionApproved = new Set<string>();
 
   /** Returns true if the tool may run without asking. */

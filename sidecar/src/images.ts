@@ -14,9 +14,7 @@ export async function generateImageToWorkspace(
   size?: string,
 ): Promise<{ path: string; bytes: number }> {
   if (!process.env.OPENAI_API_KEY) {
-    throw new Error(
-      "image generation needs a cloud image model; no OpenAI API key is configured",
-    );
+    throw new Error("image generation needs a cloud image model; no OpenAI API key is configured");
   }
   const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const { image } = await generateImage({

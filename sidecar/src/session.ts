@@ -1,4 +1,4 @@
-import { stepCountIs, streamText, type ModelMessage, type Tool } from "ai";
+import { type ModelMessage, stepCountIs, streamText, type Tool } from "ai";
 import { ApprovalBroker } from "./approvals.js";
 import type { McpManager } from "./mcp.js";
 import type { AgentEvent, SessionConfig } from "./protocol.js";
@@ -113,10 +113,7 @@ export class Session {
               kind: "tool-result",
               callId: part.toolCallId,
               name: part.toolName,
-              result:
-                typeof part.output === "string"
-                  ? part.output
-                  : JSON.stringify(part.output),
+              result: typeof part.output === "string" ? part.output : JSON.stringify(part.output),
             });
             break;
           case "error":
@@ -141,10 +138,20 @@ export class Session {
       });
     } catch (error) {
       if (this.abort?.signal.aborted) {
-        this.emit({ kind: "turn-finished", inputTokens: 0, outputTokens: 0, finishReason: "aborted" });
+        this.emit({
+          kind: "turn-finished",
+          inputTokens: 0,
+          outputTokens: 0,
+          finishReason: "aborted",
+        });
       } else {
         this.emit({ kind: "error", message: String(error) });
-        this.emit({ kind: "turn-finished", inputTokens: 0, outputTokens: 0, finishReason: "error" });
+        this.emit({
+          kind: "turn-finished",
+          inputTokens: 0,
+          outputTokens: 0,
+          finishReason: "error",
+        });
       }
     } finally {
       this.abort = null;

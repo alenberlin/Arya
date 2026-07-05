@@ -1,13 +1,13 @@
 import { exec } from "node:child_process";
-import { readdir, readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { tool } from "ai";
 import { z } from "zod";
 import type { ApprovalBroker } from "./approvals.js";
-import type { AgentEvent } from "./protocol.js";
 import { generateImageToWorkspace, imageGenerationAvailable } from "./images.js";
 import { resolveInWorkspace, resolveReadable } from "./paths.js";
+import type { AgentEvent } from "./protocol.js";
 
 const execAsync = promisify(exec);
 
@@ -47,9 +47,7 @@ const MAX_READ_BYTES = 512 * 1024;
 const MAX_RESULT_CHARS = 32_000;
 
 function clip(text: string): string {
-  return text.length > MAX_RESULT_CHARS
-    ? `${text.slice(0, MAX_RESULT_CHARS)}\n…[truncated]`
-    : text;
+  return text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}\n…[truncated]` : text;
 }
 
 export function buildTools(ctx: ToolContext) {
@@ -68,8 +66,7 @@ export function buildTools(ctx: ToolContext) {
     }),
 
     write_file: tool({
-      description:
-        "Write a text file inside the workspace, creating parent directories.",
+      description: "Write a text file inside the workspace, creating parent directories.",
       inputSchema: z.object({ path: z.string(), content: z.string() }),
       execute: async ({ path, content }) => {
         // In unrestricted mode writes anywhere require approval; in
@@ -146,16 +143,10 @@ export function buildTools(ctx: ToolContext) {
     }),
 
     run_command: tool({
-      description:
-        "Run a shell command in the workspace. Requires user approval.",
+      description: "Run a shell command in the workspace. Requires user approval.",
       inputSchema: z.object({ command: z.string() }),
       execute: async ({ command }) => {
-        const approved = await gate(
-          ctx,
-          "run_command",
-          `Run: ${command}`,
-          { command },
-        );
+        const approved = await gate(ctx, "run_command", `Run: ${command}`, { command });
         if (!approved) return "denied by user";
         try {
           const { stdout, stderr } = await execAsync(command, {
