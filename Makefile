@@ -1,12 +1,14 @@
 # Arya development targets. `make verify` is the full local gate and must be
 # green before any milestone closes.
 
-.PHONY: verify verify-front verify-rust help
+.PHONY: verify verify-front verify-rust verify-sidecar verify-api help
 
 help:
-	@echo "verify        run the full gate: brand check, lint, typecheck, tests (TS + Rust)"
-	@echo "verify-front  frontend gate only"
-	@echo "verify-rust   rust shell gate only"
+	@echo "verify         run the full gate: brand, secret-scan, lint (incl. sidecar), typecheck, tests (TS + Rust)"
+	@echo "verify-front   frontend + secret-scan gate only"
+	@echo "verify-rust    rust shell gate only"
+	@echo "verify-sidecar sidecar typecheck + tests"
+	@echo "verify-api     arya-api fmt + clippy + tests"
 
 verify: verify-front verify-rust verify-sidecar verify-api
 

@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Arya RC",
+  "identifier": "dev.arya.app.rc",
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/YOUR_ORG/arya-releases/releases/latest/download/rc.json"
+      ]
+    }
+  }
+}

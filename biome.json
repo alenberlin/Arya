@@ -6,7 +6,15 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["src/**", "scripts/**", "*.json", "*.ts", "index.html"]
+    "includes": [
+      "src/**",
+      "scripts/**",
+      "sidecar/src/**",
+      "sidecar/test/**",
+      "*.json",
+      "*.ts",
+      "index.html"
+    ]
   },
   "formatter": {
     "enabled": true,

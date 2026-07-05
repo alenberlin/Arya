@@ -4,8 +4,8 @@
  * by the Rust shell; one process per write-mode.
  */
 import { createInterface } from "node:readline";
-import type { AgentEvent, ApprovalDecision, RpcRequest, SessionConfig } from "./protocol.js";
 import { McpManager, type McpServerSpec } from "./mcp.js";
+import type { AgentEvent, ApprovalDecision, RpcRequest, SessionConfig } from "./protocol.js";
 import { listOllamaModels } from "./providers.js";
 import { Session } from "./session.js";
 
@@ -31,8 +31,7 @@ function searchWorkspace(query: string, limit: number): Promise<string> {
       }
       const rendered = hits
         .map(
-          (h) =>
-            `[${h.sourceKind}:${h.title}] (score ${Number(h.score).toFixed(2)})\n${h.content}`,
+          (h) => `[${h.sourceKind}:${h.title}] (score ${Number(h.score).toFixed(2)})\n${h.content}`,
         )
         .join("\n\n");
       resolvePromise(rendered);

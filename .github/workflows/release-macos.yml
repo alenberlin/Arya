@@ -31,6 +31,14 @@ jobs:
       # Guard: no provider key may ship in the desktop bundle.
       - run: node scripts/scan-keys.mjs
 
+      # Guard: the rc channel overlays an extra Tauri config via --config; fail
+      # early with a clear message if it is missing rather than deep in the build.
+      - name: Validate channel config
+        run: |
+          if [ "${{ github.event.inputs.channel }}" = "rc" ] && [ ! -f src-tauri/tauri.rc.conf.json ]; then
+            echo "::error::rc channel requires src-tauri/tauri.rc.conf.json (missing)"; exit 1
+          fi
+
       - name: Build, sign, notarize
         uses: tauri-apps/tauri-action@v0
         env:

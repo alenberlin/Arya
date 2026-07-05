@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { jsonSchema, tool, type Tool } from "ai";
+import { jsonSchema, type Tool, tool } from "ai";
 import type { ApprovalBroker } from "./approvals.js";
 import type { AgentEvent } from "./protocol.js";
 
