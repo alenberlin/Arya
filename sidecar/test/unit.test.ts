@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApprovalBroker } from "../src/approvals.js";
 import { safeMcpEnv } from "../src/mcp.js";
 import { classifyReadable, resolveInWorkspace } from "../src/paths.js";
@@ -149,6 +149,19 @@ describe("approval broker", () => {
     broker.denyAll();
     await expect(a).resolves.toBe(false);
     await expect(b).resolves.toBe(false);
+  });
+
+  it("auto-denies a parked approval after its TTL so a turn can't wedge", async () => {
+    vi.useFakeTimers();
+    try {
+      const broker = new ApprovalBroker();
+      const decision = broker.wait("c1", "run_command", 1000);
+      vi.advanceTimersByTime(1001);
+      await expect(decision).resolves.toBe(false);
+      expect(broker.isPreApproved("run_command")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
