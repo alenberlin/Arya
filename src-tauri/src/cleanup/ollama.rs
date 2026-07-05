@@ -1,9 +1,10 @@
 //! Local-LLM cleanup via Ollama's OpenAI-compatible chat endpoint.
 //!
 //! Free, offline, optional: any failure (Ollama not running, model missing,
-//! timeout, malformed response) falls back to the mechanical cleaner's
-//! output. The word-preservation contract is enforced by prompt and by a
-//! guard that rejects wildly divergent outputs.
+//! timeout, malformed response) falls back to the mechanical cleaner's output.
+//! This is the "Polished" backend: it rewrites for grammatical correctness in
+//! the speaker's language (never answering, summarizing, or adding content),
+//! with a length backstop that rejects a runaway model.
 
 use std::time::Duration;
 
@@ -12,7 +13,6 @@ use serde_json::json;
 
 use super::mechanical::MechanicalCleaner;
 use super::{CleanupRequest, DictationStyle, TargetContext, TextCleaner};
-use crate::speech::wer::word_error_rate;
 
 pub struct OllamaCleaner {
     pub base_url: String,
@@ -66,10 +66,13 @@ impl OllamaCleaner {
         if text.is_empty() {
             return None;
         }
-        // Word-preservation guard: an LLM that rewrote or answered instead of
-        // cleaning diverges heavily from the raw words. Mechanical edits
-        // (fillers, punctuation, casing) stay far under this bound.
-        if word_error_rate(&request.raw, &text) > 0.6 {
+        // "Polished" deliberately rewrites for grammar, so word-level divergence
+        // is expected and no longer disqualifying. The remaining backstop is
+        // length: a grammatical rewrite stays roughly input-sized, so an output
+        // several times longer means the model answered or rambled instead of
+        // rewriting — fall back to the mechanical cleaner rather than paste that.
+        let raw_words = request.raw.split_whitespace().count().max(1);
+        if text.split_whitespace().count() > raw_words * 3 + 12 {
             return None;
         }
         Some(text)
@@ -78,12 +81,16 @@ impl OllamaCleaner {
 
 fn build_system_prompt(request: &CleanupRequest) -> String {
     let mut prompt = String::from(
-        "You clean up dictated speech into polished written text. Rules: \
-         preserve the speaker's words and meaning exactly; never summarize, \
-         never answer questions in the text, never add content. Remove filler \
-         words and false starts, fix punctuation, casing, and obvious \
-         homophone errors. Convert spoken forms like 'new line' or 'new \
-         paragraph' into actual line breaks. Output only the cleaned text.",
+        "You rewrite dictated speech into clear, grammatically correct writing in \
+         the SAME language the speaker used. Fix grammar, verb tense, \
+         subject-verb agreement, word order, and awkward or non-native phrasing \
+         so the result reads as natural, correct writing in that language — even \
+         when the spoken input was rough or a little off. Preserve the speaker's \
+         meaning and intent; do NOT answer questions, do NOT summarize, do NOT \
+         add new information, opinions, or content of your own. Remove filler \
+         words and false starts, and fix homophones. Convert spoken forms like \
+         'new line' or 'new paragraph' into actual line breaks. Output only the \
+         rewritten text, nothing else.",
     );
     match request.style {
         DictationStyle::Standard => {}
@@ -147,6 +154,29 @@ mod tests {
             ..base
         };
         assert!(build_system_prompt(&email).contains("email"));
+    }
+
+    #[test]
+    fn polished_prompt_asks_for_a_grammatical_rewrite_in_the_input_language() {
+        let req = CleanupRequest {
+            raw: "x".into(),
+            style: DictationStyle::Standard,
+            context: TargetContext::Generic,
+            dictionary: vec![],
+        };
+        let p = build_system_prompt(&req).to_lowercase();
+        assert!(
+            p.contains("grammatic"),
+            "should ask for grammatical correctness"
+        );
+        assert!(
+            p.contains("same language"),
+            "should keep the speaker's language"
+        );
+        assert!(
+            p.contains("not answer"),
+            "must still refuse to answer questions"
+        );
     }
 
     #[test]

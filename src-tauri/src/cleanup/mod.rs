@@ -1,11 +1,14 @@
 //! Dictation text cleanup.
 //!
-//! Contract (mirrors the PRD): cleanup preserves the speaker's words. It may
-//! fix casing, punctuation, fillers, and apply dictionary replacements, but
-//! never summarizes or rewrites. Two backends:
-//!   - [`MechanicalCleaner`]: deterministic rules, always available, offline.
-//!   - [`OllamaCleaner`]: local LLM polish; falls back to mechanical output
-//!     on any error so dictation never blocks on a model.
+//! Contract: Raw and Clean preserve the speaker's words (fix casing,
+//! punctuation, fillers, and dictionary replacements; never rewrite). The
+//! "Polished" level goes further — it rewrites for grammatical correctness in
+//! the speaker's own language, while still never answering, summarizing, or
+//! adding content. Two backends:
+//!   - [`MechanicalCleaner`]: deterministic word-preserving rules (Raw/Clean),
+//!     always available, offline.
+//!   - [`OllamaCleaner`]: local-LLM grammatical rewrite for Polished; falls
+//!     back to the mechanical output on any error so dictation never blocks.
 
 pub mod mechanical;
 pub mod ollama;
@@ -34,8 +37,9 @@ pub enum Polish {
     /// Deterministic mechanical cleanup — the fast, offline default.
     #[default]
     Clean,
-    /// Local-LLM polish when a cleanup model is configured; falls back to
-    /// [`Clean`](Polish::Clean) otherwise.
+    /// Local-LLM rewrite into grammatically correct writing in the speaker's
+    /// language; falls back to [`Clean`](Polish::Clean) when no cleanup model
+    /// is configured.
     Polished,
 }
 
