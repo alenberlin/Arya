@@ -186,15 +186,25 @@ export function NotesWorkspace() {
     [refreshNotes],
   );
 
+  const openReqRef = useRef(0);
   const openNote = useCallback(async (id: string) => {
+    // Monotonic request token: a rapid A→B click must not let A's slower
+    // response overwrite B's editor.
+    const req = ++openReqRef.current;
     setActiveNoteId(id);
     setOpenTabs((tabs) => (tabs.includes(id) ? tabs : [...tabs, id]));
     try {
-      setDetail(await getNote(id));
-      setTurns(await getNoteTurns(id));
-      setAttachments(await listAttachments(id));
+      const [nextDetail, nextTurns, nextAttachments] = await Promise.all([
+        getNote(id),
+        getNoteTurns(id),
+        listAttachments(id),
+      ]);
+      if (openReqRef.current !== req) return; // superseded by a newer open
+      setDetail(nextDetail);
+      setTurns(nextTurns);
+      setAttachments(nextAttachments);
     } catch (e) {
-      setError(String(e));
+      if (openReqRef.current === req) setError(String(e));
     }
   }, []);
 

@@ -2,7 +2,10 @@
  * In-app dialogs. The macOS webview doesn't support window.confirm/prompt, so
  * these controlled React modals replace them (and read as native to the app).
  */
-import { type ReactNode, useEffect, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+
+const FOCUSABLE =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function Modal({
   open,
@@ -15,14 +18,50 @@ function Modal({
   labelledBy: string;
   children: ReactNode;
 }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  const restoreFocus = useRef<HTMLElement | null>(null);
+  // Capture the element that had focus BEFORE the modal's autoFocus moves it
+  // inside, so it can be restored on close. Runs during the open render, ahead
+  // of the autoFocus commit.
+  if (open && restoreFocus.current === null) {
+    restoreFocus.current = document.activeElement as HTMLElement | null;
+  }
+
+  // Escape to close + trap Tab within the dialog so focus can't wander to the
+  // sidebar behind it.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const nodes = modalRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
+      if (!nodes || nodes.length === 0) return;
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+
+  // Return focus to the trigger when the modal closes (keyed on `open` alone so
+  // an unstable onClose closure can't fire this on every re-render).
+  useEffect(() => {
+    if (!open) return;
+    return () => {
+      restoreFocus.current?.focus?.();
+      restoreFocus.current = null;
+    };
+  }, [open]);
 
   if (!open) return null;
   return (
@@ -33,7 +72,13 @@ function Modal({
         aria-label="Close dialog"
         onClick={onClose}
       />
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby={labelledBy}>
+      <div
+        ref={modalRef}
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+      >
         {children}
       </div>
     </div>

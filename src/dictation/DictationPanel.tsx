@@ -150,6 +150,7 @@ export function DictationPanel() {
   }, []);
 
   const save = async (next: DictationSettings) => {
+    const previous = settings;
     setSettings(next);
     setSaved(false);
     try {
@@ -157,6 +158,8 @@ export function DictationPanel() {
       setError(null);
       setSaved(true);
     } catch (e) {
+      // Roll back the optimistic update so the UI matches what's on disk.
+      setSettings(previous);
       setError(String(e));
     }
   };
