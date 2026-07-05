@@ -8,6 +8,7 @@ import {
   attachFile,
   createFolder,
   createNote,
+  deleteAllNotes,
   deleteNote,
   discardRecording,
   type Folder,
@@ -33,8 +34,16 @@ import {
   type TranscriptTurn,
   updateNote,
 } from "../lib/notes";
-import { ConfirmDialog, PromptDialog } from "../ui/dialogs";
-import { MeetingIcon, NotesIcon, PlusIcon, RecordIcon, SearchIcon, StopIcon } from "../ui/icons";
+import { ConfirmDialog, PromptDialog, TypeToConfirmDialog } from "../ui/dialogs";
+import {
+  MeetingIcon,
+  NotesIcon,
+  PlusIcon,
+  RecordIcon,
+  SearchIcon,
+  StopIcon,
+  TrashIcon,
+} from "../ui/icons";
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "",
@@ -132,6 +141,7 @@ export function NotesWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [clearAllOpen, setClearAllOpen] = useState(false);
   const [noteMenu, setNoteMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
@@ -401,15 +411,28 @@ export function NotesWorkspace() {
         <div className="panel-head">
           <div className="spread hstack" style={{ marginBottom: 12 }}>
             <div className="panel-title">Notes</div>
-            <button
-              type="button"
-              className="btn-icon bare"
-              aria-label="new note"
-              title="New note"
-              onClick={() => void createNewNote()}
-            >
-              <PlusIcon />
-            </button>
+            <div className="hstack" style={{ gap: 2 }}>
+              {notes.length > 0 ? (
+                <button
+                  type="button"
+                  className="btn-icon bare note-del-all"
+                  aria-label="delete all notes"
+                  title="Delete all notes"
+                  onClick={() => setClearAllOpen(true)}
+                >
+                  <TrashIcon />
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="btn-icon bare"
+                aria-label="new note"
+                title="New note"
+                onClick={() => void createNewNote()}
+              >
+                <PlusIcon />
+              </button>
+            </div>
           </div>
           <div className="filter-field" style={{ marginBottom: 12 }}>
             <SearchIcon className="filter-icon" />
@@ -616,7 +639,7 @@ export function NotesWorkspace() {
 
           <ul aria-label="notes" className="plain">
             {visibleNotes.map((note) => (
-              <li key={note.id}>
+              <li key={note.id} className="note-row">
                 <button
                   type="button"
                   className="row"
@@ -641,6 +664,18 @@ export function NotesWorkspace() {
                   <div className="mono" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
                     {formatWhen(note.createdAt)}
                   </div>
+                </button>
+                <button
+                  type="button"
+                  className="note-del"
+                  aria-label={`delete ${note.title}`}
+                  title="Delete note"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteTargetId(note.id);
+                  }}
+                >
+                  <TrashIcon />
                 </button>
               </li>
             ))}
@@ -964,6 +999,31 @@ export function NotesWorkspace() {
           }
         }}
         onCancel={() => setDeleteTargetId(null)}
+      />
+      <TypeToConfirmDialog
+        open={clearAllOpen}
+        title="Delete all notes?"
+        message="This permanently deletes every note, along with its transcript and attachments. This cannot be undone."
+        phrase="confirm"
+        confirmLabel="Delete all notes"
+        onConfirm={() => {
+          setClearAllOpen(false);
+          void deleteAllNotes()
+            .then(() => {
+              // Everything the editor and list referenced is gone — reset it,
+              // and drop any active filter so the list can't show stale hits.
+              setOpenTabs([]);
+              setActiveNoteId(null);
+              setDetail(null);
+              setTurns([]);
+              setAttachments([]);
+              setFilter("");
+              setSearchResults([]);
+              return refreshNotes();
+            })
+            .catch((e) => setError(String(e)));
+        }}
+        onCancel={() => setClearAllOpen(false)}
       />
 
       {noteMenu ? (

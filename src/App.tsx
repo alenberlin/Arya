@@ -31,10 +31,10 @@ type Tab = "notes" | "agent" | "search" | "routines" | "mcp" | "dictation" | "ac
 const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.JSX.Element }[] = [
   { id: "notes", label: "Notes", icon: NotesIcon },
   { id: "agent", label: "Agent", icon: AgentIcon },
+  { id: "dictation", label: "Dictation", icon: DictationIcon },
   { id: "search", label: "Search", icon: SearchIcon },
   { id: "routines", label: "Routines", icon: RoutinesIcon },
   { id: "mcp", label: "MCP servers", icon: McpIcon },
-  { id: "dictation", label: "Dictation", icon: DictationIcon },
 ];
 
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);

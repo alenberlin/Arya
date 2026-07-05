@@ -103,6 +103,15 @@ export const ThemeIcon = (p: IconProps) => (
     <line x1="16.6" y1="7.4" x2="18" y2="6" />
   </svg>
 );
+export const TrashIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
+    <path d="M4 7h16" />
+    <path d="M9 7V5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 15 5v2" />
+    <path d="M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12" />
+    <line x1="10" y1="11" x2="10.3" y2="17" />
+    <line x1="14" y1="11" x2="13.7" y2="17" />
+  </svg>
+);
 export const PlusIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={2} {...p} aria-hidden="true">
     <line x1="12" y1="6" x2="12" y2="18" />
