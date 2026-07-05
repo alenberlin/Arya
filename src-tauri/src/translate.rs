@@ -161,8 +161,28 @@ struct OpenAiMessage {
 
 impl Translator for AryaTranslator {
     fn translate(&self, text: &str, target: &str) -> Option<String> {
+        match self.try_translate(text, target) {
+            Ok(content) => non_empty(content),
+            Err(e) => {
+                // The source text is still kept (never lost), but surface the
+                // reason instead of failing completely silently.
+                eprintln!("arya cloud translation failed, falling back to source: {e}");
+                None
+            }
+        }
+    }
+}
+
+impl AryaTranslator {
+    fn try_translate(&self, text: &str, target: &str) -> Result<String, String> {
+        // Send the BARE model id; the proxy qualifies it from the URL provider,
+        // so this never double-prefixes into a 404.
+        let bare_model = self
+            .model
+            .strip_prefix(&format!("{CLOUD_PROVIDER}:"))
+            .unwrap_or(&self.model);
         let body = json!({
-            "model": self.model,
+            "model": bare_model,
             "stream": false,
             "messages": [
                 { "role": "system", "content": system_prompt(target) },
@@ -177,11 +197,16 @@ impl Translator for AryaTranslator {
             .header("authorization", format!("Bearer {}", self.token))
             .json(&body)
             .send()
-            .ok()?
+            .map_err(|e| e.to_string())?
             .error_for_status()
-            .ok()?;
-        let parsed: OpenAiResponse = response.json().ok()?;
-        non_empty(parsed.choices.into_iter().next()?.message.content)
+            .map_err(|e| e.to_string())?;
+        let parsed: OpenAiResponse = response.json().map_err(|e| e.to_string())?;
+        parsed
+            .choices
+            .into_iter()
+            .next()
+            .map(|c| c.message.content)
+            .ok_or_else(|| "cloud response had no choices".to_string())
     }
 }
 

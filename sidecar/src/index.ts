@@ -6,7 +6,7 @@
 import { createInterface } from "node:readline";
 import { McpManager, type McpServerSpec } from "./mcp.js";
 import type { AgentEvent, ApprovalDecision, RpcRequest, SessionConfig } from "./protocol.js";
-import { listOllamaModels } from "./providers.js";
+import { listCloudModels, listOllamaModels } from "./providers.js";
 import { Session } from "./session.js";
 
 const sessions = new Map<string, Session>();
@@ -66,14 +66,7 @@ async function dispatch(request: RpcRequest): Promise<void> {
         return;
       }
       case "models.list": {
-        const local = await listOllamaModels();
-        const cloud: string[] = [];
-        if (process.env.ANTHROPIC_API_KEY) {
-          cloud.push("anthropic:claude-sonnet-5", "anthropic:claude-opus-4-8");
-        }
-        if (process.env.OPENAI_API_KEY) {
-          cloud.push("openai:gpt-5.2", "openai:gpt-5-mini");
-        }
+        const [local, cloud] = await Promise.all([listOllamaModels(), listCloudModels()]);
         if (id !== null) ok(id, { models: [...local, ...cloud] });
         return;
       }
