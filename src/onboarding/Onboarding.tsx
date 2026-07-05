@@ -55,6 +55,9 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
   const go = (next: Step) => setStep(next);
   const finish = () => {
     localStorage.setItem(STORAGE_KEY, "true");
+    // Clear the resume marker so a future re-run (e.g. after resetting the
+    // onboarded flag) starts from the beginning, not mid-flow.
+    localStorage.removeItem("arya-onboarding-step");
     onFinish();
   };
 

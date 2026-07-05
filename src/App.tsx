@@ -141,7 +141,7 @@ export function App() {
               key={id}
               type="button"
               className="nav-item"
-              aria-current={tab === id}
+              aria-current={tab === id ? "page" : undefined}
               onClick={() => setTab(id)}
             >
               <Icon />
@@ -159,7 +159,7 @@ export function App() {
           <button
             type="button"
             className="sidebar-account"
-            aria-current={tab === "account"}
+            aria-current={tab === "account" ? "page" : undefined}
             onClick={() => setTab("account")}
           >
             <span className="avatar">

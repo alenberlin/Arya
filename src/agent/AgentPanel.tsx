@@ -278,7 +278,7 @@ export function AgentPanel() {
         setMessages((mm) => [
           ...mm,
           {
-            id: `local-img-${Date.now()}`,
+            id: `local-img-${crypto.randomUUID()}`,
             role: "assistant",
             contentJson: JSON.stringify({ text: `Image saved to ${result.path}`, tools: [] }),
             createdAt: new Date().toISOString(),
@@ -292,7 +292,7 @@ export function AgentPanel() {
     setMessages((m) => [
       ...m,
       {
-        id: `local-${Date.now()}`,
+        id: `local-${crypto.randomUUID()}`,
         role: "user",
         contentJson: JSON.stringify({ text, tools: [] }),
         createdAt: new Date().toISOString(),
