@@ -17,8 +17,12 @@ use std::mem;
 use std::path::Path;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 
+// parking_lot's mutex does not poison, so a panic while the stream lock is held
+// can't turn a later `.lock()` — including the one in Drop — into a second
+// panic (panic-in-Drop aborts the whole process).
+use parking_lot::Mutex;
 use sherpa_rs::sherpa_rs_sys as sys;
 
 use super::SpeechError;
@@ -52,8 +56,10 @@ pub struct SherpaStreamingEngine {
     sample_rate: i32,
 }
 
-// The recognizer is immutable after construction and every stream access is
-// serialized through the mutex, so sharing across threads is sound.
+// SAFETY: the recognizer pointer is immutable after construction, and every
+// access to the stream pointer is serialized through `stream` (a mutex), so no
+// two threads ever touch the underlying C objects concurrently. The raw
+// pointers are owned for the engine's lifetime and freed exactly once in Drop.
 unsafe impl Send for SherpaStreamingEngine {}
 unsafe impl Sync for SherpaStreamingEngine {}
 
@@ -132,7 +138,7 @@ impl SherpaStreamingEngine {
 
 impl StreamingSpeechEngine for SherpaStreamingEngine {
     fn reset(&self) {
-        let mut guard = self.stream.lock().expect("stream lock");
+        let mut guard = self.stream.lock();
         unsafe {
             sys::SherpaOnnxDestroyOnlineStream(*guard);
             *guard = sys::SherpaOnnxCreateOnlineStream(self.recognizer);
@@ -144,13 +150,13 @@ impl StreamingSpeechEngine for SherpaStreamingEngine {
         if samples.is_empty() {
             return;
         }
-        let guard = self.stream.lock().expect("stream lock");
+        let guard = self.stream.lock();
         unsafe { feed(self.recognizer, *guard, self.sample_rate, samples) };
         self.fed.fetch_add(samples.len(), Ordering::SeqCst);
     }
 
     fn feed_up_to(&self, samples: &[f32]) {
-        let guard = self.stream.lock().expect("stream lock");
+        let guard = self.stream.lock();
         let start = self.fed.load(Ordering::SeqCst);
         if samples.len() <= start {
             return;
@@ -160,12 +166,12 @@ impl StreamingSpeechEngine for SherpaStreamingEngine {
     }
 
     fn partial(&self) -> String {
-        let guard = self.stream.lock().expect("stream lock");
+        let guard = self.stream.lock();
         unsafe { result_text(self.recognizer, *guard) }
     }
 
     fn finalize(&self) -> String {
-        let mut guard = self.stream.lock().expect("stream lock");
+        let mut guard = self.stream.lock();
         let text = unsafe {
             sys::SherpaOnnxOnlineStreamInputFinished(*guard);
             while sys::SherpaOnnxIsOnlineStreamReady(self.recognizer, *guard) == 1 {
@@ -186,7 +192,7 @@ impl StreamingSpeechEngine for SherpaStreamingEngine {
 impl Drop for SherpaStreamingEngine {
     fn drop(&mut self) {
         unsafe {
-            sys::SherpaOnnxDestroyOnlineStream(*self.stream.lock().expect("stream lock"));
+            sys::SherpaOnnxDestroyOnlineStream(*self.stream.lock());
             sys::SherpaOnnxDestroyOnlineRecognizer(self.recognizer);
         }
     }
@@ -207,7 +213,7 @@ pub fn cached(
     tokens: &Path,
 ) -> Result<Arc<SherpaStreamingEngine>, SpeechError> {
     let cell = CACHE.get_or_init(|| Mutex::new(None));
-    let mut guard = cell.lock().expect("streaming cache lock");
+    let mut guard = cell.lock();
     if let Some(engine) = guard.as_ref() {
         return Ok(engine.clone());
     }
@@ -221,7 +227,7 @@ pub fn cached(
 /// The cached engine if it's already loaded, without loading it. Lets the
 /// dictation hot path decide the backend synchronously and cheaply.
 pub fn current() -> Option<Arc<SherpaStreamingEngine>> {
-    CACHE.get()?.lock().expect("streaming cache lock").clone()
+    CACHE.get()?.lock().clone()
 }
 
 /// Feed samples into `stream` and run the decoder until it's caught up. Caller

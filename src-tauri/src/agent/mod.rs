@@ -191,6 +191,11 @@ pub fn agent_workspace_read(app: AppHandle, path: String) -> Result<String, Stri
     Ok(String::from_utf8_lossy(&bytes).to_string())
 }
 
+/// Caps so a session that never emits `turn-finished` (sidecar crash, an
+/// infinite model loop) can't grow its accumulator without bound.
+const MAX_ACC_BYTES: usize = 4 * 1024 * 1024;
+const MAX_ACC_TOOLS: usize = 2000;
+
 /// Routes a sidecar event: forward to the UI, accumulate, and persist the
 /// assistant message when the turn finishes.
 fn handle_event(app: &AppHandle, params: &Value) {
@@ -208,15 +213,23 @@ fn handle_event(app: &AppHandle, params: &Value) {
     match kind {
         "text-delta" => {
             if let Some(delta) = event.get("delta").and_then(|d| d.as_str()) {
-                acc.text.push_str(delta);
+                if acc.text.len() < MAX_ACC_BYTES {
+                    acc.text.push_str(delta);
+                }
             }
         }
         "reasoning-delta" => {
             if let Some(delta) = event.get("delta").and_then(|d| d.as_str()) {
-                acc.reasoning.push_str(delta);
+                if acc.reasoning.len() < MAX_ACC_BYTES {
+                    acc.reasoning.push_str(delta);
+                }
             }
         }
-        "tool-call" => acc.tools.push(event.clone()),
+        "tool-call" => {
+            if acc.tools.len() < MAX_ACC_TOOLS {
+                acc.tools.push(event.clone());
+            }
+        }
         "tool-result" => {
             // Attach the result to its call entry when present.
             let call_id = event.get("callId").cloned();
