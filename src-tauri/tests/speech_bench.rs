@@ -56,6 +56,18 @@ async fn transcribes_reference_within_accuracy_and_speed_budget() {
     let transcript = engine.transcribe(&clip, &options).expect("transcribes");
     let infer_secs = infer_start.elapsed().as_secs_f64();
 
+    // The engine reuses one decode state across calls (whisper.cpp clears its
+    // result buffers each `full`). A second transcription of the same clip must
+    // reset cleanly and reproduce the first result — greedy decoding is
+    // deterministic — proving reuse is correct, not just non-crashing.
+    let repeat = engine
+        .transcribe(&clip, &options)
+        .expect("second transcribe on the reused state");
+    assert_eq!(
+        repeat.text, transcript.text,
+        "reused decode state must reproduce identical output across calls"
+    );
+
     let rtf = infer_secs / audio_secs;
     let wer = word_error_rate(JFK_REFERENCE, &transcript.text);
 

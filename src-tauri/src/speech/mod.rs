@@ -7,6 +7,7 @@
 
 pub mod engine_cache;
 pub mod models;
+pub mod streaming;
 pub mod wav;
 pub mod wer;
 pub mod whisper;

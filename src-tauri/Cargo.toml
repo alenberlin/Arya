@@ -34,12 +34,14 @@ cpal = "0.18"
 rubato = "0.16"
 tauri-plugin-global-shortcut = "2"
 libc = "0.2"
-sherpa-rs = { version = "0.6", default-features = false, features = ["download-binaries"] }
+sherpa-rs = { version = "0.6", default-features = false, features = ["download-binaries", "sys"] }
 base64 = "0.22"
 keyring = { version = "3", features = ["apple-native"] }
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-dialog = "2"
 percent-encoding = "2"
 
 [profile.release]

@@ -10,6 +10,7 @@
     "build": "tsc && vite build",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
+    "package:mac": "bash scripts/package-dmg.sh",
     "test": "vitest run",
     "check": "biome check .",
     "check:write": "biome check --write .",
@@ -18,7 +19,10 @@
     "brand:check": "node scripts/sync-brand.mjs --check"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/newsreader": "^5.2.10",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

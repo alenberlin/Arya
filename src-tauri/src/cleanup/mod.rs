@@ -22,6 +22,23 @@ pub enum DictationStyle {
     Formal,
 }
 
+/// How much cleanup a dictation gets. Orthogonal to [`DictationStyle`]: this
+/// picks the *engine* (verbatim / deterministic / local-LLM), style picks the
+/// *voice*. Surfaced on the dictation pill as Raw / Clean / Polished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum Polish {
+    /// Verbatim: dictionary replacements only, no filler/casing/punctuation
+    /// edits. For code, terminals, or anywhere exact words matter.
+    Raw,
+    /// Deterministic mechanical cleanup — the fast, offline default.
+    #[default]
+    Clean,
+    /// Local-LLM polish when a cleanup model is configured; falls back to
+    /// [`Clean`](Polish::Clean) otherwise.
+    Polished,
+}
+
 /// Where the text is going, so layout can adapt (email greeting/sign-off
 /// spacing, for example). Detected from the frontmost app at paste time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

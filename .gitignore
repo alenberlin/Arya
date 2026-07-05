@@ -9,3 +9,7 @@ src-tauri/target/
 !.env.example
 _reference/
 arya-api/target/
+
+# Handoff / upload artifacts — not source, keep out of history
+Arya Mac AI Workspace-handoff.zip
+arya-mac-ai-workspace/

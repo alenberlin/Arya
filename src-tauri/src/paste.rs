@@ -40,10 +40,17 @@ pub fn is_email_app(bundle_id: Option<&str>) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-pub use macos::{accessibility_trusted, frontmost_app, paste_text, prompt_accessibility};
+pub use macos::{
+    accessibility_trusted, frontmost_app, paste_text, prompt_accessibility, set_clipboard,
+};
 
 #[cfg(not(target_os = "macos"))]
 pub fn paste_text(_text: &str) -> Result<(), PasteError> {
+    Err(PasteError::Unsupported)
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn set_clipboard(_text: &str) -> Result<(), PasteError> {
     Err(PasteError::Unsupported)
 }
 
@@ -133,6 +140,21 @@ mod macos {
             if let Some(previous) = previous {
                 pasteboard.clearContents();
                 pasteboard.setString_forType(&previous, NSPasteboardTypeString);
+            }
+        }
+        Ok(())
+    }
+
+    /// Puts `text` on the general pasteboard (a plain Copy — no paste, and the
+    /// previous contents are intentionally replaced). Needs no permissions.
+    pub fn set_clipboard(text: &str) -> Result<(), PasteError> {
+        unsafe {
+            let pasteboard = NSPasteboard::generalPasteboard();
+            pasteboard.clearContents();
+            let ok =
+                pasteboard.setString_forType(&NSString::from_str(text), NSPasteboardTypeString);
+            if !ok {
+                return Err(PasteError::Pasteboard("setString failed".into()));
             }
         }
         Ok(())

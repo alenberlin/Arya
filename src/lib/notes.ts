@@ -62,6 +62,7 @@ export interface RecoverableRecording {
 
 export const createNote = (title: string) => invoke<Note>("create_note", { title });
 export const listNotes = () => invoke<NoteSummary[]>("list_notes");
+export const searchNotes = (query: string) => invoke<NoteSummary[]>("search_notes", { query });
 export const getNote = (id: string) => invoke<NoteDetail>("get_note", { id });
 export const getNoteTurns = (id: string) => invoke<TranscriptTurn[]>("get_note_turns", { id });
 export const updateNote = (
@@ -75,6 +76,22 @@ export const updateNote = (
     manualNotes: fields.manualNotes ?? null,
   });
 export const deleteNote = (id: string) => invoke<void>("delete_note", { id });
+
+/** A file attached to a note, copied into the app workspace. */
+export interface Attachment {
+  id: string;
+  noteId: string;
+  name: string;
+  path: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+export const attachFile = (noteId: string, sourcePath: string) =>
+  invoke<Attachment>("attach_file", { noteId, sourcePath });
+export const listAttachments = (noteId: string) =>
+  invoke<Attachment[]>("list_attachments", { noteId });
+export const removeAttachment = (id: string) => invoke<void>("remove_attachment", { id });
+export const openAttachment = (id: string) => invoke<void>("open_attachment", { id });
 
 export const createFolder = (name: string) => invoke<Folder>("create_folder", { name });
 export const listFolders = () => invoke<Folder[]>("list_folders");

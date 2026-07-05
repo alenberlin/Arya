@@ -64,7 +64,9 @@ pub async fn rag_reindex(app: AppHandle, pool: State<'_, SqlitePool>) -> Result<
         .map_err(|e| e.to_string())?
 }
 
-/// Public wrapper for dev hooks.
+/// Public wrapper for the debug-only dev hooks; compiled out of release, like
+/// its only caller.
+#[cfg(debug_assertions)]
 pub fn reindex_blocking_public(app: &AppHandle, pool: &SqlitePool) -> Result<i64, String> {
     reindex_blocking(app, pool)
 }

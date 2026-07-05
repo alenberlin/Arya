@@ -62,6 +62,19 @@ impl CaptureHandle {
         Ok(AudioClip { samples })
     }
 
+    /// A copy of everything captured so far, normalized to mono 16 kHz,
+    /// without stopping the stream — for live/partial transcription.
+    pub fn snapshot(&self) -> Result<AudioClip, CaptureError> {
+        let raw = {
+            let guard = self.buffer.lock().expect("capture buffer lock");
+            guard.clone()
+        };
+        let mono = resample::downmix_interleaved(&raw, self.channels);
+        let samples = resample::resample_to_16k(&mono, self.sample_rate)
+            .map_err(|e| CaptureError::Resample(e.to_string()))?;
+        Ok(AudioClip { samples })
+    }
+
     /// Seconds of audio captured so far (approximate, pre-resample).
     pub fn elapsed_secs(&self) -> f64 {
         let frames = {
