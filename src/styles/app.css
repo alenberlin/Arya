@@ -371,7 +371,7 @@ legend {
   background: var(--surface-2);
   color: var(--text);
 }
-.nav-item[aria-current="true"] {
+.nav-item[aria-current="page"] {
   background: var(--accent-soft);
   color: var(--accent);
 }
@@ -424,7 +424,7 @@ legend {
 .sidebar-account:hover {
   background: var(--surface-2);
 }
-.sidebar-account[aria-current="true"] {
+.sidebar-account[aria-current="page"] {
   background: var(--surface-2);
 }
 .avatar {
