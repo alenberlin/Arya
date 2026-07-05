@@ -109,6 +109,15 @@ describe("app shell", () => {
     expect(screen.getByRole("button", { name: "Notes" })).toBeInTheDocument();
   });
 
+  it("marks the current view's nav item as the active page (the highlight hook)", async () => {
+    // The CSS highlight is `.nav-item[aria-current="page"]`; the active pillar
+    // must carry exactly that attribute and inactive pillars must not.
+    render(<App />);
+    const notes = await screen.findByRole("button", { name: "Notes" });
+    expect(notes).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Agent" })).not.toHaveAttribute("aria-current");
+  });
+
   it("starts a recording and opens its note", async () => {
     const user = userEvent.setup();
     render(<App />);
