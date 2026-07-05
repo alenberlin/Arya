@@ -76,6 +76,8 @@ export const updateNote = (
     manualNotes: fields.manualNotes ?? null,
   });
 export const deleteNote = (id: string) => invoke<void>("delete_note", { id });
+/** Permanently deletes every note and its recordings/attachments. */
+export const deleteAllNotes = () => invoke<void>("delete_all_notes");
 
 /** A file attached to a note, copied into the app workspace. */
 export interface Attachment {

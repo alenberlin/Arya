@@ -225,7 +225,46 @@ pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String
         .await
         .map_err(|e| e.to_string())?;
 
-    for path in audio_paths.into_iter().chain(attachment_paths) {
+    remove_files(audio_paths.into_iter().chain(attachment_paths));
+    Ok(())
+}
+
+/// Deletes every note, and its recordings/attachments from disk. Backs the
+/// "Delete all" action in the notes list.
+#[tauri::command]
+pub async fn delete_all_notes(pool: State<'_, SqlitePool>) -> Result<(), String> {
+    delete_all_notes_inner(&pool).await
+}
+
+/// Testable core of [`delete_all_notes`]. Every audio artifact and attachment
+/// belongs to a note (their rows reference `notes` with `ON DELETE CASCADE`),
+/// so deleting all notes removes them all. Mirrors [`delete_note_inner`]:
+/// collect the file paths first, delete the rows, then unlink the files — a
+/// failed delete leaves everything intact rather than orphaning files.
+pub async fn delete_all_notes_inner(pool: &SqlitePool) -> Result<(), String> {
+    let audio_paths = sqlx::query_scalar::<_, String>("SELECT path FROM audio_artifacts")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    let attachment_paths = sqlx::query_scalar::<_, String>("SELECT path FROM note_attachments")
+        .fetch_all(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    sqlx::query("DELETE FROM notes")
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    remove_files(audio_paths.into_iter().chain(attachment_paths));
+    Ok(())
+}
+
+/// Best-effort removal of files and their now-empty parent directories. Called
+/// after the owning rows are deleted, so failures are ignored: the
+/// authoritative delete already succeeded and a leftover file is harmless.
+fn remove_files(paths: impl IntoIterator<Item = String>) {
+    for path in paths {
         let path = std::path::PathBuf::from(path);
         let _ = std::fs::remove_file(&path);
         if let Some(dir) = path.parent() {
@@ -233,7 +272,6 @@ pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String
             let _ = std::fs::remove_dir(dir);
         }
     }
-    Ok(())
 }
 
 #[tauri::command]
@@ -424,5 +462,68 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_all_notes_clears_rows_cascades_and_removes_files() {
+        let pool = test_pool().await;
+        let dir = std::env::temp_dir().join(format!("arya-del-all-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Note A: an attachment on disk. Note B: a recording session with an
+        // audio artifact on disk. Both files must be gone after delete-all.
+        let a = insert_note(&pool, "A").await.unwrap();
+        let b = insert_note(&pool, "B").await.unwrap();
+        let attach = dir.join("report.pdf");
+        let audio = dir.join("mic.wav");
+        std::fs::write(&attach, b"pdf").unwrap();
+        std::fs::write(&audio, b"wav").unwrap();
+
+        sqlx::query(
+            "INSERT INTO note_attachments (id, note_id, name, path, size_bytes, created_at)
+             VALUES ('att1', ?1, 'report.pdf', ?2, 3, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+        )
+        .bind(&a.id)
+        .bind(attach.to_str().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO recording_sessions
+                (id, note_id, status, source_mode, sample_rate, channels, started_at, updated_at)
+             VALUES ('sess1', ?1, 'finished', 'microphone-only', 16000, 1,
+                     strftime('%Y-%m-%dT%H:%M:%fZ','now'), strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+        )
+        .bind(&b.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO audio_artifacts (id, session_id, source, path, status, size_bytes, created_at)
+             VALUES ('art1', 'sess1', 'microphone', ?1, 'final', 3, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+        )
+        .bind(audio.to_str().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        delete_all_notes_inner(&pool).await.expect("delete all");
+
+        assert!(fetch_notes(&pool).await.unwrap().is_empty(), "notes gone");
+        // Children cascade away with their notes.
+        let attach_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM note_attachments")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let artifact_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audio_artifacts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!((attach_rows, artifact_rows), (0, 0), "children cascaded");
+        // And their files are unlinked from disk.
+        assert!(!attach.exists(), "attachment file removed");
+        assert!(!audio.exists(), "audio file removed");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

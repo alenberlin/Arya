@@ -123,6 +123,7 @@ pub fn run() {
             notes::get_note_turns,
             notes::update_note,
             notes::delete_note,
+            notes::delete_all_notes,
             attachments::attach_file,
             attachments::list_attachments,
             attachments::remove_attachment,

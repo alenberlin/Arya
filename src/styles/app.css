@@ -626,6 +626,54 @@ legend {
   background: var(--accent-ghost);
   border-color: var(--accent-soft);
 }
+
+/* Notes list rows carry a trash affordance that appears on hover/focus. The
+ * row stays a full-width button; the trash is an absolutely-positioned sibling
+ * (a button can't nest in a button), hidden until the row is hovered. */
+.note-row {
+  position: relative;
+}
+.note-del {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-sm);
+  background: var(--surface-raise);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  /* Hidden by default AND click-through, so the covered strip of the row still
+   * opens the note; only revealed instances capture the click. */
+  pointer-events: none;
+  transition:
+    opacity 120ms ease,
+    color 120ms ease,
+    background 120ms ease;
+}
+.note-row:hover .note-del,
+.note-del:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.note-del:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+.note-del svg {
+  width: 15px;
+  height: 15px;
+}
+/* The always-present "delete all" in the list header sharpens to danger on hover. */
+.note-del-all:hover:not(:disabled) {
+  color: var(--danger);
+}
 .list-item {
   display: block;
   width: 100%;
