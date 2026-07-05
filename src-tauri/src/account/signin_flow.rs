@@ -65,6 +65,9 @@ pub fn begin(app: AppHandle, sign_in_url: &str) -> Result<(), String> {
                 if !peer.ip().is_loopback() {
                     continue;
                 }
+                // A local process that connects but never sends a newline must
+                // not wedge the callback for the whole 300s window.
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
                 let mut reader = BufReader::new(&stream);
                 let mut request_line = String::new();
                 let _ = reader.read_line(&mut request_line);

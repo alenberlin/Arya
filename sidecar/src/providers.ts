@@ -65,6 +65,36 @@ export function resolveModel(qualified: string): LanguageModel {
   }
 }
 
+/**
+ * Cloud models available to the desktop. In proxy mode (ARYA_API_URL set) they
+ * come from the Arya API catalog (/v1/models) — the source of truth — so the
+ * list reflects what the server can actually serve, not what local keys exist.
+ * In a direct-key dev setup they come from the provider keys in the env.
+ */
+export async function listCloudModels(): Promise<string[]> {
+  if (ARYA_API_URL) {
+    try {
+      const response = await fetch(`${ARYA_API_URL}/v1/models`, {
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (!response.ok) return [];
+      const data = (await response.json()) as { models?: Array<{ id: string }> };
+      // Ollama (local) models are listed separately via listOllamaModels().
+      return (data.models ?? []).map((m) => m.id).filter((id) => id && !id.startsWith("ollama:"));
+    } catch {
+      return [];
+    }
+  }
+  const cloud: string[] = [];
+  if (process.env.ANTHROPIC_API_KEY) {
+    cloud.push("anthropic:claude-sonnet-5", "anthropic:claude-opus-4-8");
+  }
+  if (process.env.OPENAI_API_KEY) {
+    cloud.push("openai:gpt-5.2", "openai:gpt-5-mini");
+  }
+  return cloud;
+}
+
 /** Local models currently available from Ollama (empty when not running). */
 export async function listOllamaModels(): Promise<string[]> {
   try {

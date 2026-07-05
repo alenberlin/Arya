@@ -82,7 +82,11 @@ pub fn account_open_billing(target: String) -> Result<bool, String> {
     let base = std::env::var("ARYA_BILLING_URL").ok();
     match base {
         Some(base) if !base.is_empty() => {
-            let url = format!("{base}?intent={target}");
+            // Percent-encode the webview-supplied intent so it can't inject
+            // extra query params or fragments into the billing URL.
+            let intent =
+                percent_encoding::utf8_percent_encode(&target, percent_encoding::NON_ALPHANUMERIC);
+            let url = format!("{base}?intent={intent}");
             open_url(&url);
             Ok(true)
         }
