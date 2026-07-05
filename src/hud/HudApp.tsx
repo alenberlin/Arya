@@ -91,8 +91,11 @@ export function HudApp() {
         setPartial("");
         setFinalText("");
       } else {
-        // Recording ended: a settings panel opened mid-dictation has no purpose.
+        // Recording ended: close a mid-dictation settings panel, and let the
+        // level bars fall to rest instead of freezing at their last peak.
         setPolishOpen(false);
+        peakRef.current = 0;
+        setLevel(0);
       }
       if (event.payload.state === "idle") {
         setHandsFree(false);

@@ -10,6 +10,15 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
   },
+  build: {
+    rollupOptions: {
+      // Split the React runtime out of the app bundle so the panels don't all
+      // ship in one monolithic chunk.
+      output: {
+        manualChunks: { react: ["react", "react-dom"] },
+      },
+    },
+  },
   test: {
     environment: "jsdom",
     globals: true,

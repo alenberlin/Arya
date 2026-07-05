@@ -16,6 +16,24 @@ pub struct Config {
     pub ollama_url: String,
 }
 
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact provider keys to presence-only so an accidental `{:?}` on
+        // Config can never leak a secret into logs.
+        f.debug_struct("Config")
+            .field("bind", &self.bind)
+            .field("database_path", &self.database_path)
+            .field("auth_mode", &self.auth_mode_label())
+            .field(
+                "anthropic_key",
+                &self.anthropic_key.as_ref().map(|_| "<set>"),
+            )
+            .field("openai_key", &self.openai_key.as_ref().map(|_| "<set>"))
+            .field("ollama_url", &self.ollama_url)
+            .finish()
+    }
+}
+
 pub enum AuthMode {
     Local {
         token: String,

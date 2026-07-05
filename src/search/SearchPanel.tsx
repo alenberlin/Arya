@@ -125,7 +125,7 @@ export function SearchPanel() {
 
         <ul aria-label="search results" className="plain">
           {hits.map((hit) => (
-            <li key={`${hit.sourceId}-${hit.content.slice(0, 24)}`}>
+            <li key={`${hit.sourceId}-${hit.score}-${hit.content.slice(0, 40)}`}>
               <button type="button" className="result-card">
                 <div className="result-meta">
                   <FileIcon className="result-kind-icon" />
