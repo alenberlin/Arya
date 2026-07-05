@@ -105,43 +105,61 @@ pub async fn start_recording_inner(
         "microphone-only"
     };
 
-    sqlx::query(
-        "INSERT INTO recording_sessions
-             (id, note_id, status, source_mode, sample_rate, channels, started_at, updated_at)
-         VALUES (?1, ?2, 'recording', ?5, ?3, ?4,
-                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-    )
-    .bind(&session_id)
-    .bind(&note_id)
-    .bind(sample_rate as i64)
-    .bind(channels as i64)
-    .bind(mode_label)
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
     let partial = wav_file::partial_path_for(&final_path);
-    sqlx::query(
-        "INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at)
-         VALUES (?1, ?2, 'microphone', ?3, 'partial', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-    )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(&session_id)
-    .bind(partial.to_string_lossy().to_string())
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    if system_started {
+    // Persist the session + artifact rows atomically. The recorder and its WAV
+    // are already live, so if this fails we stop and remove them rather than
+    // leaving an orphaned recording with no recoverable session metadata.
+    let persisted = async {
+        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx::query(
+            "INSERT INTO recording_sessions
+                 (id, note_id, status, source_mode, sample_rate, channels, started_at, updated_at)
+             VALUES (?1, ?2, 'recording', ?5, ?3, ?4,
+                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        )
+        .bind(&session_id)
+        .bind(&note_id)
+        .bind(sample_rate as i64)
+        .bind(channels as i64)
+        .bind(mode_label)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
         sqlx::query(
             "INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at)
-             VALUES (?1, ?2, 'system', ?3, 'partial', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+             VALUES (?1, ?2, 'microphone', ?3, 'partial', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
         )
         .bind(uuid::Uuid::new_v4().to_string())
         .bind(&session_id)
-        .bind(dir.join("system.partial.wav").to_string_lossy().to_string())
-        .execute(pool)
+        .bind(partial.to_string_lossy().to_string())
+        .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
+        if system_started {
+            sqlx::query(
+                "INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at)
+                 VALUES (?1, ?2, 'system', ?3, 'partial', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&session_id)
+            .bind(dir.join("system.partial.wav").to_string_lossy().to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().await.map_err(|e| e.to_string())
+    }
+    .await;
+    if let Err(e) = persisted {
+        let _ = recorder.finish();
+        if system_started {
+            *app.state::<SystemCaptureSlot>()
+                .0
+                .lock()
+                .expect("system capture slot") = None;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(e);
     }
     // Calendar context: title the note from the live event, keep attendees.
     if let Some(event) = crate::calendar::current_or_upcoming_event(10) {
