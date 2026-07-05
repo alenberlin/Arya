@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "hud",
+  "description": "Least-privilege capabilities for the transparent dictation HUD overlay: it only renders status and listens to events, so it gets core APIs and none of updater/process/autostart/dialog.",
+  "windows": [
+    "hud"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

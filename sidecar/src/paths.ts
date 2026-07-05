@@ -61,3 +61,20 @@ export function resolveReadable(workspace: string, requested: string): string {
   const base = resolve(workspace);
   return isAbsolute(requested) ? normalize(requested) : resolve(base, requested);
 }
+
+/**
+ * Classifies a read/list path: resolves it (relative → workspace) and reports
+ * whether it stays inside the workspace after symlink resolution. Callers gate
+ * out-of-workspace reads behind explicit user approval instead of reading
+ * silently — reads are the prompt-injection exfiltration vector the Seatbelt
+ * jail (write-only) does not cover.
+ */
+export function classifyReadable(
+  workspace: string,
+  requested: string,
+): { target: string; inside: boolean } {
+  const base = realBase(workspace);
+  const target = isAbsolute(requested) ? normalize(requested) : resolve(base, requested);
+  const realTarget = realpathOfNearest(target);
+  return { target, inside: isLexicallyInside(base, realTarget) };
+}

@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApprovalBroker } from "../src/approvals.js";
-import { resolveInWorkspace } from "../src/paths.js";
+import { safeMcpEnv } from "../src/mcp.js";
+import { classifyReadable, resolveInWorkspace } from "../src/paths.js";
 import { resolveModel } from "../src/providers.js";
 
 describe("workspace path jail", () => {
@@ -53,6 +54,65 @@ describe("workspace path jail", () => {
       expect(resolved.endsWith("/notes/new.md")).toBe(true);
     } finally {
       rmSync(realWs, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("readable path classification (read confinement)", () => {
+  it("marks in-workspace paths as inside", () => {
+    const realWs = mkdtempSync(join(tmpdir(), "arya-ws-"));
+    try {
+      expect(classifyReadable(realWs, "notes/a.md").inside).toBe(true);
+      expect(classifyReadable(realWs, ".").inside).toBe(true);
+    } finally {
+      rmSync(realWs, { recursive: true, force: true });
+    }
+  });
+
+  it("marks out-of-workspace paths as outside so reads get gated", () => {
+    const realWs = mkdtempSync(join(tmpdir(), "arya-ws-"));
+    try {
+      expect(classifyReadable(realWs, "/etc/passwd").inside).toBe(false);
+      expect(classifyReadable(realWs, "../../etc/passwd").inside).toBe(false);
+    } finally {
+      rmSync(realWs, { recursive: true, force: true });
+    }
+  });
+
+  it("treats an in-workspace symlink pointing outside as outside", () => {
+    const realWs = mkdtempSync(join(tmpdir(), "arya-ws-"));
+    const outside = mkdtempSync(join(tmpdir(), "arya-out-"));
+    symlinkSync(outside, join(realWs, "link"));
+    try {
+      expect(classifyReadable(realWs, "link/secret").inside).toBe(false);
+    } finally {
+      rmSync(realWs, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("MCP env scrubbing", () => {
+  it("strips ambient secrets but keeps essentials and declared env", () => {
+    const saved = {
+      ARYA_API_TOKEN: process.env.ARYA_API_TOKEN,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+      PATH: process.env.PATH,
+    };
+    process.env.ARYA_API_TOKEN = "super-secret";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-secret-value";
+    process.env.PATH = "/usr/bin";
+    try {
+      const env = safeMcpEnv({ MY_SERVER_TOKEN: "declared" });
+      expect(env.ARYA_API_TOKEN).toBeUndefined();
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(env.PATH).toBe("/usr/bin");
+      expect(env.MY_SERVER_TOKEN).toBe("declared");
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 });

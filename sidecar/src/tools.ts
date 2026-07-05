@@ -1,4 +1,4 @@
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
@@ -6,10 +6,10 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { ApprovalBroker } from "./approvals.js";
 import { generateImageToWorkspace, imageGenerationAvailable } from "./images.js";
-import { resolveInWorkspace, resolveReadable } from "./paths.js";
+import { classifyReadable, resolveInWorkspace, resolveReadable } from "./paths.js";
 import type { AgentEvent } from "./protocol.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 export interface ToolContext {
   workspace: string;
@@ -50,13 +50,43 @@ function clip(text: string): string {
   return text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}\n…[truncated]` : text;
 }
 
+/**
+ * Strips control and bidi/format codepoints so a tool argument cannot spoof the
+ * approval prompt (Trojan Source), and caps length for display.
+ */
+export function sanitizeForDisplay(text: string): string {
+  let out = "";
+  for (const ch of text.slice(0, 2000)) {
+    const c = ch.codePointAt(0) ?? 0;
+    const control = c < 0x20 || (c >= 0x7f && c <= 0x9f);
+    const bidiOrFormat =
+      (c >= 0x200b && c <= 0x200f) ||
+      (c >= 0x202a && c <= 0x202e) ||
+      (c >= 0x2060 && c <= 0x206f) ||
+      c === 0xfeff;
+    if (!control && !bidiOrFormat) out += ch;
+  }
+  return out.slice(0, 500);
+}
+
 export function buildTools(ctx: ToolContext) {
   return {
     read_file: tool({
-      description: "Read a text file. Paths are relative to the workspace.",
+      description:
+        "Read a text file. Paths are workspace-relative; reading a path outside " +
+        "the workspace requires explicit user approval.",
       inputSchema: z.object({ path: z.string() }),
       execute: async ({ path }) => {
-        const target = resolveReadable(ctx.workspace, path);
+        const { target, inside } = classifyReadable(ctx.workspace, path);
+        if (!inside) {
+          const approved = await gate(
+            ctx,
+            "read_outside",
+            `Read file outside the workspace: ${sanitizeForDisplay(target)}`,
+            { path: target },
+          );
+          if (!approved) return "denied by user";
+        }
         const info = await stat(target);
         if (info.size > MAX_READ_BYTES) {
           return `file is ${info.size} bytes; too large to read whole`;
@@ -93,10 +123,21 @@ export function buildTools(ctx: ToolContext) {
     }),
 
     list_dir: tool({
-      description: "List directory entries (name + kind).",
+      description:
+        "List directory entries (name + kind). Listing a directory outside the " +
+        "workspace requires explicit user approval.",
       inputSchema: z.object({ path: z.string().default(".") }),
       execute: async ({ path }) => {
-        const target = resolveReadable(ctx.workspace, path);
+        const { target, inside } = classifyReadable(ctx.workspace, path);
+        if (!inside) {
+          const approved = await gate(
+            ctx,
+            "read_outside",
+            `List directory outside the workspace: ${sanitizeForDisplay(target)}`,
+            { path: target },
+          );
+          if (!approved) return "denied by user";
+        }
         const entries = await readdir(target, { withFileTypes: true });
         return clip(
           entries
@@ -143,13 +184,28 @@ export function buildTools(ctx: ToolContext) {
     }),
 
     run_command: tool({
-      description: "Run a shell command in the workspace. Requires user approval.",
-      inputSchema: z.object({ command: z.string() }),
-      execute: async ({ command }) => {
-        const approved = await gate(ctx, "run_command", `Run: ${command}`, { command });
+      description:
+        "Run a program directly (no shell) in the workspace. Provide the program " +
+        "and its arguments as separate values; shell features (pipes, redirects, " +
+        "globbing, $(...), &&) are unavailable. Each distinct program is approved " +
+        "separately.",
+      inputSchema: z.object({
+        program: z.string(),
+        args: z.array(z.string()).default([]),
+      }),
+      execute: async ({ program, args }) => {
+        const argv = args ?? [];
+        // Per-program approval scope: approving `git` never blesses `curl`, and
+        // there is no shell to chain a second program off one approval.
+        const approved = await gate(
+          ctx,
+          `run_command:${program}`,
+          `Run (no shell): ${sanitizeForDisplay([program, ...argv].join(" "))}`,
+          { program, args: argv },
+        );
         if (!approved) return "denied by user";
         try {
-          const { stdout, stderr } = await execAsync(command, {
+          const { stdout, stderr } = await execFileAsync(program, argv, {
             cwd: ctx.workspace,
             timeout: 120_000,
             maxBuffer: 4 * 1024 * 1024,
