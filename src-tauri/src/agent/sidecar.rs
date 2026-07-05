@@ -44,11 +44,21 @@ impl WriteMode {
 /// are world/other-app writable and would let a "sandboxed" agent drop files
 /// another process consumes. node's scratch is redirected into the workspace
 /// via TMPDIR (see spawn), so it needs nothing outside.
+///
+/// Threat model: this is a WRITE jail, not a network jail. `(allow default)`
+/// still permits network and process-exec, and reads are unrestricted — the
+/// sidecar needs network to reach the Arya proxy/Ollama. Exfiltration is
+/// therefore contained at the tool layer instead: the sidecar confines
+/// `read_file`/`list_dir` to the workspace (out-of-workspace reads require user
+/// approval) and runs `run_command` without a shell, approved per program.
 pub fn seatbelt_profile(workspace: &Path) -> String {
     // The kernel matches subpaths against the REAL path, so canonicalize
     // (resolves symlinks like /var -> /private/var on macOS); otherwise a
     // symlinked workspace ancestor makes the allow rule silently miss.
     let canonical = std::fs::canonicalize(workspace).unwrap_or_else(|_| workspace.to_path_buf());
+    // Escape for the TinyScheme string literal so a `"` or `\` in the path
+    // cannot terminate or corrupt the `(subpath "…")` rule.
+    let workspace = escape_sandbox_literal(&canonical.to_string_lossy());
     format!(
         r#"(version 1)
 (allow default)
@@ -60,8 +70,14 @@ pub fn seatbelt_profile(workspace: &Path) -> String {
     (literal "/dev/dtracehelper")
     (literal "/dev/tty"))
 "#,
-        workspace = canonical.display()
+        workspace = workspace
     )
+}
+
+/// Escapes a string for embedding in a Seatbelt (TinyScheme) string literal.
+/// Backslash is escaped first so the escape we add for `"` isn't re-escaped.
+fn escape_sandbox_literal(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 pub struct Sidecar {
@@ -273,6 +289,14 @@ mod tests {
         assert_eq!(WriteMode::parse("unrestricted"), WriteMode::Unrestricted);
         assert_eq!(WriteMode::parse("sandboxed"), WriteMode::Sandboxed);
         assert_eq!(WriteMode::parse("junk"), WriteMode::Sandboxed);
+    }
+
+    #[test]
+    fn escapes_quotes_and_backslashes_in_sandbox_literal() {
+        assert_eq!(escape_sandbox_literal(r#"a"b"#), r#"a\"b"#);
+        assert_eq!(escape_sandbox_literal(r"a\b"), r"a\\b");
+        // Backslash escaped before the quote — the added `\` is not re-escaped.
+        assert_eq!(escape_sandbox_literal(r#"\""#), r#"\\\""#);
     }
 
     /// The AC test: the Seatbelt jail must block writes outside the

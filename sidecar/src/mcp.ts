@@ -19,6 +19,34 @@ interface ConnectedServer {
 }
 
 /**
+ * Minimal environment for a spawned MCP server. The sidecar's own environment
+ * carries the user's Arya bearer token (ARYA_API_TOKEN) and, in direct-key dev
+ * setups, provider keys. An MCP binary — which the user, or a prompt-injected
+ * agent that convinces them to add one, controls — must never inherit those.
+ * Pass only locale/PATH/HOME essentials plus the server's own declared env.
+ */
+export function safeMcpEnv(specEnv?: Record<string, string>): Record<string, string> {
+  const passthrough = [
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "TZ",
+    "TMPDIR",
+  ];
+  const env: Record<string, string> = {};
+  for (const key of passthrough) {
+    const value = process.env[key];
+    if (value !== undefined) env[key] = value;
+  }
+  return { ...env, ...(specEnv ?? {}) };
+}
+
+/**
  * Manages external MCP servers and exposes their tools to the agent.
  * MCP tool calls are gated through the same approval broker as built-ins:
  * an external process acting on the user's behalf always asks first (unless
@@ -32,7 +60,7 @@ export class McpManager {
     const transport = new StdioClientTransport({
       command: spec.command,
       args: spec.args ?? [],
-      env: { ...(process.env as Record<string, string>), ...(spec.env ?? {}) },
+      env: safeMcpEnv(spec.env),
     });
     const client = new Client({ name: "arya", version: "0.1.0" });
     await client.connect(transport);

@@ -1,9 +1,12 @@
 import type { ApprovalDecision } from "./protocol.js";
 
 /**
- * Approval broker: tools park here until the user decides. "once" approves
- * one call, "session" the tool for this session, "always" persists via the
- * shell (which stores it and replays as session grants), "deny" rejects.
+ * Approval broker: tools park here until the user decides. "once" approves a
+ * single call; "session" (and "always") pre-approve that exact tool scope for
+ * the rest of this session; "deny" rejects. There is no cross-session
+ * persistence layer, so "always" currently behaves exactly like "session" —
+ * a durable shell grant would be unsafe. Callers that need narrow grants
+ * (e.g. run_command) pass a per-target scope name like `run_command:<program>`.
  */
 export class ApprovalBroker {
   private pending = new Map<string, { resolve: (approved: boolean) => void; toolName: string }>();
@@ -25,6 +28,8 @@ export class ApprovalBroker {
     const entry = this.pending.get(callId);
     if (!entry) return false;
     this.pending.delete(callId);
+    // "session" and "always" both pre-approve this scope for the session only;
+    // no durable/cross-session grant exists (durable shell grants are unsafe).
     if (decision === "session" || decision === "always") {
       this.sessionApproved.add(entry.toolName);
     }
