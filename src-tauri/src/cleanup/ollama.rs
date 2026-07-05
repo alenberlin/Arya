@@ -27,7 +27,7 @@ impl OllamaCleaner {
             base_url: base_url.into(),
             model: model.into(),
             timeout,
-            client: reqwest::blocking::Client::new(),
+            client: crate::http::blocking_client(),
         }
     }
 

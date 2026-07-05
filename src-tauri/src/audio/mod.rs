@@ -138,8 +138,9 @@ pub fn start_capture(device_name: Option<&str>) -> Result<CaptureHandle, Capture
                 .build_input_stream(
                     stream_config,
                     move |data: &[i16], _| {
-                        let floats: Vec<f32> =
-                            data.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
+                        // Divide by 32768 so i16::MIN maps to exactly -1.0
+                        // (dividing by i16::MAX would overshoot to -1.00003).
+                        let floats: Vec<f32> = data.iter().map(|s| *s as f32 / 32768.0).collect();
                         push_samples(&cb_buffer, &cb_level, &floats);
                     },
                     err_fn,

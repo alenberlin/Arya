@@ -81,7 +81,7 @@ impl OllamaTranslator {
             base_url: base_url.into(),
             model: model.into(),
             timeout,
-            client: reqwest::blocking::Client::new(),
+            client: crate::http::blocking_client(),
         }
     }
 }
@@ -141,7 +141,7 @@ impl AryaTranslator {
             token,
             model: DEFAULT_CLOUD_MODEL.into(),
             timeout: Duration::from_secs(20),
-            client: reqwest::blocking::Client::new(),
+            client: crate::http::blocking_client(),
         })
     }
 }
