@@ -191,32 +191,49 @@ pub async fn update_note(
     .map_err(|e| e.to_string())
 }
 
-/// Deletes a note and its recordings from disk (rows cascade).
+/// Deletes a note and its recordings/attachments from disk (rows cascade).
 #[tauri::command]
 pub async fn delete_note(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
-    let paths = sqlx::query_scalar::<_, String>(
+    delete_note_inner(&pool, &id).await
+}
+
+/// Testable core of [`delete_note`]. Deletes the row FIRST (the authoritative
+/// operation, children cascading), then best-effort removes the files — so a
+/// failed delete leaves the note and its files intact rather than orphaning
+/// files under a still-live row.
+pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String> {
+    // Collect every file path BEFORE deleting: the rows that hold the paths
+    // cascade away with the note, so afterwards they'd be unqueryable.
+    let audio_paths = sqlx::query_scalar::<_, String>(
         "SELECT a.path FROM audio_artifacts a
          JOIN recording_sessions s ON s.id = a.session_id WHERE s.note_id = ?1",
     )
-    .fetch_all(&*pool)
+    .bind(id)
+    .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())?;
-    for path in paths {
+    let attachment_paths =
+        sqlx::query_scalar::<_, String>("SELECT path FROM note_attachments WHERE note_id = ?1")
+            .bind(id)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    sqlx::query("DELETE FROM notes WHERE id = ?1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    for path in audio_paths.into_iter().chain(attachment_paths) {
         let path = std::path::PathBuf::from(path);
         let _ = std::fs::remove_file(&path);
         if let Some(dir) = path.parent() {
-            // Remove the per-session directory when empty.
+            // Remove the per-session / attachment directory when empty.
             let _ = std::fs::remove_dir(dir);
         }
     }
-    // Remove attached files too (their rows cascade with the note).
-    crate::attachments::remove_files_for_note(&pool, &id).await?;
-    sqlx::query("DELETE FROM notes WHERE id = ?1")
-        .bind(id)
-        .execute(&*pool)
-        .await
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    Ok(())
 }
 
 #[tauri::command]

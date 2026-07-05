@@ -24,6 +24,10 @@ pub async fn init_pool(path: &Path) -> Result<SqlitePool, DbError> {
         .filename(path)
         .create_if_missing(true)
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        // Wait for a contended write lock instead of failing immediately with
+        // SQLITE_BUSY: several blocking paths (dictation history, processing
+        // status, RAG reindex) can write concurrently under WAL.
+        .busy_timeout(std::time::Duration::from_secs(5))
         .foreign_keys(true);
     let pool = SqlitePoolOptions::new().connect_with(options).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
