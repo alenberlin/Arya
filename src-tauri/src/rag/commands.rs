@@ -84,14 +84,17 @@ fn reindex_blocking(app: &AppHandle, pool: &SqlitePool) -> Result<i64, String> {
         serde_json::json!({ "stage": "embedding", "total": documents.len() }),
     );
 
-    tauri::async_runtime::block_on(async {
-        sqlx::query("DELETE FROM rag_chunks")
-            .execute(pool)
-            .await
-            .map_err(|e| e.to_string())
-    })?;
-
-    let mut total = 0i64;
+    // Embed everything into memory FIRST. Only once all embedding succeeds do we
+    // touch the live index, and then in a single transaction — so a mid-run
+    // Ollama failure leaves the existing index intact instead of emptying search.
+    struct Staged {
+        kind: String,
+        id: String,
+        title: String,
+        content: String,
+        blob: Vec<u8>,
+    }
+    let mut staged: Vec<Staged> = Vec::new();
     for doc in &documents {
         let chunks = chunk_text(&doc.content, 180, 40);
         if chunks.is_empty() {
@@ -99,26 +102,44 @@ fn reindex_blocking(app: &AppHandle, pool: &SqlitePool) -> Result<i64, String> {
         }
         let embeddings = embedder.embed(&chunks)?;
         for (chunk, embedding) in chunks.iter().zip(&embeddings) {
-            tauri::async_runtime::block_on(async {
-                sqlx::query(
-                    "INSERT INTO rag_chunks
-                         (id, source_kind, source_id, title, content, embedding, model, updated_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-                )
-                .bind(uuid::Uuid::new_v4().to_string())
-                .bind(&doc.kind)
-                .bind(&doc.id)
-                .bind(&doc.title)
-                .bind(chunk)
-                .bind(f32_to_blob(embedding))
-                .bind(embedder.model())
-                .execute(pool)
-                .await
-                .map_err(|e| e.to_string())
-            })?;
-            total += 1;
+            staged.push(Staged {
+                kind: doc.kind.clone(),
+                id: doc.id.clone(),
+                title: doc.title.clone(),
+                content: chunk.clone(),
+                blob: f32_to_blob(embedding),
+            });
         }
     }
+
+    let total = staged.len() as i64;
+    let model = embedder.model().to_string();
+    tauri::async_runtime::block_on(async {
+        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        sqlx::query("DELETE FROM rag_chunks")
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        for row in &staged {
+            sqlx::query(
+                "INSERT INTO rag_chunks
+                     (id, source_kind, source_id, title, content, embedding, model, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            )
+            .bind(uuid::Uuid::new_v4().to_string())
+            .bind(&row.kind)
+            .bind(&row.id)
+            .bind(&row.title)
+            .bind(&row.content)
+            .bind(&row.blob)
+            .bind(&model)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+        tx.commit().await.map_err(|e| e.to_string())
+    })?;
+
     // Drop the stale cache; the next search repopulates from the new rows.
     invalidate_cache();
     let _ = app.emit(
