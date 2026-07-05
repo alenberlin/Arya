@@ -8,6 +8,9 @@
 pub mod capture_worker;
 pub mod commands;
 pub mod hotkey;
+pub mod keytap;
+pub mod panel;
+pub mod profiles;
 pub mod service;
 pub mod settings;
 

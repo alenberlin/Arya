@@ -7,65 +7,289 @@ body,
   overflow: hidden;
 }
 
-.hud {
+/* The native window is sized to this wrapper (see HudApp's ResizeObserver); the
+ * padding gives the card's drop shadow room without clipping. */
+.hud-wrap {
+  display: inline-block;
+  padding: 16px;
   box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 44px;
-  margin: 8px;
-  padding: 0 16px;
-  border-radius: 22px;
-  background: rgba(24, 24, 27, 0.92);
-  color: #fafafa;
-  font-family: system-ui, sans-serif;
-  font-size: 12px;
+}
+
+/* The pill itself: a warm, floating card that reads over any app. Colors come
+ * from the design tokens so the theme dot (data-theme) flips light/dark. */
+.hud-card {
+  box-sizing: border-box;
+  min-width: 300px;
+  max-width: 460px;
+  padding: 11px 12px;
+  border-radius: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  color: var(--text);
+  font-family: var(--font-sans);
   user-select: none;
   cursor: default;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
-.hud-dot {
-  width: 8px;
-  height: 8px;
+.hud-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.hud-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  background: #71717a;
+  background: var(--accent);
+  color: var(--accent-contrast);
   flex-shrink: 0;
 }
-
-.hud-recording .hud-dot {
-  background: #ef4444;
+.hud-recording .hud-brand {
   animation: hud-pulse 1.4s ease-in-out infinite;
 }
 
-.hud-error {
-  background: rgba(88, 22, 22, 0.95);
-}
-
-.hud-bars {
+.hud-wave {
   display: flex;
   align-items: center;
   gap: 3px;
-  height: 20px;
+  height: 18px;
+  flex-shrink: 0;
 }
-
 .hud-bar {
   width: 3px;
-  height: 20px;
+  height: 18px;
   border-radius: 2px;
-  background: #a1a1aa;
+  background: color-mix(in oklab, var(--accent) 30%, transparent);
   transform-origin: center;
   transition: transform 80ms linear;
 }
-
 .hud-recording .hud-bar {
-  background: #34d399;
+  background: var(--accent);
+}
+
+/* Inline control chips: mode (static) and AI polish (cycles + reveals). */
+.hud-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: none;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.hud-chip.is-open {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px var(--focus-ring);
+}
+.hud-chip-static {
+  cursor: default;
+}
+
+/* Destination chip: where the dictated text will land. Informational; its
+ * accent tint doubles as the per-app tone signal. */
+.hud-dest {
+  cursor: default;
+  max-width: 150px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.hud-dest > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Visually hidden but available to screen readers — keeps the mode label
+ * announced when the chip collapses to icon-only in hands-free mode. */
+.hud-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.hud-spacer {
+  flex: 1;
+  min-width: 8px;
 }
 
 .hud-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+
+/* The theme dot: one tap cycles Auto → Light → Dark. */
+.hud-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.hud-dot:hover {
+  color: var(--text);
+}
+
+.hud-stop {
+  margin-left: 2px;
+  padding: 5px 13px;
+  border: none;
+  border-radius: 15px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.hud-stop:hover {
+  background: var(--accent-hover);
+}
+
+.hud-x {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.hud-x:hover {
+  background: var(--border-strong);
+  color: var(--text);
+}
+
+/* The reveal: tapping a chip grows the pill in place to a segmented control. */
+.hud-panel {
+  margin-top: 10px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+}
+.hud-seg {
+  display: inline-flex;
+  margin: 0;
+  padding: 2px;
+  border: 0;
+  min-inline-size: 0;
+  background: var(--surface-sunken);
+  border-radius: 10px;
+}
+.hud-seg-btn {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.hud-seg-btn[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+/* Pin the current polish as this app's default. */
+.hud-pin {
+  margin-top: 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.hud-pin.is-pinned {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Streaming transcript — serif to match the app's editorial voice. Interim
+ * text (still being recognized) is muted and italic, then settles to solid. */
+.hud-text {
+  margin-top: 10px;
+  max-height: 132px;
+  overflow-y: auto;
+  padding-right: 2px;
+  font-family: var(--font-serif);
+  font-size: 15.5px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.hud-text.is-interim {
+  color: var(--text-muted);
+  font-style: italic;
+}
+.hud-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 1px;
+  background: var(--accent);
+  vertical-align: -2px;
+  animation: hud-blink 1s step-end infinite;
+}
+.hud-text::-webkit-scrollbar {
+  width: 6px;
+}
+.hud-text::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 3px;
+}
+
+.hud-error {
+  border-color: var(--danger);
+}
+.hud-error .hud-brand {
+  background: var(--danger);
 }
 
 @keyframes hud-pulse {
@@ -74,6 +298,12 @@ body,
     opacity: 1;
   }
   50% {
-    opacity: 0.4;
+    opacity: 0.55;
   }
 }
+@keyframes hud-blink {
+  50% {
+    opacity: 0;
+  }
+}
+/* Reduced-motion is handled globally in app.css, loaded in this window too. */

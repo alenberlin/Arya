@@ -76,12 +76,20 @@ vi.mock("@tauri-apps/api/core", () => ({
         };
       case "get_note_turns":
         return [];
+      case "list_attachments":
+        return [];
       case "recover_recording":
         backend.recovered.push(String(args?.sessionId));
         return "n1";
       default:
         return null;
     }
+  }),
+}));
+
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: vi.fn(async () => () => {}),
   }),
 }));
 

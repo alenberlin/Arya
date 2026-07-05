@@ -29,6 +29,17 @@ impl TextCleaner for MechanicalCleaner {
     }
 }
 
+/// Verbatim cleanup: applies the user dictionary and normalizes whitespace,
+/// but never strips fillers, recases, or repunctuates. The `Raw` polish level.
+pub struct RawCleaner;
+
+impl TextCleaner for RawCleaner {
+    fn clean(&self, request: &CleanupRequest) -> String {
+        let text = apply_dictionary(&request.raw, &request.dictionary);
+        collapse_whitespace(&text)
+    }
+}
+
 fn strip_fillers(text: &str) -> String {
     text.split_whitespace()
         .filter(|word| {
@@ -222,6 +233,22 @@ mod tests {
     fn existing_terminal_punctuation_is_kept() {
         let out = MechanicalCleaner.clean(&request("is it done?", DictationStyle::Standard));
         assert_eq!(out, "Is it done?");
+    }
+
+    #[test]
+    fn raw_keeps_words_verbatim_but_applies_dictionary() {
+        let req = CleanupRequest {
+            raw: "um  send it to arya at 5pm".into(),
+            style: DictationStyle::Standard,
+            context: TargetContext::Generic,
+            dictionary: vec![DictionaryEntry {
+                pattern: "arya".into(),
+                replacement: "Arya".into(),
+            }],
+        };
+        // Filler kept, no capitalization, no terminal period; only the
+        // dictionary replacement and whitespace collapse apply.
+        assert_eq!(RawCleaner.clean(&req), "um send it to Arya at 5pm");
     }
 
     #[test]

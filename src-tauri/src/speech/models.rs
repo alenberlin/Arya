@@ -107,9 +107,86 @@ pub async fn download_verified(
     Ok(())
 }
 
+/// One artifact of the streaming (online) model bundle.
+struct StreamingFile {
+    name: &'static str,
+    sha256: &'static str,
+}
+
+/// The streaming zipformer transducer (int8) — English, ~73 MB total. Its four
+/// artifacts are downloaded individually and SHA-256 pinned, mirroring the
+/// single-file catalog above.
+const STREAMING_REPO: &str =
+    "https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main";
+const STREAMING_FILES: &[StreamingFile] = &[
+    StreamingFile {
+        name: "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+        sha256: "563fde436d16cf7607cf408cd6b30909819d03162652ef389c2450ced3f45ac1",
+    },
+    StreamingFile {
+        name: "decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+        sha256: "98da299f471e38bb4e1a8df579b8cc9122d6039576a77e357b3c60f17dd83b02",
+    },
+    StreamingFile {
+        name: "joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx",
+        sha256: "d944208d660d67c8d72cd2acaeac971fa5ceb8c80e76c1968148846fedd6e297",
+    },
+    StreamingFile {
+        name: "tokens.txt",
+        sha256: "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb",
+    },
+];
+
+/// Resolved local paths of the streaming model artifacts.
+pub struct StreamingModelPaths {
+    pub encoder: PathBuf,
+    pub decoder: PathBuf,
+    pub joiner: PathBuf,
+    pub tokens: PathBuf,
+}
+
+/// True when every streaming artifact is already on disk (so the caller can
+/// skip a "preparing model" state).
+pub fn streaming_model_present(models_dir: &Path) -> bool {
+    STREAMING_FILES
+        .iter()
+        .all(|f| models_dir.join(f.name).exists())
+}
+
+/// Ensure the streaming model bundle is present under `models_dir`, downloading
+/// and verifying any missing artifact, and return the four paths.
+pub async fn ensure_streaming_model(models_dir: &Path) -> Result<StreamingModelPaths, SpeechError> {
+    tokio::fs::create_dir_all(models_dir).await?;
+    for file in STREAMING_FILES {
+        let target = models_dir.join(file.name);
+        if !target.exists() {
+            let url = format!("{STREAMING_REPO}/{}", file.name);
+            download_verified(&url, &target, file.sha256, file.name).await?;
+        }
+    }
+    Ok(StreamingModelPaths {
+        encoder: models_dir.join(STREAMING_FILES[0].name),
+        decoder: models_dir.join(STREAMING_FILES[1].name),
+        joiner: models_dir.join(STREAMING_FILES[2].name),
+        tokens: models_dir.join(STREAMING_FILES[3].name),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streaming_bundle_has_four_distinct_pinned_files() {
+        assert_eq!(STREAMING_FILES.len(), 4);
+        for file in STREAMING_FILES {
+            assert_eq!(file.sha256.len(), 64, "{} needs a pinned sha256", file.name);
+        }
+        let mut names: Vec<_> = STREAMING_FILES.iter().map(|f| f.name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), 4);
+    }
 
     #[test]
     fn catalog_ids_are_unique_and_findable() {

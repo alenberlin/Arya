@@ -1,5 +1,6 @@
 mod account;
 pub mod agent;
+mod attachments;
 pub mod audio;
 mod calendar;
 pub mod cleanup;
@@ -11,6 +12,7 @@ mod paste;
 mod rag;
 mod recording;
 pub mod speech;
+mod translate;
 mod tray;
 
 /// Re-export for diagnostic integration tests.
@@ -25,10 +27,28 @@ use recording::recorder::Recorder;
 
 /// Builds and runs the Tauri application.
 pub fn run() {
+    // whisper.cpp's Metal backend (macOS >= 15) registers every model buffer in
+    // a device "residency set" and asserts that set is empty when it tears the
+    // device down at process exit. Loaded whisper engines live in a
+    // process-wide cache that is never dropped, so their buffers are still
+    // registered at teardown and trip `GGML_ASSERT([rsets->data count] == 0)`,
+    // aborting on quit. Short transcription clips don't benefit from residency
+    // sets, so opt out via ggml's own escape hatch before any Metal device is
+    // created. Set here, before any worker thread is spawned, so the write is
+    // race-free.
+    std::env::set_var("GGML_METAL_NO_RESIDENCY", "1");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // "Launch at login": when enabled, macOS starts Arya with `--minimized`
+        // so it waits quietly in the menu bar, ready for dictation.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let pool = tauri::async_runtime::block_on(db::init_pool(&data_dir.join("arya.db")))?;
@@ -36,13 +56,33 @@ pub fn run() {
 
             let config_dir = app.path().app_config_dir()?;
             let settings = dictation::settings::load(&config_dir);
-            let service = Arc::new(DictationService::new(settings.clone()));
+            let app_profiles = dictation::profiles::load(&config_dir);
+            let service = Arc::new(DictationService::new(settings.clone(), app_profiles));
             app.manage(service);
             if let Err(e) = dictation::hotkey::register(app.handle(), &settings) {
                 // A bad persisted shortcut must not brick startup; surface it
                 // and continue so the user can rebind in settings.
                 eprintln!("dictation hotkey not registered: {e}");
             }
+            // Right-Shift dictation trigger (hold = push-to-talk, double-tap =
+            // hands-free). Its gesture state is shared so the pill's Stop can
+            // reset it.
+            let tap_state: Arc<std::sync::Mutex<dictation::keytap::TapState>> =
+                Arc::new(std::sync::Mutex::new(dictation::keytap::TapState::default()));
+            app.manage(tap_state.clone());
+            // Ask for the permissions dictation needs at startup so the user can
+            // grant them, rather than hitting silent failures. Only prompts for
+            // what isn't already granted.
+            #[cfg(target_os = "macos")]
+            {
+                if settings.uses_right_shift() && !dictation::keytap::input_monitoring_granted() {
+                    dictation::keytap::request_input_monitoring();
+                }
+                if !paste::accessibility_trusted() {
+                    paste::prompt_accessibility();
+                }
+            }
+            dictation::keytap::spawn(app.handle().clone(), tap_state);
             app.manage(Recorder::spawn());
             app.manage(recording::commands::SystemCaptureSlot::default());
             app.manage(agent::AgentRuntime::default());
@@ -57,7 +97,19 @@ pub fn run() {
             if let Err(e) = tray::setup(app.handle()) {
                 eprintln!("tray setup failed: {e}");
             }
-            position_hud_top_center(app.handle());
+            position_hud_bottom_center(app.handle());
+            // Make the transparent pill a non-activating panel so it paints
+            // without ever stealing focus from the app being dictated into.
+            if let Some(hud) = app.get_webview_window("hud") {
+                dictation::panel::make_hud_panel(&hud);
+            }
+            // Launched at login (autostart passes --minimized): stay in the menu
+            // bar rather than popping the main window open on every boot.
+            if std::env::args().any(|a| a == "--minimized") {
+                if let Some(main) = app.get_webview_window("main") {
+                    let _ = main.hide();
+                }
+            }
             #[cfg(debug_assertions)]
             dev_hooks::install(app.handle().clone());
             Ok(())
@@ -65,10 +117,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             notes::create_note,
             notes::list_notes,
+            notes::search_notes,
             notes::get_note,
             notes::get_note_turns,
             notes::update_note,
             notes::delete_note,
+            attachments::attach_file,
+            attachments::list_attachments,
+            attachments::remove_attachment,
+            attachments::open_attachment,
             notes::create_folder,
             notes::list_folders,
             notes::rename_folder,
@@ -117,16 +174,31 @@ pub fn run() {
             rag::commands::rag_search,
             account::commands::account_signin_state,
             account::commands::account_begin_signin,
+            // Dev-only token backdoor; compiled out of release builds (must be
+            // gated here too, or `generate_handler!` references a symbol that
+            // does not exist in release).
+            #[cfg(debug_assertions)]
             account::commands::account_set_token,
             account::commands::account_sign_out,
             account::commands::account_snapshot,
             account::commands::account_open_billing,
             dictation::commands::get_dictation_settings,
+            dictation::commands::list_ollama_models,
             dictation::commands::set_dictation_settings,
             dictation::commands::dictation_status,
             dictation::commands::open_accessibility_settings,
             dictation::commands::list_dictation_history,
             dictation::commands::delete_dictation_history_item,
+            dictation::commands::clear_dictation_history,
+            dictation::commands::convert_dictation_to_note,
+            dictation::commands::dictation_stop,
+            dictation::commands::dictation_cancel,
+            dictation::commands::dictation_set_session_polish,
+            dictation::commands::dictation_pin_app,
+            dictation::commands::dictation_unpin_app,
+            dictation::commands::dictation_prepare_streaming,
+            hud_resize,
+            copy_to_clipboard,
             dictation::commands::list_dictionary_entries,
             dictation::commands::create_dictionary_entry,
             dictation::commands::delete_dictionary_entry,
@@ -186,9 +258,10 @@ fn spawn_calendar_poller(app: tauri::AppHandle) {
         .expect("spawn calendar poller");
 }
 
-/// Places the (hidden) dictation HUD at the top-center of the primary
-/// monitor; it is shown/hidden by the dictation service.
-fn position_hud_top_center(app: &tauri::AppHandle) {
+/// Places the (hidden) dictation HUD at the bottom-center of the primary
+/// monitor; it is shown/hidden by the dictation service and resized to fit its
+/// content by the `hud_resize` command.
+fn position_hud_bottom_center(app: &tauri::AppHandle) {
     let Some(hud) = app.get_webview_window("hud") else {
         return;
     };
@@ -199,8 +272,39 @@ fn position_hud_top_center(app: &tauri::AppHandle) {
     let Ok(hud_size) = hud.outer_size() else {
         return;
     };
+    let margin = (84.0 * monitor.scale_factor()) as i32; // logical px off the bottom
     let x = (screen.width as i32 - hud_size.width as i32) / 2;
-    let _ = hud.set_position(tauri::PhysicalPosition::new(x, 16));
+    let y = (screen.height as i32 - hud_size.height as i32 - margin).max(0);
+    let _ = hud.set_position(tauri::PhysicalPosition::new(x, y));
+}
+
+/// Resizes the HUD to fit the content the webview reports (logical px), keeping
+/// its bottom edge and horizontal center fixed — so the pill grows upward like
+/// a card and stays wherever the user dragged it.
+#[tauri::command]
+fn hud_resize(app: tauri::AppHandle, width: f64, height: f64) {
+    let Some(hud) = app.get_webview_window("hud") else {
+        return;
+    };
+    let scale = hud.scale_factor().unwrap_or(1.0);
+    let (Ok(old_pos), Ok(old_size)) = (hud.outer_position(), hud.outer_size()) else {
+        return;
+    };
+    let new_w = (width * scale).round() as i32;
+    let new_h = (height * scale).round() as i32;
+    if new_w <= 0 || new_h <= 0 {
+        return;
+    }
+    let new_x = old_pos.x + (old_size.width as i32 - new_w) / 2;
+    let new_y = (old_pos.y + (old_size.height as i32 - new_h)).max(0);
+    let _ = hud.set_size(tauri::PhysicalSize::new(new_w as u32, new_h as u32));
+    let _ = hud.set_position(tauri::PhysicalPosition::new(new_x, new_y));
+}
+
+/// Copies text to the system clipboard (the dictation-history copy button).
+#[tauri::command]
+fn copy_to_clipboard(text: String) -> Result<(), String> {
+    paste::set_clipboard(&text).map_err(|e| e.to_string())
 }
 
 /// Debug-only runtime hooks for automated E2E checks. Each is env-gated and
@@ -225,6 +329,17 @@ mod dev_hooks {
                 service.begin(&handle);
                 std::thread::sleep(std::time::Duration::from_millis(hold_ms));
                 service.finish(&handle, pool);
+            });
+        }
+
+        // ARYA_DEV_HUD_HOLD=1: show the dictation HUD and leave it up (visual debug
+        // of the overlay — never finishes, so it stays on screen for inspection).
+        if std::env::var("ARYA_DEV_HUD_HOLD").as_deref() == Ok("1") {
+            let handle = handle.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let service = handle.state::<Arc<DictationService>>().inner().clone();
+                service.begin(&handle);
             });
         }
 

@@ -1,28 +1,31 @@
 /*
  * Arya design tokens — the single source of truth for color, type, space,
- * radius, and elevation. Warm ink + clay accent on a cream ground (a calm,
- * professional macOS-productivity aesthetic). Light is the default;
- * [data-theme="dark"] overrides the semantic layer only.
+ * radius, and elevation. Warm ink + terracotta accent on a cream ground, with
+ * a Newsreader serif for headings and IBM Plex Mono for technical text (from
+ * the Claude Design handoff). Light is the default; [data-theme="dark"]
+ * overrides the semantic layer only.
  */
 :root {
   /* Type ---------------------------------------------------------------- */
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-mono: ui-monospace, "SF Mono", "Berkeley Mono", Menlo, monospace;
+  --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --fs-xs: 11px;
   --fs-sm: 12px;
   --fs-md: 13px;
   --fs-base: 14px;
   --fs-lg: 16px;
-  --fs-xl: 20px;
-  --fs-2xl: 26px;
+  --fs-xl: 19px;
+  --fs-2xl: 27px;
+  --fs-hero: 30px;
 
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
 
   --lh-tight: 1.25;
-  --lh-normal: 1.55;
+  --lh-normal: 1.5;
 
   /* Spacing (4px rhythm) ------------------------------------------------ */
   --sp-1: 4px;
@@ -36,13 +39,13 @@
   --sp-12: 48px;
 
   /* Radii --------------------------------------------------------------- */
-  --r-sm: 6px;
-  --r-md: 8px;
+  --r-sm: 7px;
+  --r-md: 9px;
   --r-lg: 12px;
   --r-xl: 16px;
   --r-pill: 999px;
 
-  /* Warm neutral + clay ramp (raw; the semantic layer consumes these) --- */
+  /* Warm neutral + clay ramp (raw; kept for any direct references) ------ */
   --stone-50: #faf9f7;
   --stone-100: #f4f2ee;
   --stone-150: #ece9e3;
@@ -56,64 +59,71 @@
   --stone-900: #1c1917;
   --stone-950: #12100e;
 
-  --clay-400: #e0894f;
+  --clay-400: #d5734e;
   --clay-500: #c96f34;
-  --clay-600: #b45a25;
-  --clay-700: #93481d;
+  --clay-600: #be5a38;
+  --clay-700: #a94e2f;
 
-  --green-500: #4b9f6e;
-  --amber-500: #c98a1a;
-  --red-500: #d1544a;
-  --blue-500: #4a72b0;
-
-  /* Semantic (light) ---------------------------------------------------- */
-  --bg: var(--stone-100); /* app ground (sidebar tint) */
-  --surface: #ffffff; /* inset card / elevated panels */
-  --surface-2: var(--stone-50); /* nested surfaces, list hover */
-  --surface-sunken: var(--stone-150);
-  --border: var(--stone-200);
-  --border-strong: var(--stone-300);
-  --text: var(--stone-900);
-  --text-secondary: var(--stone-600);
-  --text-muted: var(--stone-400);
-  --accent: var(--clay-600);
-  --accent-hover: var(--clay-700);
-  --accent-soft: color-mix(in oklab, var(--clay-500) 12%, var(--surface));
+  /* Semantic (light) — values from the design's --ground/--card/--ink… -- */
+  --bg: #ece5d9; /* app ground (behind the inset panels) */
+  --surface: #fbf9f5; /* inset panel / card */
+  --surface-2: #f4efe6; /* nested/sunken surface, list hover */
+  --surface-raise: #ffffff; /* raised controls: buttons, inputs, chips */
+  --surface-sunken: #efe9dd;
+  --border: #e4dccf;
+  --border-strong: #d9cfbe;
+  --border-subtle: #eee8dc;
+  --text: #2a2622;
+  --text-secondary: #6e665a;
+  --text-muted: #9e9585;
+  --accent: #be5a38;
+  --accent-hover: #a94e2f;
+  --accent-soft: #f1ded4;
+  --accent-ghost: #f7ebe3;
   --accent-contrast: #ffffff;
-  --success: var(--green-500);
-  --warning: var(--amber-500);
-  --danger: var(--red-500);
-  --danger-soft: color-mix(in oklab, var(--red-500) 10%, var(--surface));
-  --info: var(--blue-500);
-  --info-soft: color-mix(in oklab, var(--blue-500) 10%, var(--surface));
-  --focus-ring: color-mix(in oklab, var(--clay-500) 45%, transparent);
+  --success: #5e7b57;
+  --success-soft: #e4eadf;
+  --warning: #b4863b;
+  --warning-soft: #f3e9d6;
+  --danger: #c0503c;
+  --danger-soft: #f4ddd5;
+  --info: #6e665a;
+  --info-soft: #f4efe6;
+  --focus-ring: color-mix(in oklab, var(--accent) 45%, transparent);
 
-  --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.06);
-  --shadow-md: 0 4px 14px rgba(28, 25, 23, 0.08);
-  --shadow-lg: 0 12px 32px rgba(28, 25, 23, 0.14);
+  --shadow-sm: 0 1px 2px rgba(58, 44, 30, 0.06);
+  --shadow-md: 0 1px 2px rgba(58, 44, 30, 0.05), 0 8px 24px -12px rgba(58, 44, 30, 0.14);
+  --shadow-lg: 0 12px 40px -8px rgba(58, 44, 30, 0.4);
 }
 
 [data-theme="dark"] {
-  --bg: var(--stone-950);
-  --surface: #211d1a;
-  --surface-2: #29241f;
-  --surface-sunken: #17140f;
-  --border: #35302a;
-  --border-strong: #453f38;
-  --text: #f3efe9;
-  --text-secondary: #b8b0a6;
-  --text-muted: #7d7469;
-  --accent: var(--clay-400);
-  --accent-hover: #ed9a63;
-  --accent-soft: color-mix(in oklab, var(--clay-400) 16%, var(--surface));
-  --accent-contrast: #1c1917;
-  --danger: #e46a60;
-  --danger-soft: color-mix(in oklab, #e46a60 16%, var(--surface));
-  --info: #6d94d1;
-  --info-soft: color-mix(in oklab, #6d94d1 16%, var(--surface));
-  --focus-ring: color-mix(in oklab, var(--clay-400) 50%, transparent);
+  --bg: #1c1a17;
+  --surface: #26231f;
+  --surface-2: #2e2a25;
+  --surface-raise: #302c27;
+  --surface-sunken: #211e1a;
+  --border: #38332c;
+  --border-strong: #4a433a;
+  --border-subtle: #413b33;
+  --text: #f1ece2;
+  --text-secondary: #b0a899;
+  --text-muted: #7b7365;
+  --accent: #d5734e;
+  --accent-hover: #e08560;
+  --accent-soft: #3b2a21;
+  --accent-ghost: #322620;
+  --accent-contrast: #1c1a17;
+  --success: #7c9a73;
+  --success-soft: #2a3126;
+  --warning: #c79a54;
+  --warning-soft: #332b1d;
+  --danger: #e0715a;
+  --danger-soft: #3a2620;
+  --info: #b0a899;
+  --info-soft: #2e2a25;
+  --focus-ring: color-mix(in oklab, var(--accent) 50%, transparent);
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
+  --shadow-md: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px -14px rgba(0, 0, 0, 0.55);
+  --shadow-lg: 0 12px 40px -8px rgba(0, 0, 0, 0.55);
 }

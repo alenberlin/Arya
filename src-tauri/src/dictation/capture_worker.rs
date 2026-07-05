@@ -17,6 +17,10 @@ enum Command {
     Stop {
         reply: mpsc::Sender<Result<AudioClip, String>>,
     },
+    /// Non-destructive copy of the audio so far, for live transcription.
+    Snapshot {
+        reply: mpsc::Sender<Result<AudioClip, String>>,
+    },
     Abort,
 }
 
@@ -64,6 +68,13 @@ impl CaptureWorker {
                                 let _ = reply.send(Err("not recording".into()));
                             }
                         },
+                        Ok(Command::Snapshot { reply }) => {
+                            let result = match &active {
+                                Some(handle) => handle.snapshot().map_err(|e| e.to_string()),
+                                None => Err("not recording".into()),
+                            };
+                            let _ = reply.send(result);
+                        }
                         Ok(Command::Abort) => {
                             active = None;
                         }
@@ -93,6 +104,15 @@ impl CaptureWorker {
         let (reply, rx) = mpsc::channel();
         self.sender
             .send(Command::Stop { reply })
+            .map_err(|_| "capture worker gone".to_string())?;
+        rx.recv().map_err(|_| "capture worker gone".to_string())?
+    }
+
+    /// Non-destructive copy of the audio captured so far (live transcription).
+    pub fn snapshot(&self) -> Result<AudioClip, String> {
+        let (reply, rx) = mpsc::channel();
+        self.sender
+            .send(Command::Snapshot { reply })
             .map_err(|_| "capture worker gone".to_string())?;
         rx.recv().map_err(|_| "capture worker gone".to_string())?
     }

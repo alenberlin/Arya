@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
+import { FileIcon, SearchIcon } from "../ui/icons";
 
 interface SearchHit {
   sourceKind: string;
@@ -19,6 +20,7 @@ export function SearchPanel() {
   const [status, setStatus] = useState<RagStatus | null>(null);
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [searched, setSearched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,6 +41,7 @@ export function SearchPanel() {
     setBusy(true);
     try {
       setHits(await invoke<SearchHit[]>("rag_search", { query: query.trim(), limit: 10 }));
+      setSearched(true);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -60,57 +63,90 @@ export function SearchPanel() {
     }
   };
 
+  const pct = (score: number) => Math.round(Math.min(1, Math.max(0, score)) * 100);
+
   return (
-    <section>
-      <h2>Search your workspace</h2>
-      <p>
-        <small>
-          Semantic search across notes, transcripts, dictations, and agent sessions. Runs entirely
-          on this Mac.
-          {status
-            ? ` ${status.indexedChunks} chunks indexed · embedder ${status.embedderAvailable ? "ready" : "offline (start Ollama)"}`
-            : ""}
-        </small>
-      </p>
-      {error ? <p role="alert">{error}</p> : null}
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void onSearch();
-        }}
-        style={{ display: "flex", gap: 6, maxWidth: 560 }}
-      >
-        <input
-          aria-label="search query"
-          placeholder="Ask anything about your notes and meetings…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          style={{ flex: 1 }}
-        />
-        <button type="submit" disabled={busy}>
-          Search
-        </button>
-        <button type="button" onClick={() => void onReindex()} disabled={busy}>
-          Reindex
-        </button>
-      </form>
-      <ul aria-label="search results" style={{ listStyle: "none", padding: 0 }}>
-        {hits.map((hit) => (
-          <li
-            key={`${hit.sourceId}-${hit.content.slice(0, 24)}`}
-            style={{ borderTop: "1px solid var(--border)", padding: "8px 0" }}
+    <div className="screen-center">
+      <div className="screen-col search">
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <h1 className="hero-title">Search everything</h1>
+          <p className="muted" style={{ margin: "6px 0 0" }}>
+            Ask in plain language across notes, transcripts and dictations — on-device.
+          </p>
+        </div>
+
+        <form
+          className="search-box"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void onSearch();
+          }}
+        >
+          <SearchIcon className="search-icon" />
+          <input
+            aria-label="search query"
+            placeholder="Ask anything about your notes and meetings…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <button type="submit" className="btn-sm btn-primary" disabled={busy}>
+            Search
+          </button>
+        </form>
+
+        <div className="hstack spread" style={{ margin: "10px 2px 18px", fontSize: 12 }}>
+          <div className="hstack muted">
+            <span
+              className="tier-dot"
+              style={{
+                background: status?.embedderAvailable ? "var(--success)" : "var(--warning)",
+              }}
+            />
+            {searched ? `${hits.length} results · ` : ""}
+            {status
+              ? `${status.indexedChunks} items indexed · ${status.embedderAvailable ? "engine ready" : "engine offline (start Ollama)"}`
+              : "checking index…"}
+          </div>
+          <button
+            type="button"
+            className="btn-sm btn-ghost"
+            onClick={() => void onReindex()}
+            disabled={busy}
           >
-            <strong>{hit.title}</strong>{" "}
-            <small>
-              {hit.sourceKind} · score {hit.score.toFixed(2)}
-            </small>
-            <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-              {hit.content.slice(0, 320)}
-            </div>
-          </li>
-        ))}
-        {hits.length === 0 && !busy ? <li>No results yet.</li> : null}
-      </ul>
-    </section>
+            Reindex
+          </button>
+        </div>
+
+        {error ? (
+          <p role="alert" style={{ marginBottom: 12 }}>
+            {error}
+          </p>
+        ) : null}
+
+        <ul aria-label="search results" className="plain">
+          {hits.map((hit) => (
+            <li key={`${hit.sourceId}-${hit.content.slice(0, 24)}`}>
+              <button type="button" className="result-card">
+                <div className="result-meta">
+                  <FileIcon className="result-kind-icon" />
+                  <span>
+                    {hit.sourceKind} · {hit.title}
+                  </span>
+                  <span className="result-score">{pct(hit.score)}% match</span>
+                </div>
+                <div style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>
+                  {hit.content.slice(0, 320)}
+                </div>
+              </button>
+            </li>
+          ))}
+          {searched && hits.length === 0 && !busy ? (
+            <li className="empty">
+              No matches. Try different words, or Reindex if you've added content.
+            </li>
+          ) : null}
+        </ul>
+      </div>
+    </div>
   );
 }

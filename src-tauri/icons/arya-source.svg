@@ -1,0 +1,54 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#faf4ea"/>
+      <stop offset="1" stop-color="#eee1cf"/>
+    </linearGradient>
+    <radialGradient id="planet" cx="38%" cy="34%" r="72%">
+      <stop offset="0" stop-color="#d67c56"/>
+      <stop offset="0.55" stop-color="#be5a38"/>
+      <stop offset="1" stop-color="#a4472a"/>
+    </radialGradient>
+  </defs>
+
+  <!-- macOS-style rounded-square backdrop -->
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
+
+  <!-- Arya emblem (drawn in 512 space, scaled to fit with padding) -->
+  <g transform="translate(138 138) scale(1.46)">
+    <!-- orbit -->
+    <circle cx="256" cy="256" r="180" fill="none" stroke="#7a5745" stroke-width="4.5" opacity="0.85"/>
+    <!-- planet -->
+    <circle cx="256" cy="256" r="106" fill="url(#planet)"/>
+
+    <!-- satellite discs -->
+    <g fill="#fbf5ec" stroke="#d8c6ab" stroke-width="3">
+      <circle cx="256" cy="76" r="51"/>
+      <circle cx="436" cy="256" r="51"/>
+      <circle cx="256" cy="436" r="51"/>
+      <circle cx="76" cy="256" r="51"/>
+    </g>
+
+    <!-- top: notes -->
+    <g stroke="#6d4c3d" stroke-width="6" stroke-linecap="round">
+      <line x1="240" y1="63" x2="273" y2="63"/>
+      <line x1="240" y1="76" x2="273" y2="76"/>
+      <line x1="240" y1="89" x2="264" y2="89"/>
+    </g>
+    <!-- right: waveform -->
+    <g stroke="#6d4c3d" stroke-width="5.5" stroke-linecap="round">
+      <line x1="418" y1="249" x2="418" y2="263"/>
+      <line x1="428" y1="238" x2="428" y2="274"/>
+      <line x1="438" y1="245" x2="438" y2="267"/>
+      <line x1="448" y1="234" x2="448" y2="278"/>
+      <line x1="458" y1="250" x2="458" y2="262"/>
+    </g>
+    <!-- bottom: spark -->
+    <path d="M256 408c2 20 8 26 28 28-20 2-26 8-28 28-2-20-8-26-28-28 20-2 26-8 28-28Z" fill="#6d4c3d"/>
+    <!-- left: search -->
+    <g stroke="#6d4c3d" stroke-width="6" stroke-linecap="round" fill="none">
+      <circle cx="70" cy="250" r="16"/>
+      <line x1="82" y1="262" x2="95" y2="275"/>
+    </g>
+  </g>
+</svg>

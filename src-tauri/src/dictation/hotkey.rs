@@ -20,6 +20,13 @@ pub enum HotkeyError {
 }
 
 pub fn register(app: &AppHandle, settings: &DictationSettings) -> Result<(), HotkeyError> {
+    // The right-Shift trigger (hold / double-tap) is served by the low-level
+    // event tap in `keytap`, not a global-shortcut accelerator.
+    if settings.uses_right_shift() {
+        let _ = app.global_shortcut().unregister_all();
+        return Ok(());
+    }
+
     let shortcut: Shortcut = settings
         .shortcut
         .parse()

@@ -17,14 +17,15 @@
         "width": 1100,
         "height": 720,
         "minWidth": 800,
-        "minHeight": 560
+        "minHeight": 560,
+        "dragDropEnabled": false
       },
       {
         "label": "hud",
         "title": "Arya dictation",
         "url": "index.html",
-        "width": 280,
-        "height": 64,
+        "width": 360,
+        "height": 112,
         "visible": false,
         "decorations": false,
         "transparent": true,
@@ -45,7 +46,13 @@
     "targets": ["app", "dmg"],
     "category": "Productivity",
     "copyright": "Copyright © 2026 Arya",
-    "icon": ["icons/icon.png"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "macOS": {
       "minimumSystemVersion": "14.0",
       "entitlements": "entitlements.plist"

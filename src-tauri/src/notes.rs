@@ -71,10 +71,42 @@ pub async fn insert_note(pool: &SqlitePool, title: &str) -> Result<Note, sqlx::E
 }
 
 pub async fn fetch_notes(pool: &SqlitePool) -> Result<Vec<NoteSummary>, sqlx::Error> {
+    // rowid is monotonic with insertion, so it's a stable newest-first tiebreak
+    // when two notes share a created_at (unlike the random UUID id).
     sqlx::query_as::<_, NoteSummary>(
         "SELECT id, title, processing_status, processing_error, folder_id, created_at
-         FROM notes ORDER BY created_at DESC, id DESC",
+         FROM notes ORDER BY created_at DESC, rowid DESC",
     )
+    .fetch_all(pool)
+    .await
+}
+
+/// Case-insensitive keyword filter over note titles, bodies, manual notes, and
+/// transcript text. Returns summaries newest-first. This is a fast substring
+/// filter of the notes list — distinct from the semantic Search pillar.
+pub async fn search_notes_query(
+    pool: &SqlitePool,
+    query: &str,
+) -> Result<Vec<NoteSummary>, sqlx::Error> {
+    let like = format!(
+        "%{}%",
+        query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
+    sqlx::query_as::<_, NoteSummary>(
+        "SELECT DISTINCT n.id, n.title, n.processing_status, n.processing_error,
+                n.folder_id, n.created_at
+         FROM notes n
+         LEFT JOIN transcript_turns t ON t.note_id = n.id
+         WHERE n.title LIKE ?1 ESCAPE '\\'
+            OR n.body_md LIKE ?1 ESCAPE '\\'
+            OR n.manual_notes LIKE ?1 ESCAPE '\\'
+            OR t.text LIKE ?1 ESCAPE '\\'
+         ORDER BY n.created_at DESC",
+    )
+    .bind(like)
     .fetch_all(pool)
     .await
 }
@@ -87,6 +119,22 @@ pub async fn create_note(pool: State<'_, SqlitePool>, title: String) -> Result<N
 #[tauri::command]
 pub async fn list_notes(pool: State<'_, SqlitePool>) -> Result<Vec<NoteSummary>, String> {
     fetch_notes(&pool).await.map_err(|e| e.to_string())
+}
+
+/// Filters the notes list by a keyword found in the title or content. An empty
+/// query returns the full list.
+#[tauri::command]
+pub async fn search_notes(
+    pool: State<'_, SqlitePool>,
+    query: String,
+) -> Result<Vec<NoteSummary>, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return fetch_notes(&pool).await.map_err(|e| e.to_string());
+    }
+    search_notes_query(&pool, q)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -161,6 +209,8 @@ pub async fn delete_note(pool: State<'_, SqlitePool>, id: String) -> Result<(), 
             let _ = std::fs::remove_dir(dir);
         }
     }
+    // Remove attached files too (their rows cascade with the note).
+    crate::attachments::remove_files_for_note(&pool, &id).await?;
     sqlx::query("DELETE FROM notes WHERE id = ?1")
         .bind(id)
         .execute(&*pool)
@@ -311,5 +361,51 @@ mod tests {
         assert_eq!(turns.len(), 1);
         assert_eq!(turns[0].text, "hello world");
         assert_eq!(turns[0].end_ms, 1500);
+    }
+
+    #[tokio::test]
+    async fn search_matches_title_body_and_transcript_newest_first() {
+        let pool = test_pool().await;
+        let a = insert_note(&pool, "Budget planning").await.unwrap(); // title match
+        let b = insert_note(&pool, "Random note").await.unwrap(); // body match
+        let c = insert_note(&pool, "Team meeting").await.unwrap(); // transcript match
+        let d = insert_note(&pool, "Unrelated").await.unwrap(); // no match
+        for (id, ts) in [
+            (&a.id, "2026-01-01T00:00:01.000Z"),
+            (&b.id, "2026-01-01T00:00:02.000Z"),
+            (&c.id, "2026-01-01T00:00:03.000Z"),
+            (&d.id, "2026-01-01T00:00:04.000Z"),
+        ] {
+            sqlx::query("UPDATE notes SET created_at = ?2 WHERE id = ?1")
+                .bind(id)
+                .bind(ts)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        sqlx::query("UPDATE notes SET body_md = 'quarterly budget review' WHERE id = ?1")
+            .bind(&b.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO transcript_turns (id, note_id, source, turn_index, start_ms, end_ms, text)
+             VALUES ('t1', ?1, 'microphone', 0, 0, 1000, 'we discussed the budget')",
+        )
+        .bind(&c.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let hits = search_notes_query(&pool, "budget").await.unwrap();
+        let ids: Vec<String> = hits.iter().map(|n| n.id.clone()).collect();
+        assert_eq!(hits.len(), 3, "title, body, and transcript matches");
+        // Newest-first: c (00:03) → b (00:02) → a (00:01); d excluded.
+        assert_eq!(ids, vec![c.id.clone(), b.id.clone(), a.id.clone()]);
+
+        assert!(search_notes_query(&pool, "zzz-nope")
+            .await
+            .unwrap()
+            .is_empty());
     }
 }
