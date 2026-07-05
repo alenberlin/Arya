@@ -43,6 +43,7 @@ tauri-plugin-process = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 percent-encoding = "2"
+parking_lot = "0.12"
 
 [profile.release]
 strip = true

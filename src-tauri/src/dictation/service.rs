@@ -73,6 +73,15 @@ static LEVEL_TICKER: OnceLock<()> = OnceLock::new();
 /// elapses) can't hide a pill that a newer show just brought up.
 static HUD_EPOCH: AtomicU64 = AtomicU64::new(0);
 
+/// RAII guard that clears the `busy` flag on drop — including a panic unwind in
+/// the pipeline thread — so a crashed dictation can't brick the hotkey forever.
+struct BusyReset(Arc<DictationService>);
+impl Drop for BusyReset {
+    fn drop(&mut self) {
+        self.0.busy.store(false, Ordering::SeqCst);
+    }
+}
+
 impl DictationService {
     pub fn new(settings: DictationSettings, app_profiles: profiles::Overrides) -> Self {
         Self {
@@ -331,6 +340,12 @@ impl DictationService {
     }
 
     /// Hotkey up (or toggle off): stop, transcribe, clean, paste.
+    ///
+    /// This runs on the global-shortcut (UI) thread, so it does the minimum
+    /// synchronously — flip state and detect a graze — and pushes the heavy work
+    /// (`worker.stop()` drains + downmixes + resamples up to 30s of audio, then
+    /// transcription/cleanup/paste) onto a pipeline thread so the key release
+    /// returns immediately.
     pub fn finish(self: &Arc<Self>, app: &AppHandle, pool: SqlitePool) {
         let started = match self.recording_since.lock().expect("since lock").take() {
             Some(instant) => instant,
@@ -342,23 +357,8 @@ impl DictationService {
         let handle = self.partial_handle.lock().expect("handle lock").take();
 
         if started.elapsed().as_millis() < MIN_HOLD_MS {
-            // Graze: too short to be intentional.
+            // Graze: too short to be intentional. Cheap — stays on this thread.
             self.worker.abort();
-            join_ticker(handle);
-            emit_state(app, DictationState::Idle, None, None);
-            hide_hud_soon(app, 400);
-            return;
-        }
-        let clip = match self.worker.stop() {
-            Ok(clip) => clip,
-            Err(message) => {
-                join_ticker(handle);
-                emit_state(app, DictationState::Error, Some(message), None);
-                hide_hud_soon(app, 1500);
-                return;
-            }
-        };
-        if clip.duration_secs() < 0.3 {
             join_ticker(handle);
             emit_state(app, DictationState::Idle, None, None);
             hide_hud_soon(app, 400);
@@ -372,14 +372,28 @@ impl DictationService {
         std::thread::Builder::new()
             .name("arya-dictation-pipeline".into())
             .spawn(move || {
+                // Clears `busy` on every exit, including a panic in the pipeline.
+                let _busy = BusyReset(Arc::clone(&service));
                 // The feed ticker must be fully stopped before we touch the
                 // shared engine to finalize.
                 join_ticker(handle);
+                let clip = match service.worker.stop() {
+                    Ok(clip) => clip,
+                    Err(message) => {
+                        emit_state(&app, DictationState::Error, Some(message), None);
+                        hide_hud_soon(&app, 1500);
+                        return;
+                    }
+                };
+                if clip.duration_secs() < 0.3 {
+                    emit_state(&app, DictationState::Idle, None, None);
+                    hide_hud_soon(&app, 400);
+                    return;
+                }
                 let result = match stream {
                     Some(engine) => service.run_streaming_pipeline(&app, &pool, clip, &engine),
                     None => service.run_pipeline(&app, &pool, clip),
                 };
-                service.busy.store(false, Ordering::SeqCst);
                 match result {
                     Ok(text) => {
                         emit_state(&app, DictationState::Idle, None, Some(text));
@@ -581,16 +595,21 @@ impl DictationService {
         engine_cache::get_or_load(&target).map_err(|e| e.to_string())
     }
 
-    /// One global ticker publishes live levels to the HUD while recording.
-    fn spawn_level_ticker(&self, app: AppHandle) {
-        let worker = self.worker.clone();
+    /// One global ticker publishes live levels to the HUD. It only emits while
+    /// recording; when idle it polls slowly instead of pushing 20 Hz events for
+    /// the whole life of the app.
+    fn spawn_level_ticker(self: &Arc<Self>, app: AppHandle) {
+        let service = Arc::clone(self);
         LEVEL_TICKER.get_or_init(move || {
             std::thread::Builder::new()
                 .name("arya-level-ticker".into())
                 .spawn(move || loop {
-                    let level = worker.level();
-                    let _ = app.emit("dictation:level", level);
-                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    if service.is_recording() {
+                        let _ = app.emit("dictation:level", service.worker.level());
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    } else {
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    }
                 })
                 .expect("spawn level ticker");
         });

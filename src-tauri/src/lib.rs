@@ -219,10 +219,18 @@ fn spawn_agent_scheduler(app: tauri::AppHandle) {
             tauri::async_runtime::block_on(agent::ecosystem::reconnect_all(&app, &pool, &runtime));
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(30));
-                let runtime = app.state::<agent::AgentRuntime>();
-                tauri::async_runtime::block_on(agent::ecosystem::run_due_routines(
-                    &app, &pool, &runtime,
-                ));
+                // Isolate each tick: a panic (e.g. an FFI throw deep inside a
+                // routine) must not silently kill the scheduler for the whole
+                // session — log it and keep ticking.
+                let tick = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let runtime = app.state::<agent::AgentRuntime>();
+                    tauri::async_runtime::block_on(agent::ecosystem::run_due_routines(
+                        &app, &pool, &runtime,
+                    ));
+                }));
+                if tick.is_err() {
+                    eprintln!("arya-agent-scheduler: routine tick panicked; continuing");
+                }
             }
         })
         .expect("spawn agent scheduler");
@@ -238,20 +246,30 @@ fn spawn_calendar_poller(app: tauri::AppHandle) {
             let mut last_title: Option<String> = None;
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(60));
-                let recording = app
-                    .try_state::<recording::recorder::Recorder>()
-                    .map(|r| r.status().state != recording::recorder::RecorderState::Idle)
-                    .unwrap_or(false);
-                if recording {
-                    continue;
-                }
-                match calendar::current_or_upcoming_event(5) {
-                    Some(event) if last_title.as_deref() != Some(event.title.as_str()) => {
-                        last_title = Some(event.title.clone());
-                        let _ = app.emit("calendar:upcoming", event);
+                // Isolate each poll: an EventKit FFI panic must not kill the
+                // poller for the rest of the session. The closure returns the
+                // next `last_title`; a panic keeps the previous one.
+                let tick = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let recording = app
+                        .try_state::<recording::recorder::Recorder>()
+                        .map(|r| r.status().state != recording::recorder::RecorderState::Idle)
+                        .unwrap_or(false);
+                    if recording {
+                        return last_title.clone();
                     }
-                    Some(_) => {}
-                    None => last_title = None,
+                    match calendar::current_or_upcoming_event(5) {
+                        Some(event) if last_title.as_deref() != Some(event.title.as_str()) => {
+                            let title = event.title.clone();
+                            let _ = app.emit("calendar:upcoming", event);
+                            Some(title)
+                        }
+                        Some(_) => last_title.clone(),
+                        None => None,
+                    }
+                }));
+                match tick {
+                    Ok(next) => last_title = next,
+                    Err(_) => eprintln!("arya-calendar: poll panicked; continuing"),
                 }
             }
         })

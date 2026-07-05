@@ -216,12 +216,24 @@ impl Sidecar {
         let (tx, rx) = mpsc::channel();
         self.pending.lock().expect("pending lock").insert(id, tx);
         let payload = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        {
+        let write_result = {
             let mut stdin = self.stdin.lock().expect("stdin lock");
-            writeln!(stdin, "{payload}").map_err(|e| e.to_string())?;
+            writeln!(stdin, "{payload}")
+        };
+        if let Err(e) = write_result {
+            self.pending.lock().expect("pending lock").remove(&id);
+            return Err(e.to_string());
         }
-        rx.recv_timeout(std::time::Duration::from_secs(30))
-            .map_err(|_| "sidecar did not respond".to_string())?
+        // The reader only removes an entry when a matching response arrives, so
+        // a write failure or timeout must clean up its own pending entry — else
+        // the map (and its mpsc sender) leaks one slot per failed request.
+        match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+            Ok(result) => result,
+            Err(_) => {
+                self.pending.lock().expect("pending lock").remove(&id);
+                Err("sidecar did not respond".to_string())
+            }
+        }
     }
 
     /// Liveness via `&self` so it works through a shared `Arc`.
@@ -234,6 +246,8 @@ impl Drop for Sidecar {
     fn drop(&mut self) {
         if let Ok(mut child) = self.child.lock() {
             let _ = child.kill();
+            // Reap it so the killed sidecar doesn't linger as a zombie.
+            let _ = child.wait();
         }
     }
 }
