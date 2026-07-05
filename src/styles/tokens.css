@@ -75,7 +75,9 @@
   --border-subtle: #eee8dc;
   --text: #2a2622;
   --text-secondary: #6e665a;
-  --text-muted: #9e9585;
+  /* Darkened from #9e9585 (~2.8:1) to meet WCAG AA on --surface (now ~4.6:1);
+     muted text renders at --fs-xs so it must clear the 4.5:1 small-text bar. */
+  --text-muted: #79705f;
   --accent: #be5a38;
   --accent-hover: #a94e2f;
   --accent-soft: #f1ded4;
@@ -107,7 +109,8 @@
   --border-subtle: #413b33;
   --text: #f1ece2;
   --text-secondary: #b0a899;
-  --text-muted: #7b7365;
+  /* Lightened from #7b7365 (~3.3:1) to meet WCAG AA on the dark --surface. */
+  --text-muted: #948b7a;
   --accent: #d5734e;
   --accent-hover: #e08560;
   --accent-soft: #3b2a21;

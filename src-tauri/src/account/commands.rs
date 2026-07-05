@@ -1,6 +1,6 @@
 //! Account commands: sign-in/out, snapshot fetch, upgrade/top-up handoff.
 
-use tauri::State;
+use tauri::{Emitter, State};
 
 use super::tokens;
 use super::{AccountSnapshot, SignInState};
@@ -45,8 +45,12 @@ pub fn account_set_token(token: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn account_sign_out() -> Result<(), String> {
-    tokens::clear()
+pub fn account_sign_out(app: tauri::AppHandle) -> Result<(), String> {
+    tokens::clear()?;
+    // Let the shell (sidebar plan/credits) refresh instead of showing a stale
+    // tier until reload.
+    let _ = app.emit("account:signed-out", ());
+    Ok(())
 }
 
 #[tauri::command]

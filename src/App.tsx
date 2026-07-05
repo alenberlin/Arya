@@ -78,10 +78,21 @@ export function App() {
 
   useEffect(() => {
     // Best-effort: the sidebar shows plan + credits when a backend answers;
-    // in local mode it stays quiet rather than erroring.
-    void accountSnapshot()
-      .then(setAccount)
-      .catch(() => setAccount(null));
+    // in local mode it stays quiet rather than erroring. Re-fetch whenever auth
+    // changes anywhere (sign-in via the loopback callback, sign-out from the
+    // account panel) so the sidebar never shows a stale tier until reload.
+    const refresh = () => {
+      void accountSnapshot()
+        .then(setAccount)
+        .catch(() => setAccount(null));
+    };
+    refresh();
+    const unlistenIn = listen("account:signed-in", refresh);
+    const unlistenOut = listen("account:signed-out", refresh);
+    return () => {
+      void unlistenIn.then((fn) => fn());
+      void unlistenOut.then((fn) => fn());
+    };
   }, []);
 
   useEffect(() => {

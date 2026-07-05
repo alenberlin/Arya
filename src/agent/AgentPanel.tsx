@@ -601,8 +601,10 @@ export function AgentPanel() {
                 </button>
               </form>
               <div className="privacy-note">
-                <LockIcon />
-                Running locally — nothing leaves your Mac
+                {tier === "cloud" ? null : <LockIcon />}
+                {tier === "cloud"
+                  ? "Cloud model — your prompt is sent to the provider via Arya"
+                  : "Running locally — nothing leaves your Mac"}
               </div>
             </div>
           </>
