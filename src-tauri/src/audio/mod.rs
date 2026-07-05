@@ -108,7 +108,13 @@ pub fn start_capture(device_name: Option<&str>) -> Result<CaptureHandle, Capture
     let sample_format = config.sample_format();
     let stream_config: cpal::StreamConfig = config.into();
 
-    let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
+    // Pre-allocate ~10s so the realtime callback rarely reallocates while
+    // extending. (A lock-free SPSC ring in the callback is the fuller fix, but
+    // it needs on-device microphone verification; this bounds the growth safely
+    // in the meantime.)
+    let buffer = Arc::new(Mutex::new(Vec::<f32>::with_capacity(
+        sample_rate as usize * channels as usize * 10,
+    )));
     let level_milli = Arc::new(AtomicU32::new(0));
     let cb_buffer = Arc::clone(&buffer);
     let cb_level = Arc::clone(&level_milli);
@@ -156,9 +162,17 @@ pub fn start_capture(device_name: Option<&str>) -> Result<CaptureHandle, Capture
     })
 }
 
+/// Upper bound on buffered raw samples (~5 min at 48 kHz stereo). An abnormally
+/// long capture drops its oldest audio rather than growing without limit.
+const MAX_CAPTURE_SAMPLES: usize = 48_000 * 2 * 300;
+
 fn push_samples(buffer: &Arc<Mutex<Vec<f32>>>, level: &Arc<AtomicU32>, data: &[f32]) {
     let mut guard = buffer.lock().expect("capture buffer lock");
     guard.extend_from_slice(data);
+    if guard.len() > MAX_CAPTURE_SAMPLES {
+        let excess = guard.len() - MAX_CAPTURE_SAMPLES;
+        guard.drain(0..excess);
+    }
     let rms = (data.iter().map(|s| s * s).sum::<f32>() / data.len().max(1) as f32).sqrt();
     level.store((rms.clamp(0.0, 1.0) * 1000.0) as u32, Ordering::Relaxed);
 }
