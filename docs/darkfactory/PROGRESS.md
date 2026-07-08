@@ -23,7 +23,7 @@ the real Tauri webview — headless verification can't drive the webview.
 | M2 — BlockNote editor + migration | ✅ done | verify-rust green (116 tests incl. document_json round-trip + migration 0011); verify-front green (28 tests, typecheck, biome); production build bundles BlockNote offline; live webview render deferred to on-device QA |
 | M3 — @-mentions + backlinks | ✅ done | verify-rust green (117 tests incl. reconcile); verify-front green (31 tests, typecheck, biome, build); mention chips + backlinks wired; live editor render deferred to on-device QA |
 | M4 — AI-transform primitive + F15/F16 | ✅ done | verify-rust green (120 tests); verify-front green (34 tests, typecheck, biome, build); Sort + inline @-command wired; live webview QA deferred to on-device |
-| M5 — nested pages + Notion import | pending (Group B) | — |
+| M5 — nested pages + Notion import | ✅ done (Group B) | verify green: nesting (data+tree UI, subtree cascade verified) + Notion folder import (hierarchy, links→edges); 125 rust + 34 front tests |
 | M6 — forced-en fix + language picker | pending (Group C) | — |
 | M7 — multilingual model shelf | pending (Group C) | — |
 | M8 — Direct/Polished + tone | pending (Group C) | — |
@@ -127,6 +127,29 @@ extractInlineCommand; typecheck, biome, build). **Deferred (not a blocker):** li
 QA of Sort / inline-command in the Tauri webview → on-device. **Commits:**
 primitive+F16 `a0e8d58`; F15 `9581a1f`.
 
+### M5 — nested pages + Notion import — ✅ done (Group B complete)
+- **Nesting (F3):** `parent_note_id` (migration 0012, self-FK ON DELETE CASCADE —
+  *verified* to cascade in SQLite); `insert_note_under`, `set_note_parent`
+  (cycle-guarded), subtree-aware delete (collects the whole subtree's files +
+  edges before the cascade). Sidebar renders a **page tree** (twisties, indent),
+  with context-menu "Add sub-page" / "Move to top level"; search stays flat.
+- **Notion import (F4):** `notion_import.rs` walks an unzipped export folder →
+  page hierarchy from the `Title <hex>` / `Title <hex>/` structure; markdown
+  stored as `body_md` (lazy-converts on open); internal links → `mention` edges.
+  "Import" button + directory picker + result notice.
+
+**Evidence:** full `make verify` GREEN (rust 125 tests incl. nesting + importer;
+front 34; sidecar 23; arya-api 41; fmt/clippy/biome/tsc clean). **Commits:**
+`7d23f35` (nesting data) → `1e11d58` (tree UI) → `4b394b9` (Notion import).
+**Follow-ups (documented, not blockers):** zip auto-extraction (import needs an
+unzipped folder today); converting imported inline links into mention *chips*
+(connections are already captured as edges); a dedicated tree-render component
+test; live webview QA of the tree/import → on-device.
+
+**✅ GROUP B COMPLETE (2026-07-08).** M5 done; `make verify` green. Next: Groups
+C–E (M6–M14) — dictation multilingual/Direct-Polished/translate, search-all,
+Galaxy, Mind Map, agent multi-line, shell tidy.
+
 ## Blockers (carry-forward)
-_None. (Live-webview visual QA for the editor/mentions/Sort is deferred to
-on-device, not a blocker.)_
+_None. (Live-webview visual QA for the editor/mentions/Sort/tree/import is
+deferred to on-device, not a blocker.)_
