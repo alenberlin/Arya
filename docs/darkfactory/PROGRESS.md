@@ -24,8 +24,8 @@ the real Tauri webview — headless verification can't drive the webview.
 | M3 — @-mentions + backlinks | ✅ done | verify-rust green (117 tests incl. reconcile); verify-front green (31 tests, typecheck, biome, build); mention chips + backlinks wired; live editor render deferred to on-device QA |
 | M4 — AI-transform primitive + F15/F16 | ✅ done | verify-rust green (120 tests); verify-front green (34 tests, typecheck, biome, build); Sort + inline @-command wired; live webview QA deferred to on-device |
 | M5 — nested pages + Notion import | ✅ done (Group B) | verify green: nesting (data+tree UI, subtree cascade verified) + Notion folder import (hierarchy, links→edges); 125 rust + 34 front tests |
-| M6 — forced-en fix + language picker | pending (Group C) | — |
-| M7 — multilingual model shelf | pending (Group C) | — |
+| M6 — forced-en fix + language picker | ✅ done (Group C) | default language → auto-detect (regression test); full ISO-639-1 picker; multilingual turbo already default |
+| M7 — multilingual model shelf | ◐ partial (Group C) | baseline multilingual via turbo works + English-only guardrail shipped; specialist DE/FR pins + Parakeet engine are device/network blockers (documented) |
 | M8 — Direct/Polished + tone | pending (Group C) | — |
 | M9 — translate a saved dictation | pending (Group C) | — |
 | M10 — search everything | pending (Group D) | — |
@@ -150,6 +150,34 @@ test; live webview QA of the tree/import → on-device.
 C–E (M6–M14) — dictation multilingual/Direct-Polished/translate, search-all,
 Galaxy, Mind Map, agent multi-line, shell tidy.
 
+### M6 — auto-detect language + picker — ✅ done
+The observed mistranslation bug: dictation forced `language='en'`. Default is now
+`None` (auto-detect; regression test), and the Speech-language picker offers the
+full ISO-639-1 set. The multilingual turbo model is already the default, so this
+alone fixes non-English dictation. **Commit:** with the Group-C commits below.
+
+### M7 — multilingual model shelf — ◐ partial (device/network blockers)
+- **Baseline multilingual ASR works now:** default = multilingual
+  `whisper-large-v3-turbo`, and M6 unforced the language — Spanish/German/Italian
+  etc. transcribe correctly today (the PLAN's own turbo fallback).
+- **Guardrail shipped:** `.en` models are labelled "English only" and the panel
+  warns when one is paired with a non-English language, steering to the
+  multilingual model (verify-front green).
+- **BLOCKED (device/network), carried forward:**
+  1. Pinning the **German (primeline)** + **French (bofenghuang)** GGML specialist
+     models needs each multi-GB file downloaded to compute its SHA-256 — not
+     possible headlessly, and shipping unpinned model URLs would break the
+     load-bearing pin-security model.
+  2. **NVIDIA Parakeet-TDT-v3** needs a new sherpa-onnx NeMo-transducer *engine*
+     (today only whisper.cpp does batch ASR; sherpa is streaming-only) + on-device
+     ASR-quality verification.
+  Both are enhancements over the working turbo baseline; the
+  recommended-model-per-language map lands with them.
+
 ## Blockers (carry-forward)
-_None. (Live-webview visual QA for the editor/mentions/Sort/tree/import is
-deferred to on-device, not a blocker.)_
+- **M7 specialist models (DE/FR GGML pins) + Parakeet engine** — device/network
+  work: download GB models to pin SHA-256, integrate the sherpa NeMo-transducer
+  engine, verify ASR quality on-device. Baseline multilingual (turbo) works
+  without them.
+- Live-webview visual QA for the editor/mentions/Sort/tree/import/dictation is
+  deferred to on-device (not a blocker).

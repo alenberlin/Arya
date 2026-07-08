@@ -32,10 +32,10 @@ const STYLES: { value: DictationSettings["style"]; label: string }[] = [
   { value: "formal", label: "Formal" },
 ];
 
-const SPEECH_MODELS: { value: string; label: string }[] = [
-  { value: "whisper-large-v3-turbo-q5_0", label: "High accuracy" },
-  { value: "whisper-base.en", label: "Fast" },
-  { value: "whisper-tiny.en", label: "Tiny" },
+const SPEECH_MODELS: { value: string; label: string; englishOnly?: boolean }[] = [
+  { value: "whisper-large-v3-turbo-q5_0", label: "High accuracy · multilingual" },
+  { value: "whisper-base.en", label: "Fast · English only", englishOnly: true },
+  { value: "whisper-tiny.en", label: "Tiny · English only", englishOnly: true },
 ];
 
 // Curated target languages; the value is the language name passed to the model.
@@ -325,6 +325,13 @@ export function DictationPanel() {
                   ))}
                 </select>
               </div>
+              {SPEECH_MODELS.find((m) => m.value === settings.speechModel)?.englishOnly &&
+              settings.language !== "en" ? (
+                <p className="muted" style={{ marginTop: 10, marginBottom: 0, fontSize: 12.5 }}>
+                  This recognition model only understands English — choose “High accuracy ·
+                  multilingual” to dictate in other languages.
+                </p>
+              ) : null}
             </div>
 
             <div className="card-sunken">
