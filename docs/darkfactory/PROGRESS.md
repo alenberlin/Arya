@@ -13,7 +13,7 @@ quarantined and documented, not stopped on.
 | M1 — links edge store | ✅ done | verify-rust green (fmt, clippy -D warnings, 115 tests incl. 8 links + note-cleanup); verify-front green (brand, scan-keys, biome, tsc, 23 vitest incl. links bindings); sidecar/api untouched |
 | M2 — BlockNote editor + migration | ✅ done | verify-rust green (116 tests incl. document_json round-trip + migration 0011); verify-front green (28 tests, typecheck, biome); production build bundles BlockNote offline; live webview render deferred to on-device QA |
 | M3 — @-mentions + backlinks | ✅ done | verify-rust green (117 tests incl. reconcile); verify-front green (31 tests, typecheck, biome, build); mention chips + backlinks wired; live editor render deferred to on-device QA |
-| M4 — AI-transform primitive + F15/F16 | in progress | — |
+| M4 — AI-transform primitive + F15/F16 | ✅ done | verify-rust green (120 tests); verify-front green (34 tests, typecheck, biome, build); Sort + inline @-command wired; live webview QA deferred to on-device |
 | M5 — nested pages + Notion import | pending (Group B) | — |
 | M6 — forced-en fix + language picker | pending (Group C) | — |
 | M7 — multilingual model shelf | pending (Group C) | — |
@@ -100,20 +100,23 @@ of the mention menu / chips / backlinks in the Tauri webview → on-device.
 **Mentionable kinds:** notes today; dictations/mindmaps join as those surfaces
 mature (the schema + reconcile already support all kinds). **Commit:** `68eb15e`.
 
-### M4 — AI-transform primitive + F15/F16 — in progress
+### M4 — AI-transform primitive + F15/F16 — ✅ done
 - **AI-transform primitive** (Rust `transform.rs`): `ai_transform` command,
   **local Ollama by default / cloud optional** (generalizes `translate`); the
-  system prompt forbids inventing content (reorganize/rephrase/translate only).
-  Tested (3): prompt shape, clean error when Ollama is down, guard present.
-- **F16 (Sort)** ✅: a "Sort" action reorganizes a note's plaintext into coherent
-  sections via the primitive, shown in a **non-destructive preview** (Accept
-  replaces the note via a keyed remount + lazy markdown→blocks conversion;
-  Discard leaves it untouched).
-- **F15 (inline `@node + instruction`)**: the remaining slice — next.
+  system prompt forbids inventing content. Tested (3): prompt shape, clean error
+  when Ollama is down, anti-invention guard.
+- **F16 (Sort)** ✅: reorganizes a note's plaintext into coherent sections via the
+  primitive, shown in a **non-destructive preview** (Accept replaces the note via
+  a keyed remount + lazy markdown→blocks; Discard leaves it untouched).
+- **F15 (inline `@node + instruction`)** ✅: ⌘↵ on a block ending in
+  `@node <instruction>` resolves the node's text, applies the instruction via the
+  primitive, and inserts the result after the block (the mention stays as
+  provenance). Pure `extractInlineCommand` parses the command; 3 tests.
 
-**Evidence so far:** verify-rust green (120 tests, +3 transform); verify-front
-green (31 tests, typecheck, biome, build). **Commit (primitive + F16):** recorded
-at next update.
+**Evidence:** verify-rust green (120 tests); verify-front green (34 tests: +3
+extractInlineCommand; typecheck, biome, build). **Deferred (not a blocker):** live
+QA of Sort / inline-command in the Tauri webview → on-device. **Commits:**
+primitive+F16 `a0e8d58`; F15 recorded at next update.
 
 ## Blockers (carry-forward)
 _None. (Live-webview visual QA for the editor/mentions/Sort is deferred to

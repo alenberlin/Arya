@@ -40,6 +40,45 @@ export function extractMentionTargets(blocks: unknown): MentionTarget[] {
   return out;
 }
 
+/** An inline `@node + instruction` action (F15) parsed from one block. */
+export interface InlineCommand {
+  mention: { kind: string; id: string; label: string };
+  instruction: string;
+}
+
+/**
+ * Parse the last `@`-mention in a block's inline content plus the text that
+ * follows it into an inline command (F15): e.g. `@spec translate to German` →
+ * `{ mention: spec, instruction: "translate to German" }`. Returns `null` when
+ * there is no mention or no trailing instruction. Pure and schema-agnostic.
+ */
+export function extractInlineCommand(blockContent: unknown): InlineCommand | null {
+  if (!Array.isArray(blockContent)) return null;
+  let mentionIndex = -1;
+  for (let i = 0; i < blockContent.length; i++) {
+    if ((blockContent[i] as { type?: unknown })?.type === "mention") mentionIndex = i;
+  }
+  if (mentionIndex === -1) return null;
+
+  const m = blockContent[mentionIndex] as {
+    props?: { kind?: unknown; id?: unknown; label?: unknown };
+  };
+  const id = typeof m.props?.id === "string" ? m.props.id : "";
+  if (!id) return null;
+  const kind = typeof m.props?.kind === "string" ? m.props.kind : "note";
+  const label = typeof m.props?.label === "string" ? m.props.label : "";
+
+  let instruction = "";
+  for (let i = mentionIndex + 1; i < blockContent.length; i++) {
+    const item = blockContent[i] as { type?: unknown; text?: unknown };
+    if (item?.type === "text" && typeof item.text === "string") instruction += item.text;
+  }
+
+  const trimmed = instruction.trim();
+  if (!trimmed) return null;
+  return { mention: { kind, id, label }, instruction: trimmed };
+}
+
 /**
  * Parse stored BlockNote JSON into initial editor content, or `undefined` for an
  * empty editor. Invalid or empty JSON returns `undefined` (never throws), so a

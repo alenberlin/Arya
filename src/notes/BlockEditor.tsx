@@ -4,7 +4,12 @@ import { BlockNoteView } from "@blocknote/ariakit";
 import { filterSuggestionItems } from "@blocknote/core";
 import { SuggestionMenuController, useCreateBlockNote } from "@blocknote/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { extractMentionTargets, type MentionTarget, parseInitialContent } from "./blockDocument";
+import {
+  extractInlineCommand,
+  extractMentionTargets,
+  type MentionTarget,
+  parseInitialContent,
+} from "./blockDocument";
 import { notesSchema } from "./mentionSchema";
 
 /** A node offered in the `@`-mention menu. */
@@ -53,6 +58,12 @@ interface BlockEditorProps {
   onChange: (documentJson: string, bodyMd: string, mentions: MentionTarget[]) => void;
   /** Navigate to a mentioned node when its chip is clicked. */
   onOpenNode: (kind: string, id: string) => void;
+  /** Run an inline `@node + instruction` action (⌘↵). Returns the result text to
+   * insert after the block, or empty to insert nothing. */
+  onInlineCommand?: (
+    mention: { kind: string; id: string; label: string },
+    instruction: string,
+  ) => Promise<string>;
 }
 
 /**
@@ -70,6 +81,7 @@ export function BlockEditor({
   mentionItems,
   onChange,
   onOpenNode,
+  onInlineCommand,
 }: BlockEditorProps) {
   const scheme = useResolvedScheme();
   const initialContent = useMemo(
@@ -106,6 +118,28 @@ export function BlockEditor({
     el.addEventListener("click", handler);
     return () => el.removeEventListener("click", handler);
   }, [onOpenNode]);
+
+  // F15: ⌘↵ (or Ctrl+↵) on a block ending in "@node <instruction>" runs the AI
+  // action — resolve the node's content, apply the instruction — and inserts the
+  // result after the block. The mention stays in place as provenance.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !onInlineCommand) return;
+    const handler = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+      const block = editor.getTextCursorPosition().block;
+      const command = extractInlineCommand(block.content);
+      if (!command) return;
+      event.preventDefault();
+      void onInlineCommand(command.mention, command.instruction).then((result) => {
+        if (result.trim()) {
+          editor.insertBlocks(editor.tryParseMarkdownToBlocks(result), block, "after");
+        }
+      });
+    };
+    el.addEventListener("keydown", handler);
+    return () => el.removeEventListener("keydown", handler);
+  }, [editor, onInlineCommand]);
 
   const emit = useCallback(() => {
     const doc = editor.document;

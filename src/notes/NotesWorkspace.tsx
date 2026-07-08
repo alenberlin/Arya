@@ -241,6 +241,27 @@ export function NotesWorkspace() {
     }
   }, []);
 
+  /** F15: resolve a mentioned node's text and apply the instruction to it. Only
+   * notes are resolvable today; returns "" (insert nothing) on any failure. */
+  const runInlineCommand = useCallback(
+    async (mention: { kind: string; id: string; label: string }, instruction: string) => {
+      try {
+        if (mention.kind !== "note") return "";
+        const target = await getNote(mention.id);
+        const source = target.bodyMd.trim();
+        if (!source) {
+          setError(`"${mention.label || "That note"}" has no text to use yet.`);
+          return "";
+        }
+        return await aiTransform(source, instruction);
+      } catch (e) {
+        setError(String(e));
+        return "";
+      }
+    },
+    [],
+  );
+
   /** Create a blank note and open it, ready to type or dictate into (hold Right
    * Shift). Lands in "All notes" unless a folder is active. */
   const createNewNote = useCallback(async () => {
@@ -845,6 +866,7 @@ export function NotesWorkspace() {
                 onOpenNode={(kind, id) => {
                   if (kind === "note") void openNote(id);
                 }}
+                onInlineCommand={runInlineCommand}
               />
             </div>
             <BacklinksPanel
