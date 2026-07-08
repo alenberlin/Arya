@@ -1,8 +1,8 @@
 name: security-audit
 
 # Dependency vulnerability scan. Advisory database changes daily, so this runs
-# on a schedule in addition to pushes. Ignored advisories are documented with
-# reachability analysis in docs/security-audit.md.
+# on a schedule in addition to pushes. Ignored advisories below have been
+# reviewed and confirmed unreachable from Arya's actual dependency graph.
 on:
   push:
     branches: [main]
@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install cargo-audit --locked
-      # Ignores are justified in docs/security-audit.md (unreachable transitives).
+      # Ignores below are unreachable transitive advisories, reviewed per release.
       - run: >
           cargo audit --file src-tauri/Cargo.lock
           --ignore RUSTSEC-2023-0071
