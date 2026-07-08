@@ -5,7 +5,9 @@ without evidence is not a status. Written ahead: *in progress* before the first
 slice, *done* only with the verification result + commit hash attached.
 
 **Blueprint approved:** 2026-07-08 (owner set an autonomous goal for Group A).
-**Active goal:** complete Group A (M1→M4), fully functional. Blockers are
+**Status (2026-07-08):** **all milestones M1–M14 done** across Groups A–E; full
+`make verify` GREEN. The only carry-forwards are the device/network M7 items and
+on-device visual QA (both documented below, neither a blocker). Blockers are
 quarantined and documented, not stopped on.
 
 **✅ GROUP A COMPLETE (2026-07-08).** M1–M4 all done; full `make verify` GREEN
@@ -32,7 +34,7 @@ the real Tauri webview — headless verification can't drive the webview.
 | M11 — Galaxy 2D | ✅ done (Group D) | galaxy_graph (notes+dictations; mention/child edges from links+nesting; best-effort semantic top-K over rag_chunks); react-force-graph-2d panel + Galaxy tab; 131 rust tests; live canvas + semantic edges verify on-device |
 | M12 — Mind Map | ✅ done (Group D) | React Flow canvas (@xyflow/react) over a `mindmaps` table (opaque `doc_json`); add/connect/rename nodes, debounced autosave; delete reconciles `links`; joined into search-all; 132 rust + 34 front tests; live drag/connect verifies on-device |
 | M13 — agent multi-line composer | ✅ done (Group E) | composer is an auto-growing textarea with a 5-row floor (CSS min-height) + cap-then-scroll; Enter sends, Shift+Enter newline, ⌘/Ctrl+Enter sends; existing send/stream wiring untouched; 2 new component tests (key handling + row floor); 36 front tests |
-| M14 — surface security + shell tidy | pending (Group E) | — |
+| M14 — surface security + shell tidy | ✅ done (Group E) | AgentSection folds Chat/Routines/MCP/Security into one **Agent** hub (sidebar now leads with 6 content pillars, not 8 peers — D5); read-only **SecurityPanel** states the four guarantees the runtime already enforces (Seatbelt sandbox / approve-first broker / on-device / MCP opt-in — F13), copy verified against `agent/sidecar.rs` + `approvals.ts`; +2 tests (hub fold + AA contrast); full `make verify` green (front 37 / rust 132 / sidecar 23 / api 33+8); commit `c443e6e` |
 
 ## Log
 
@@ -204,6 +206,53 @@ M11 Galaxy, M12 Mind Map, M13 agent multi-line, M14 shell tidy).
 edges and the Mind Map drag/connect/rename interactions verify on-device (they need
 a real render surface headless CI can't provide). Next: Group E (M13 agent
 multi-line composer, M14 surface security + shell tidy).
+
+### Group E — agent & shell polish — ✅ complete
+- **M13** `81cdf16` — the agent composer is an **auto-growing multi-line textarea**
+  (5-row CSS floor, cap-then-scroll); Enter sends, Shift+Enter inserts a newline,
+  ⌘/Ctrl+Enter also sends; the existing send/stream wiring is untouched. +2
+  component tests (key handling + row floor). (F12)
+- **M14** `c443e6e` — **shell tidy (D5) + surface security (F13):**
+  - `AgentSection.tsx` folds **Chat / Routines / MCP / Security** into a single
+    **Agent** hub (reusing the existing `tabstrip`/`.tab[aria-selected]` house
+    pattern with proper `tablist`/`tab` roles). The sidebar drops from eight
+    peers to **six content pillars** — Notes · Agent · Dictation · Search ·
+    Galaxy · Mind Map. Tab state isn't persisted and the tray "new session" path
+    targets `agent`, so the removed `routines`/`mcp` tabs strand nothing.
+  - `SecurityPanel.tsx` — a **read-only** panel making the local-first agent
+    security legible: four plain-language guarantees the runtime **already**
+    enforces (no new mechanics). Each claim was verified against source:
+    *Seatbelt sandbox* (`agent/sidecar.rs` wraps node in `/usr/bin/sandbox-exec`,
+    writes confined to the workspace, default write-mode `sandboxed`);
+    *approve-first broker* (`sidecar/src/approvals.ts` — once/session/deny, and
+    an unanswered request auto-denies on TTL); *on-device by default* (cloud is
+    labeled before send); *MCP opt-in* (external servers launch only on confirm,
+    gated by the same broker).
+  - Tests: `agent-section.test.tsx` (the hub renders + switches all four
+    sub-views; Routines/MCP are sub-views, not pillars) and `contrast.test.ts`
+    (`--text-muted` on `--surface` meets WCAG AA 4.5:1 in both themes — the M14
+    "contrast/token tests pass" AC).
+
+**AC check (M14):** security posture visible without reading code ✓; sidebar
+leads with the pillars ✓; no regression to agent/mcp/routines behavior (sub-panels
+render unchanged; the test navigates all four) ✓; contrast/token tests pass ✓.
+
+**✅ GROUP E COMPLETE (2026-07-08).** M13 + M14 done; full `make verify` GREEN
+(front 37 / rust 132 / sidecar 23 / api 33+8; fmt/clippy `-D warnings`/biome/tsc
+all clean). Commits `81cdf16` (M13) + `c443e6e` (M14) on `remediation/review-fixes`
+(not pushed). This closes the **connected-brain expansion milestone set**
+(M1–M14). **Deferred to on-device QA (project pattern, not a blocker):** live
+visual QA of the Agent hub + Security panel in the real Tauri webview — headless
+CI can't drive the webview; behavior is proven by the jsdom component tests and
+the contrast AC is proven by real WCAG computation over the actual tokens.
+
+**Scope note:** the working tree also carries a large, unrelated *production-
+readiness* body of uncommitted changes (audio/recording/rag/arya-api plus
+`docs/production-readiness.md` etc.) that is **not** part of Group E. M14 was
+committed as a scoped, atomic slice (7 files) and that other work was deliberately
+left untouched — including an ambiguous `McpPanel` "Connected → Enabled/Disabled"
+honesty fix, which was not claimed for M14. Full `make verify` is green over the
+whole tree, so that surrounding work is not currently red.
 
 ## Blockers (carry-forward)
 - **M7 specialist models (DE/FR GGML pins) + Parakeet engine** — device/network
