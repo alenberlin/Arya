@@ -1827,3 +1827,30 @@ mark {
 .backlink:hover {
   text-decoration: underline;
 }
+
+/* Sort (F16) non-destructive preview. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 40%);
+}
+.modal-card {
+  display: flex;
+  flex-direction: column;
+  width: min(620px, 90vw);
+  max-height: 80vh;
+  padding: 20px;
+}
+.sort-preview {
+  flex: 1;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface-sunken);
+  white-space: pre-wrap;
+  font-size: 13px;
+}

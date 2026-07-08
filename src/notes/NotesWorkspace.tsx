@@ -35,6 +35,7 @@ import {
   type TranscriptTurn,
   updateNote,
 } from "../lib/notes";
+import { aiTransform } from "../lib/transform";
 import { ConfirmDialog, PromptDialog, TypeToConfirmDialog } from "../ui/dialogs";
 import {
   MeetingIcon,
@@ -122,6 +123,13 @@ function statusChip(status: string) {
   return null;
 }
 
+/** F16: turn a messy, multi-topic brain dump into coherent, grouped sections. */
+const SORT_INSTRUCTION =
+  "Reorganize this text into a few coherent, well-written sections, each focused " +
+  "on a single topic. Group related points together and give each section a short " +
+  "heading. Preserve every idea, but do not add any information that is not already " +
+  "in the text.";
+
 /** Notes workspace: a list panel (recorder, banners, folders, notes) beside an
  * editor panel (title, live capture, note body, transcript). */
 export function NotesWorkspace() {
@@ -151,6 +159,9 @@ export function NotesWorkspace() {
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [searchResults, setSearchResults] = useState<NoteSummary[]>([]);
+  const [sortPreview, setSortPreview] = useState<string | null>(null);
+  const [sorting, setSorting] = useState(false);
+  const [editorEpoch, setEditorEpoch] = useState(0);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeNoteRef = useRef<string | null>(null);
   activeNoteRef.current = activeNoteId;
@@ -803,11 +814,27 @@ export function NotesWorkspace() {
               />
             </label>
             <div className="note-editor-field" style={{ marginTop: 14 }}>
-              <span className="section-label" style={{ display: "block", marginBottom: 6 }}>
-                Note
-              </span>
+              <div className="hstack spread" style={{ marginBottom: 6 }}>
+                <span className="section-label">Note</span>
+                <button
+                  type="button"
+                  className="btn-sm btn-ghost"
+                  disabled={sorting || !detail.bodyMd.trim()}
+                  title="Reorganize this note into coherent sections"
+                  onClick={() => {
+                    if (sorting) return;
+                    setSorting(true);
+                    void aiTransform(detail.bodyMd, SORT_INSTRUCTION)
+                      .then(setSortPreview)
+                      .catch((e) => setError(String(e)))
+                      .finally(() => setSorting(false));
+                  }}
+                >
+                  {sorting ? "Sorting…" : "Sort"}
+                </button>
+              </div>
               <BlockEditor
-                key={detail.id}
+                key={`${detail.id}:${editorEpoch}`}
                 initialDocumentJson={detail.documentJson}
                 initialBodyMd={detail.bodyMd}
                 mentionItems={mentionItems}
@@ -1018,6 +1045,42 @@ export function NotesWorkspace() {
         }}
         onCancel={() => setClearAllOpen(false)}
       />
+
+      {sortPreview !== null ? (
+        <div role="dialog" aria-label="sorted note preview" className="modal-overlay">
+          <div className="panel modal-card">
+            <div className="panel-title" style={{ marginBottom: 4 }}>
+              Sorted note
+            </div>
+            <p className="muted" style={{ margin: "0 0 12px", fontSize: 13 }}>
+              A reorganized version of your notes, grouped into coherent sections. Accept to replace
+              the note, or discard.
+            </p>
+            <pre className="sort-preview">{sortPreview}</pre>
+            <div className="hstack spread" style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                className="btn-sm btn-ghost"
+                onClick={() => setSortPreview(null)}
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  const sorted = sortPreview;
+                  setDetail((d) => (d ? { ...d, documentJson: "", bodyMd: sorted } : d));
+                  setEditorEpoch((e) => e + 1);
+                  setSortPreview(null);
+                }}
+              >
+                Accept &amp; replace
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {noteMenu ? (
         <div

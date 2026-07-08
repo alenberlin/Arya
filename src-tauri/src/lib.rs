@@ -14,6 +14,7 @@ mod paste;
 mod rag;
 mod recording;
 pub mod speech;
+mod transform;
 mod translate;
 mod tray;
 mod vecmath;
@@ -137,6 +138,7 @@ pub fn run() {
             links::list_links_to,
             links::delete_link,
             links::reconcile_links,
+            transform::ai_transform,
             recording::commands::start_recording,
             recording::commands::pause_recording,
             recording::commands::resume_recording,
