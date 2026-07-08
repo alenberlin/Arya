@@ -16,6 +16,11 @@ fn main() {
                 &out,
                 "native/system-audio-helper/main.swift",
             ])
+            // AudioHardwareCreateProcessTap and friends require macOS 14.2, so
+            // pin the Swift deployment target. Without this, swiftc inherits the
+            // host default (older than 14.2 on the macos-14 CI runner) and the
+            // availability check fails even though the SDK has the symbols.
+            .env("MACOSX_DEPLOYMENT_TARGET", "14.2")
             .status()
             .expect("failed to run swiftc (Xcode command line tools required)");
         assert!(
