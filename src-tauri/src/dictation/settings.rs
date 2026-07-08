@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cleanup::{DictationStyle, Polish};
+use crate::cleanup::{DictationStyle, Polish, PolishedTone};
 use crate::translate::TranslateProvider;
 
 pub const DEFAULT_SPEECH_MODEL: &str = "whisper-large-v3-turbo-q5_0";
@@ -26,6 +26,8 @@ pub struct DictationSettings {
     pub style: DictationStyle,
     /// How much cleanup to apply (verbatim / mechanical / local-LLM).
     pub polish: Polish,
+    /// Interpersonal register for the Polished rewrite (F6); ignored by Raw/Clean.
+    pub tone: PolishedTone,
     /// ISO 639-1 hint for ASR; None lets the model detect.
     pub language: Option<String>,
     /// Input device name; None uses the system default.
@@ -69,6 +71,7 @@ impl Default for DictationSettings {
             mode: ActivationMode::PushToTalk,
             style: DictationStyle::Standard,
             polish: Polish::Clean,
+            tone: PolishedTone::Neutral,
             // Auto-detect. Forcing "en" made non-English speech transcribe as
             // approximate English (the observed bug); None lets Whisper detect
             // the spoken language, and the user can pin one in settings.

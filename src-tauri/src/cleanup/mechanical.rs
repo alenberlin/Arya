@@ -175,13 +175,14 @@ fn capitalize_first(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::super::TargetContext;
+    use super::super::{PolishedTone, TargetContext};
     use super::*;
 
     fn request(raw: &str, style: DictationStyle) -> CleanupRequest {
         CleanupRequest {
             raw: raw.to_string(),
             style,
+            tone: PolishedTone::Neutral,
             context: TargetContext::Generic,
             dictionary: vec![],
         }
@@ -219,6 +220,7 @@ mod tests {
         let req = CleanupRequest {
             raw: "ping arya about the k8s cluster.".into(),
             style: DictationStyle::Standard,
+            tone: PolishedTone::Neutral,
             context: TargetContext::Generic,
             dictionary: vec![DictionaryEntry {
                 pattern: "k8s".into(),
@@ -240,6 +242,7 @@ mod tests {
         let req = CleanupRequest {
             raw: "um  send it to arya at 5pm".into(),
             style: DictationStyle::Standard,
+            tone: PolishedTone::Neutral,
             context: TargetContext::Generic,
             dictionary: vec![DictionaryEntry {
                 pattern: "arya".into(),

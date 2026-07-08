@@ -4,6 +4,8 @@ export type ActivationMode = "push-to-talk" | "toggle";
 export type DictationStyle = "standard" | "casual-lowercase" | "formal";
 /** How much cleanup a dictation gets: verbatim / mechanical / local-LLM. */
 export type Polish = "raw" | "clean" | "polished";
+/** Interpersonal register for the Polished rewrite (F6); ignored by Raw/Clean. */
+export type PolishedTone = "neutral" | "polite" | "friendly" | "professional";
 /** Which engine translates: local Ollama or cloud (Arya API). */
 export type TranslateProvider = "local" | "cloud";
 
@@ -12,6 +14,8 @@ export interface DictationSettings {
   mode: ActivationMode;
   style: DictationStyle;
   polish: Polish;
+  /** Tone applied to the Polished rewrite (F6). */
+  tone: PolishedTone;
   language: string | null;
   microphone: string | null;
   speechModel: string;

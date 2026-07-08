@@ -32,6 +32,22 @@ const STYLES: { value: DictationSettings["style"]; label: string }[] = [
   { value: "formal", label: "Formal" },
 ];
 
+// Polished-rewrite tone (F6). Applied only when polish = Polished.
+const TONES: { value: DictationSettings["tone"]; label: string }[] = [
+  { value: "neutral", label: "Neutral" },
+  { value: "polite", label: "Polite" },
+  { value: "friendly", label: "Friendly" },
+  { value: "professional", label: "Professional" },
+];
+
+// Default cleanup level (F6). "Direct" is verbatim; the pill can still override
+// this per dictation.
+const POLISH_LEVELS: { value: DictationSettings["polish"]; label: string }[] = [
+  { value: "raw", label: "Direct" },
+  { value: "clean", label: "Clean" },
+  { value: "polished", label: "Polished" },
+];
+
 const SPEECH_MODELS: { value: string; label: string; englishOnly?: boolean }[] = [
   { value: "whisper-large-v3-turbo-q5_0", label: "High accuracy · multilingual" },
   { value: "whisper-base.en", label: "Fast · English only", englishOnly: true },
@@ -272,7 +288,22 @@ export function DictationPanel() {
             </div>
 
             <div className="card-sunken">
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Style</div>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Cleanup</div>
+              <div className="seg" style={{ width: "100%", gap: 8 }}>
+                {POLISH_LEVELS.map((p) => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    className="seg-btn"
+                    aria-pressed={settings.polish === p.value}
+                    style={{ flex: 1 }}
+                    onClick={() => void save({ ...settings, polish: p.value })}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, margin: "14px 0 10px" }}>Style</div>
               <div className="seg" style={{ width: "100%", gap: 8 }}>
                 {STYLES.map((s) => (
                   <button
@@ -284,6 +315,26 @@ export function DictationPanel() {
                     onClick={() => void save({ ...settings, style: s.value })}
                   >
                     {s.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, margin: "14px 0 10px" }}>
+                Polished tone
+                <span className="muted" style={{ fontWeight: 400, fontSize: 12.5, marginLeft: 6 }}>
+                  applied when Polished
+                </span>
+              </div>
+              <div className="seg" style={{ width: "100%", gap: 8 }}>
+                {TONES.map((t) => (
+                  <button
+                    key={t.value}
+                    type="button"
+                    className="seg-btn"
+                    aria-pressed={settings.tone === t.value}
+                    style={{ flex: 1 }}
+                    onClick={() => void save({ ...settings, tone: t.value })}
+                  >
+                    {t.label}
                   </button>
                 ))}
               </div>

@@ -26,7 +26,7 @@ the real Tauri webview — headless verification can't drive the webview.
 | M5 — nested pages + Notion import | ✅ done (Group B) | verify green: nesting (data+tree UI, subtree cascade verified) + Notion folder import (hierarchy, links→edges); 125 rust + 34 front tests |
 | M6 — forced-en fix + language picker | ✅ done (Group C) | default language → auto-detect (regression test); full ISO-639-1 picker; multilingual turbo already default |
 | M7 — multilingual model shelf | ◐ partial (Group C) | baseline multilingual via turbo works + English-only guardrail shipped; specialist DE/FR pins + Parakeet engine are device/network blockers (documented) |
-| M8 — Direct/Polished + tone | pending (Group C) | — |
+| M8 — Direct/Polished + tone | ✅ done (Group C) | Cleanup seg (Direct/Clean/Polished) + PolishedTone (neutral/polite/friendly/professional) applied in the Polished prompt; 127 rust + 34 front tests |
 | M9 — translate a saved dictation | pending (Group C) | — |
 | M10 — search everything | pending (Group D) | — |
 | M11 — Galaxy 2D | pending (Group D) | — |
