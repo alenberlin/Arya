@@ -188,6 +188,23 @@ alone fixes non-English dictation. **Commit:** with the Group-C commits below.
 (ASR + LLM polish/translate) verifies on-device. Next: Groups D–E (M10 search-all,
 M11 Galaxy, M12 Mind Map, M13 agent multi-line, M14 shell tidy).
 
+### Group D — search & surfaces — ✅ complete
+- **M10** `b9cec25` — search everything by title + content: literal `search_all`
+  (offline; notes/transcripts/dictations/translations) merged with semantic
+  `rag_search` in the SearchPanel.
+- **M11** `689b3bb` — Galaxy 2D knowledge-graph: `galaxy_graph` (nodes + mention/
+  child edges from `links`+nesting + best-effort semantic top-K over `rag_chunks`),
+  rendered with react-force-graph-2d.
+- **M12** `d34c5d5` — Mind Map: React Flow canvas (`@xyflow/react`) over a
+  `mindmaps` table (opaque `doc_json`); add/connect/rename nodes with debounced
+  autosave; delete reconciles `links`; joined into search-all.
+
+**✅ GROUP D COMPLETE (2026-07-08)** — full `make verify` GREEN
+(rust 132 / front 34 / sidecar 23 / arya-api 41). Galaxy's live canvas + semantic
+edges and the Mind Map drag/connect/rename interactions verify on-device (they need
+a real render surface headless CI can't provide). Next: Group E (M13 agent
+multi-line composer, M14 surface security + shell tidy).
+
 ## Blockers (carry-forward)
 - **M7 specialist models (DE/FR GGML pins) + Parakeet engine** — device/network
   work: download GB models to pin SHA-256, integrate the sherpa NeMo-transducer
