@@ -23,6 +23,12 @@ jobs:
           workspaces: |
             src-tauri
             arya-api
+          # sherpa-rs-sys downloads a prebuilt onnxruntime/sherpa-onnx library
+          # here at build time; it lives outside target/, so without this it's
+          # absent on a fresh runner even when the target/ fingerprint cache
+          # says the build script already succeeded, breaking the link step.
+          cache-directories: |
+            ~/Library/Caches/sherpa-rs
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter arya-sidecar build
       # Full gate: brand + key scan, lint, typecheck, TS tests, Rust shell,
