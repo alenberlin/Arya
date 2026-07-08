@@ -31,6 +31,7 @@ import {
   retryProcessing,
   scanRecoverableRecordings,
   searchNotes,
+  setNoteParent,
   startRecording,
   type TranscriptTurn,
   updateNote,
@@ -162,6 +163,7 @@ export function NotesWorkspace() {
   const [sortPreview, setSortPreview] = useState<string | null>(null);
   const [sorting, setSorting] = useState(false);
   const [editorEpoch, setEditorEpoch] = useState(0);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeNoteRef = useRef<string | null>(null);
   activeNoteRef.current = activeNoteId;
@@ -260,6 +262,34 @@ export function NotesWorkspace() {
       }
     },
     [],
+  );
+
+  /** Create a new page nested under `parentId`, open it, and expand the parent. */
+  const addSubPage = useCallback(
+    async (parentId: string) => {
+      try {
+        const note = await createNote("New note", parentId);
+        await refreshNotes();
+        setExpanded((s) => new Set(s).add(parentId));
+        await openNote(note.id);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refreshNotes, openNote],
+  );
+
+  /** Move a nested note back to the top level (F3). */
+  const moveToTopLevel = useCallback(
+    async (noteId: string) => {
+      try {
+        await setNoteParent(noteId, null);
+        await refreshNotes();
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refreshNotes],
   );
 
   /** Create a blank note and open it, ready to type or dictate into (hold Right
@@ -481,6 +511,104 @@ export function NotesWorkspace() {
     .slice()
     // Guarantee newest-first regardless of source ordering.
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+  // F3 nesting: a page tree for browse mode (no filter). Roots are the
+  // folder-visible notes with no visible parent; children nest beneath them
+  // (from the full list, so a child shows even if its folder differs).
+  const treeMode = !filter.trim();
+  const noteIds = new Set(notes.map((n) => n.id));
+  const childrenByParent = new Map<string, NoteSummary[]>();
+  for (const n of notes) {
+    if (n.parentNoteId && noteIds.has(n.parentNoteId)) {
+      const siblings = childrenByParent.get(n.parentNoteId) ?? [];
+      siblings.push(n);
+      childrenByParent.set(n.parentNoteId, siblings);
+    }
+  }
+  const rootNotes = visibleNotes.filter((n) => !n.parentNoteId || !noteIds.has(n.parentNoteId));
+
+  const toggleExpand = (id: string) =>
+    setExpanded((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const renderNoteRow = (note: NoteSummary, depth: number) => {
+    const kids = childrenByParent.get(note.id) ?? [];
+    const isOpen = expanded.has(note.id);
+    return (
+      <li
+        key={note.id}
+        className="note-row"
+        style={treeMode ? { paddingLeft: 8 + depth * 14 } : undefined}
+      >
+        {treeMode ? (
+          kids.length > 0 ? (
+            <button
+              type="button"
+              className="note-twisty"
+              aria-label={`${isOpen ? "Collapse" : "Expand"} ${note.title}`}
+              aria-expanded={isOpen}
+              onClick={() => toggleExpand(note.id)}
+            >
+              {isOpen ? "▾" : "▸"}
+            </button>
+          ) : (
+            <span className="note-twisty note-twisty-empty" aria-hidden="true" />
+          )
+        ) : null}
+        <button
+          type="button"
+          className="row"
+          draggable
+          aria-current={note.id === activeNoteId ? "true" : undefined}
+          onClick={() => void openNote(note.id)}
+          onDragStart={(e) => {
+            e.dataTransfer.setData("text/plain", note.id);
+            e.dataTransfer.effectAllowed = "move";
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setNoteMenu({ id: note.id, x: e.clientX, y: e.clientY });
+          }}
+        >
+          <div className="spread hstack" style={{ marginBottom: 4 }}>
+            <span className="truncate" style={{ fontSize: 13.5, fontWeight: 500 }}>
+              {note.title}
+            </span>
+            {statusChip(note.processingStatus)}
+          </div>
+          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
+            {formatWhen(note.createdAt)}
+          </div>
+        </button>
+        <button
+          type="button"
+          className="note-del"
+          aria-label={`delete ${note.title}`}
+          title="Delete note"
+          onClick={(e) => {
+            e.stopPropagation();
+            setDeleteTargetId(note.id);
+          }}
+        >
+          <TrashIcon />
+        </button>
+      </li>
+    );
+  };
+
+  const renderTree = (items: NoteSummary[], depth: number): React.JSX.Element[] =>
+    items.flatMap((note) => {
+      const rows = [renderNoteRow(note, depth)];
+      if (expanded.has(note.id) && (childrenByParent.get(note.id)?.length ?? 0) > 0) {
+        rows.push(...renderTree(childrenByParent.get(note.id) ?? [], depth + 1));
+      }
+      return rows;
+    });
+
   const tabTitle = (id: string) => notes.find((n) => n.id === id)?.title ?? "Note";
   const recording = recorder.state !== "idle";
   const source = detail && recording ? "mic + system audio" : "";
@@ -648,48 +776,10 @@ export function NotesWorkspace() {
           </nav>
 
           <ul aria-label="notes" className="plain">
-            {visibleNotes.map((note) => (
-              <li key={note.id} className="note-row">
-                <button
-                  type="button"
-                  className="row"
-                  draggable
-                  aria-current={note.id === activeNoteId ? "true" : undefined}
-                  onClick={() => void openNote(note.id)}
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData("text/plain", note.id);
-                    e.dataTransfer.effectAllowed = "move";
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setNoteMenu({ id: note.id, x: e.clientX, y: e.clientY });
-                  }}
-                >
-                  <div className="spread hstack" style={{ marginBottom: 4 }}>
-                    <span className="truncate" style={{ fontSize: 13.5, fontWeight: 500 }}>
-                      {note.title}
-                    </span>
-                    {statusChip(note.processingStatus)}
-                  </div>
-                  <div className="mono" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-                    {formatWhen(note.createdAt)}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  className="note-del"
-                  aria-label={`delete ${note.title}`}
-                  title="Delete note"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleteTargetId(note.id);
-                  }}
-                >
-                  <TrashIcon />
-                </button>
-              </li>
-            ))}
-            {visibleNotes.length === 0 ? (
+            {treeMode
+              ? renderTree(rootNotes, 0)
+              : visibleNotes.map((note) => renderNoteRow(note, 0))}
+            {(treeMode ? rootNotes : visibleNotes).length === 0 ? (
               <li className="empty">
                 {filter.trim()
                   ? "No notes match your filter."
@@ -1111,6 +1201,31 @@ export function NotesWorkspace() {
           style={{ top: noteMenu.y, left: noteMenu.x }}
           role="menu"
         >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              const id = noteMenu.id;
+              setNoteMenu(null);
+              void addSubPage(id);
+            }}
+          >
+            Add sub-page
+          </button>
+          {notes.find((n) => n.id === noteMenu.id)?.parentNoteId ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const id = noteMenu.id;
+                setNoteMenu(null);
+                void moveToTopLevel(id);
+              }}
+            >
+              Move to top level
+            </button>
+          ) : null}
+          <div className="context-menu-sep" />
           <div className="context-menu-label">Move to</div>
           <button
             type="button"
