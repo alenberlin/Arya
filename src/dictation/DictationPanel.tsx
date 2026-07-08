@@ -6,6 +6,7 @@ import {
   createDictionaryEntry,
   type DictationSettings,
   type DictationStatus,
+  type DictationTranslation,
   type DictionaryItem,
   deleteDictationHistoryItem,
   deleteDictionaryEntry,
@@ -15,6 +16,7 @@ import {
   getDictationSettings,
   getDictationStatus,
   type HistoryItem,
+  listAllDictationTranslations,
   listDictationHistory,
   listDictionaryEntries,
   listOllamaModels,
@@ -22,6 +24,7 @@ import {
   openAccessibilitySettings,
   type SpeakerProfile,
   setDictationSettings,
+  translateDictation,
 } from "../lib/dictation";
 import { TypeToConfirmDialog } from "../ui/dialogs";
 import { RecentDictations } from "./RecentDictations";
@@ -99,6 +102,7 @@ export function DictationPanel() {
   const [settings, setSettings] = useState<DictationSettings | null>(null);
   const [status, setStatus] = useState<DictationStatus | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [translations, setTranslations] = useState<Record<string, DictationTranslation[]>>({});
   const [dictionary, setDictionary] = useState<DictionaryItem[]>([]);
   const [profiles, setProfiles] = useState<SpeakerProfile[]>([]);
   const [profileName, setProfileName] = useState("");
@@ -117,7 +121,7 @@ export function DictationPanel() {
   // Open the ⋯ menu, clamped so it never spills off the bottom/right edge.
   const openMenu = (id: string, clientX: number, clientY: number) => {
     const MENU_W = 240;
-    const MENU_H = 104;
+    const MENU_H = 290;
     const x = Math.max(8, Math.min(clientX, window.innerWidth - MENU_W - 8));
     const y = Math.max(8, Math.min(clientY, window.innerHeight - MENU_H - 8));
     setMenuFor({ id, x, y });
@@ -164,22 +168,45 @@ export function DictationPanel() {
 
   const refresh = useCallback(async () => {
     try {
-      const [s, st, h, d, sp] = await Promise.all([
+      const [s, st, h, d, sp, tr] = await Promise.all([
         getDictationSettings(),
         getDictationStatus(),
         listDictationHistory(),
         listDictionaryEntries(),
         listSpeakerProfiles(),
+        listAllDictationTranslations(),
       ]);
       setSettings(s);
       setStatus(st);
       setHistory(h);
       setDictionary(d);
       setProfiles(sp);
+      const byDictation: Record<string, DictationTranslation[]> = {};
+      for (const t of tr) {
+        const list = byDictation[t.dictationId];
+        if (list) list.push(t);
+        else byDictation[t.dictationId] = [t];
+      }
+      setTranslations(byDictation);
     } catch (e) {
       setError(String(e));
     }
   }, []);
+
+  /** Translate a saved dictation into `lang` and show it below the original. */
+  const translateTo = (id: string, lang: string) => {
+    setMenuFor(null);
+    setNotice(`Translating to ${lang}…`);
+    void translateDictation(id, lang)
+      .then(() => {
+        setNotice(`Translated to ${lang}.`);
+        return refresh();
+      })
+      .catch((e) => {
+        setNotice(null);
+        setError(String(e));
+      });
+  };
 
   useEffect(() => {
     void refresh();
@@ -609,6 +636,7 @@ export function DictationPanel() {
       {/* RECENT DICTATIONS PANEL */}
       <RecentDictations
         history={history}
+        translations={translations}
         notice={notice}
         copiedId={copiedId}
         onClearAll={() => setClearOpen(true)}
@@ -626,6 +654,20 @@ export function DictationPanel() {
           <button type="button" role="menuitem" onClick={() => convertToMinutes(menuFor.id)}>
             Convert to meeting minutes
           </button>
+          <div className="context-menu-label">Translate to</div>
+          <div style={{ maxHeight: 168, overflowY: "auto" }}>
+            {LANGUAGES.map((l) => (
+              <button
+                key={l}
+                type="button"
+                role="menuitem"
+                onClick={() => translateTo(menuFor.id, l)}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+          <div className="context-menu-sep" />
           <button
             type="button"
             role="menuitem"

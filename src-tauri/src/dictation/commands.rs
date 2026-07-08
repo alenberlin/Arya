@@ -106,6 +106,123 @@ pub fn open_accessibility_settings() {
     paste::prompt_accessibility();
 }
 
+/// An on-demand translation of a saved dictation (F8/M9).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct DictationTranslation {
+    pub id: String,
+    pub dictation_id: String,
+    pub lang: String,
+    pub text: String,
+    pub model: String,
+    pub created_at: String,
+}
+
+/// Store (or replace) a dictation's translation for one language.
+async fn upsert_dictation_translation(
+    pool: &SqlitePool,
+    dictation_id: &str,
+    lang: &str,
+    text: &str,
+    model: &str,
+) -> Result<DictationTranslation, sqlx::Error> {
+    sqlx::query_as::<_, DictationTranslation>(
+        "INSERT INTO dictation_translations (id, dictation_id, lang, text, model, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         ON CONFLICT(dictation_id, lang)
+             DO UPDATE SET text = excluded.text, model = excluded.model,
+                           created_at = excluded.created_at
+         RETURNING id, dictation_id, lang, text, model, created_at",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(dictation_id)
+    .bind(lang)
+    .bind(text)
+    .bind(model)
+    .fetch_one(pool)
+    .await
+}
+
+async fn fetch_dictation_translations(
+    pool: &SqlitePool,
+    dictation_id: &str,
+) -> Result<Vec<DictationTranslation>, sqlx::Error> {
+    sqlx::query_as::<_, DictationTranslation>(
+        "SELECT id, dictation_id, lang, text, model, created_at
+         FROM dictation_translations WHERE dictation_id = ?1 ORDER BY created_at",
+    )
+    .bind(dictation_id)
+    .fetch_all(pool)
+    .await
+}
+
+/// Translate a saved dictation into `target_lang` and store it alongside the
+/// original (non-destructive; one row per language). Uses the same local/cloud
+/// translator as capture-time translation.
+#[tauri::command]
+pub async fn translate_dictation(
+    pool: State<'_, SqlitePool>,
+    service: State<'_, Arc<DictationService>>,
+    id: String,
+    target_lang: String,
+) -> Result<DictationTranslation, String> {
+    let source: String =
+        sqlx::query_scalar("SELECT clean_text FROM dictation_history WHERE id = ?1")
+            .bind(&id)
+            .fetch_optional(&*pool)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "dictation not found".to_string())?;
+    if source.trim().is_empty() {
+        return Err("this dictation has no text to translate".into());
+    }
+    let settings = service.settings();
+    let provider = settings.translate_provider;
+    let url = settings.ollama_url.clone();
+    let model = settings
+        .translate_model
+        .clone()
+        .or_else(|| settings.cleanup_model.clone())
+        .unwrap_or_else(|| crate::translate::DEFAULT_LOCAL_MODEL.to_string());
+    let target = target_lang.clone();
+    let model_for_call = model.clone();
+    let translated = tokio::task::spawn_blocking(move || {
+        crate::translate::make_translator(provider, &url, &model_for_call)
+            .and_then(|t| t.translate(&source, &target))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| "translation failed — is the model available?".to_string())?;
+    upsert_dictation_translation(&pool, &id, &target_lang, &translated, &model)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// List a dictation's on-demand translations (F8/M9).
+#[tauri::command]
+pub async fn list_dictation_translations(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> Result<Vec<DictationTranslation>, String> {
+    fetch_dictation_translations(&pool, &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Every on-demand dictation translation, so the history renders in one load.
+#[tauri::command]
+pub async fn list_all_dictation_translations(
+    pool: State<'_, SqlitePool>,
+) -> Result<Vec<DictationTranslation>, String> {
+    sqlx::query_as::<_, DictationTranslation>(
+        "SELECT id, dictation_id, lang, text, model, created_at
+         FROM dictation_translations ORDER BY dictation_id, created_at",
+    )
+    .fetch_all(&*pool)
+    .await
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn list_dictation_history(
     pool: State<'_, SqlitePool>,
@@ -362,4 +479,58 @@ pub async fn delete_dictionary_entry(
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_pool;
+
+    async fn dictation(pool: &SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO dictation_history (id, raw_text, clean_text, duration_ms, asr_ms, created_at)
+             VALUES (?1, 'r', 'hello', 0, 0, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn dictation_translations_stack_per_language_and_cascade() {
+        let pool = test_pool().await;
+        dictation(&pool, "d1").await;
+        upsert_dictation_translation(&pool, "d1", "German", "hallo", "m")
+            .await
+            .unwrap();
+        upsert_dictation_translation(&pool, "d1", "French", "bonjour", "m")
+            .await
+            .unwrap();
+        assert_eq!(
+            fetch_dictation_translations(&pool, "d1")
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
+
+        // Re-translating a language replaces rather than duplicating.
+        upsert_dictation_translation(&pool, "d1", "German", "hallo!", "m")
+            .await
+            .unwrap();
+        let all = fetch_dictation_translations(&pool, "d1").await.unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().any(|t| t.lang == "German" && t.text == "hallo!"));
+
+        // Deleting the dictation cascades its translations away.
+        sqlx::query("DELETE FROM dictation_history WHERE id = 'd1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(fetch_dictation_translations(&pool, "d1")
+            .await
+            .unwrap()
+            .is_empty());
+    }
 }

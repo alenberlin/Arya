@@ -56,6 +56,8 @@ vi.mock("@tauri-apps/api/core", () => ({
         return [{ id: "d1", pattern: "k8s", replacement: "Kubernetes" }];
       case "list_speaker_profiles":
         return [{ id: "p1", name: "Alen", createdAt: "2026-07-03T00:00:00Z" }];
+      case "list_all_dictation_translations":
+        return [];
       default:
         throw new Error(`unexpected command ${cmd}`);
     }

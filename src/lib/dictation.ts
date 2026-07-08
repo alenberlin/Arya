@@ -62,6 +62,25 @@ export const listOllamaModels = () => invoke<string[]>("list_ollama_models");
 export const getDictationStatus = () => invoke<DictationStatus>("dictation_status");
 export const openAccessibilitySettings = () => invoke<void>("open_accessibility_settings");
 export const listDictationHistory = () => invoke<HistoryItem[]>("list_dictation_history");
+
+/** An on-demand translation of a saved dictation (F8), stored non-destructively. */
+export interface DictationTranslation {
+  id: string;
+  dictationId: string;
+  lang: string;
+  text: string;
+  model: string;
+  createdAt: string;
+}
+/** Translate a saved dictation into `targetLang` and store it below the original. */
+export const translateDictation = (id: string, targetLang: string) =>
+  invoke<DictationTranslation>("translate_dictation", { id, targetLang });
+/** A dictation's on-demand translations, oldest first. */
+export const listDictationTranslations = (id: string) =>
+  invoke<DictationTranslation[]>("list_dictation_translations", { id });
+/** All on-demand dictation translations (for rendering history in one load). */
+export const listAllDictationTranslations = () =>
+  invoke<DictationTranslation[]>("list_all_dictation_translations");
 export const deleteDictationHistoryItem = (id: string) =>
   invoke<void>("delete_dictation_history_item", { id });
 export const clearDictationHistory = () => invoke<void>("clear_dictation_history");
