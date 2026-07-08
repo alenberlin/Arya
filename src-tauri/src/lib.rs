@@ -200,7 +200,6 @@ pub fn run() {
             account::commands::account_set_token,
             account::commands::account_sign_out,
             account::commands::account_snapshot,
-            account::commands::account_open_billing,
             dictation::commands::get_dictation_settings,
             dictation::commands::list_ollama_models,
             dictation::commands::set_dictation_settings,

@@ -8,7 +8,6 @@ import { DictationPanel } from "./dictation/DictationPanel";
 import { GalaxyPanel } from "./galaxy/GalaxyPanel";
 import { type AccountSnapshot, accountSnapshot } from "./lib/account";
 import { disableAutostart, enableAutostart, isAutostartEnabled } from "./lib/autostart";
-import { cap } from "./lib/text";
 import { loadTheme, saveTheme, type Theme } from "./lib/theme";
 import { MindMapPanel } from "./mindmap/MindMapPanel";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
@@ -79,7 +78,7 @@ export function App() {
     // Best-effort: the sidebar shows plan + credits when a backend answers;
     // in local mode it stays quiet rather than erroring. Re-fetch whenever auth
     // changes anywhere (sign-in via the loopback callback, sign-out from the
-    // account panel) so the sidebar never shows a stale tier until reload.
+    // account panel) so the sidebar never shows a stale balance until reload.
     const refresh = () => {
       void accountSnapshot()
         .then(setAccount)
@@ -165,9 +164,7 @@ export function App() {
               <AccountIcon />
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>
-              <span className="account-name">
-                {account ? `${cap(account.tier)} plan` : "Account"}
-              </span>
+              <span className="account-name">Account</span>
               <span className="account-sub">
                 {account ? `${account.remainingCredits.toLocaleString()} credits` : "Local mode"}
               </span>

@@ -1,16 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   type AccountSnapshot,
-  accountOpenBilling,
   accountSignInState,
   accountSignOut,
   accountSnapshot,
-  creditsToUsd,
   type SignInState,
 } from "../lib/account";
 import { AccountIcon, LockIcon } from "../ui/icons";
-
-const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 /** On-device model privacy tiers — shown in both local and cloud modes. */
 function PrivacyTiers() {
@@ -51,7 +47,7 @@ function PrivacyTiers() {
   );
 }
 
-/** Account and billing: tier, credit balance, usage, upgrade/top-up. */
+/** Account: sign-in state and cloud-credit balance/usage. Arya is free — no plans, no billing. */
 export function AccountPanel() {
   const [signIn, setSignIn] = useState<SignInState | null>(null);
   const [snapshot, setSnapshot] = useState<AccountSnapshot | null>(null);
@@ -62,8 +58,8 @@ export function AccountPanel() {
     try {
       const state = await accountSignInState();
       setSignIn(state);
-      // Only the hosted/cloud build has an account+billing backend; local mode
-      // never reaches out, so it can't (and shouldn't) error.
+      // Only the hosted/cloud build has an account backend; local mode never
+      // reaches out, so it can't (and shouldn't) error.
       if (state.hostedAuth) {
         setSnapshot(await accountSnapshot());
       }
@@ -76,13 +72,6 @@ export function AccountPanel() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  const openBilling = async (intent: "upgrade" | "topup" | "portal") => {
-    const opened = await accountOpenBilling(intent);
-    if (!opened) {
-      setNotice("Hosted billing isn't configured in this build (local mode).");
-    }
-  };
 
   // Local mode: no account, nothing to fetch, no errors — everything's on-device.
   if (signIn && !signIn.hostedAuth) {
@@ -104,8 +93,8 @@ export function AccountPanel() {
           </div>
           <PrivacyTiers />
           <p className="muted" style={{ fontSize: 12 }}>
-            Sign-in, cloud credits, and billing appear here when the app is built with the hosted
-            proxy configured.
+            Sign-in and cloud credit usage appear here when the app is built with the hosted proxy
+            configured. Arya is free — there's nothing to buy either way.
           </p>
         </div>
       </div>
@@ -156,14 +145,11 @@ export function AccountPanel() {
             <AccountIcon />
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 17, fontWeight: 600 }}>{cap(snapshot.tier)} plan</div>
+            <div style={{ fontSize: 17, fontWeight: 600 }}>Cloud account</div>
             <div className="muted" style={{ fontSize: 13 }}>
-              {snapshot.subscribed ? "Subscribed" : "Local mode"} · on-device speech is always free
+              Free, no plan required · on-device speech is always free
             </div>
           </div>
-          <button type="button" onClick={() => void openBilling("portal")}>
-            Manage plan
-          </button>
         </div>
 
         <div className="card" style={{ marginBottom: 14 }}>
@@ -183,25 +169,8 @@ export function AccountPanel() {
             />
           </div>
           <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-            {snapshot.remainingCredits.toLocaleString()} credits left (
-            {creditsToUsd(snapshot.remainingCredits)}). Only used when you choose a cloud model —
-            local models and on-device speech are always free.
-          </div>
-          <div className="hstack" style={{ marginTop: 14 }}>
-            {snapshot.tier !== "max" ? (
-              <button
-                type="button"
-                className="btn-primary"
-                onClick={() => void openBilling("upgrade")}
-              >
-                {snapshot.tier === "free" ? "Upgrade to Pro" : "Upgrade to Max"}
-              </button>
-            ) : null}
-            {snapshot.subscribed ? (
-              <button type="button" onClick={() => void openBilling("topup")}>
-                Top up credits
-              </button>
-            ) : null}
+            {snapshot.remainingCredits.toLocaleString()} free credits left, refilled regularly. Only
+            used when you choose a cloud model — local models and on-device speech are always free.
           </div>
         </div>
 

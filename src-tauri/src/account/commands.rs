@@ -1,4 +1,4 @@
-//! Account commands: sign-in/out, snapshot fetch, upgrade/top-up handoff.
+//! Account commands: sign-in/out, credit snapshot fetch.
 
 use tauri::{Emitter, State};
 
@@ -47,8 +47,8 @@ pub fn account_set_token(token: String) -> Result<(), String> {
 #[tauri::command]
 pub fn account_sign_out(app: tauri::AppHandle) -> Result<(), String> {
     tokens::clear()?;
-    // Let the shell (sidebar plan/credits) refresh instead of showing a stale
-    // tier until reload.
+    // Let the shell (sidebar credits) refresh instead of showing a stale
+    // balance until reload.
     let _ = app.emit("account:signed-out", ());
     Ok(())
 }
@@ -76,31 +76,4 @@ pub async fn account_snapshot(state: State<'_, AccountState>) -> Result<AccountS
             .to_string());
     }
     serde_json::from_value(envelope["data"].clone()).map_err(|e| e.to_string())
-}
-
-/// Opens the billing/upgrade page in the browser (Stripe checkout / portal).
-/// The URL comes from config; in local mode there is no portal, so this is a
-/// no-op with a clear signal.
-#[tauri::command]
-pub fn account_open_billing(target: String) -> Result<bool, String> {
-    let base = std::env::var("ARYA_BILLING_URL").ok();
-    match base {
-        Some(base) if !base.is_empty() => {
-            // Percent-encode the webview-supplied intent so it can't inject
-            // extra query params or fragments into the billing URL.
-            let intent =
-                percent_encoding::utf8_percent_encode(&target, percent_encoding::NON_ALPHANUMERIC);
-            let url = format!("{base}?intent={intent}");
-            open_url(&url);
-            Ok(true)
-        }
-        _ => Ok(false), // local mode: no hosted billing
-    }
-}
-
-fn open_url(url: &str) {
-    #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg(url).spawn();
-    #[cfg(not(target_os = "macos"))]
-    let _ = url;
 }

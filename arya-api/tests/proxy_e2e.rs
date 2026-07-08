@@ -151,7 +151,6 @@ async fn account_endpoint_returns_snapshot() {
     let json = body_json(response).await;
     assert_eq!(json["success"], true);
     assert!(json["data"]["remainingCredits"].as_i64().unwrap() > 0);
-    assert!(json["data"]["tier"].is_string());
 }
 
 #[tokio::test]
