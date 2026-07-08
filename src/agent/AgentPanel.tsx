@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   type AgentEvent,
   type AgentMessage,
@@ -50,6 +50,20 @@ export function AgentPanel() {
   const [images, setImages] = useState<Record<string, string>>({});
   const activeRef = useRef<string | null>(null);
   activeRef.current = active?.id ?? null;
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  // Grow the composer with its content — from a five-row floor (CSS min-height)
+  // up to a cap, past which it scrolls — so pasting or writing several lines
+  // stays readable without a manual drag-resize. `input` drives it: it's the
+  // signal to re-measure after each commit (typing *and* the clear on send),
+  // even though the measurement reads the DOM rather than the value itself.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: input is the intended re-measure trigger
+  useLayoutEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -467,14 +481,22 @@ export function AgentPanel() {
                 className="composer"
               >
                 <textarea
+                  ref={composerRef}
                   aria-label="agent composer"
-                  placeholder="Ask, or tell Arya to do something…"
+                  placeholder="Ask, paste, or tell Arya to do something…"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  rows={1}
+                  rows={5}
                   style={{ flex: 1 }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
+                    // Enter submits; Shift+Enter inserts a newline; Cmd/Ctrl+Enter
+                    // also submits, for hands-on-keyboard sending from anywhere in
+                    // a multi-line draft.
+                    if (e.key !== "Enter") return;
+                    if (e.metaKey || e.ctrlKey) {
+                      e.preventDefault();
+                      void onSend();
+                    } else if (!e.shiftKey) {
                       e.preventDefault();
                       void onSend();
                     }

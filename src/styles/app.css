@@ -1265,6 +1265,11 @@ hr {
   background: transparent;
   padding: var(--sp-1) 2px;
   resize: none;
+  /* Five-row floor (line-height 1.5 → 7.5em) plus the vertical padding; the JS
+     autosize grows it with content and the cap lets long drafts scroll. */
+  min-height: calc(7.5em + 2 * var(--sp-1));
+  max-height: 40vh;
+  overflow-y: auto;
 }
 .composer textarea:focus-visible {
   box-shadow: none;

@@ -31,7 +31,7 @@ the real Tauri webview — headless verification can't drive the webview.
 | M10 — search everything | ✅ done (Group D) | literal `search_all` (title+content, offline) across notes/transcripts/dictations/translations, merged with semantic rag_search in SearchPanel; 130 rust + 34 front tests |
 | M11 — Galaxy 2D | ✅ done (Group D) | galaxy_graph (notes+dictations; mention/child edges from links+nesting; best-effort semantic top-K over rag_chunks); react-force-graph-2d panel + Galaxy tab; 131 rust tests; live canvas + semantic edges verify on-device |
 | M12 — Mind Map | ✅ done (Group D) | React Flow canvas (@xyflow/react) over a `mindmaps` table (opaque `doc_json`); add/connect/rename nodes, debounced autosave; delete reconciles `links`; joined into search-all; 132 rust + 34 front tests; live drag/connect verifies on-device |
-| M13 — agent multi-line composer | pending (Group E) | — |
+| M13 — agent multi-line composer | ✅ done (Group E) | composer is an auto-growing textarea with a 5-row floor (CSS min-height) + cap-then-scroll; Enter sends, Shift+Enter newline, ⌘/Ctrl+Enter sends; existing send/stream wiring untouched; 2 new component tests (key handling + row floor); 36 front tests |
 | M14 — surface security + shell tidy | pending (Group E) | — |
 
 ## Log
