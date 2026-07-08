@@ -8,6 +8,15 @@ slice, *done* only with the verification result + commit hash attached.
 **Active goal:** complete Group A (M1→M4), fully functional. Blockers are
 quarantined and documented, not stopped on.
 
+**✅ GROUP A COMPLETE (2026-07-08).** M1–M4 all done; full `make verify` GREEN
+(front 34 tests + rust 120 tests + sidecar 23 + arya-api 41; fmt/clippy/biome/tsc
+all clean). Commits: `b2850d5` (blueprint) → `a26fd2d` (M1) → `90a3086` (M2) →
+`68eb15e` (M3) → `a0e8d58` (M4 primitive+F16) → `9581a1f` (M4 F15), on branch
+`remediation/review-fixes` (not pushed). **Next:** Groups B–E (M5–M14) remain.
+**Deferred to on-device QA (not blockers):** live visual/interaction QA of the
+BlockNote editor, mention menu/chips, Sort preview, and the ⌘↵ inline command in
+the real Tauri webview — headless verification can't drive the webview.
+
 | Milestone | Status | Evidence |
 |---|---|---|
 | M1 — links edge store | ✅ done | verify-rust green (fmt, clippy -D warnings, 115 tests incl. 8 links + note-cleanup); verify-front green (brand, scan-keys, biome, tsc, 23 vitest incl. links bindings); sidecar/api untouched |
@@ -116,7 +125,7 @@ mature (the schema + reconcile already support all kinds). **Commit:** `68eb15e`
 **Evidence:** verify-rust green (120 tests); verify-front green (34 tests: +3
 extractInlineCommand; typecheck, biome, build). **Deferred (not a blocker):** live
 QA of Sort / inline-command in the Tauri webview → on-device. **Commits:**
-primitive+F16 `a0e8d58`; F15 recorded at next update.
+primitive+F16 `a0e8d58`; F15 `9581a1f`.
 
 ## Blockers (carry-forward)
 _None. (Live-webview visual QA for the editor/mentions/Sort is deferred to
