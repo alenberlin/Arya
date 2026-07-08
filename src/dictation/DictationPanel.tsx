@@ -24,12 +24,18 @@ import {
   setDictationSettings,
 } from "../lib/dictation";
 import { TypeToConfirmDialog } from "../ui/dialogs";
-import { CheckIcon, CopyIcon } from "../ui/icons";
+import { RecentDictations } from "./RecentDictations";
 
 const STYLES: { value: DictationSettings["style"]; label: string }[] = [
   { value: "standard", label: "Standard" },
   { value: "casual-lowercase", label: "Casual" },
   { value: "formal", label: "Formal" },
+];
+
+const SPEECH_MODELS: { value: string; label: string }[] = [
+  { value: "whisper-large-v3-turbo-q5_0", label: "High accuracy" },
+  { value: "whisper-base.en", label: "Fast" },
+  { value: "whisper-tiny.en", label: "Tiny" },
 ];
 
 // Curated target languages; the value is the language name passed to the model.
@@ -48,6 +54,27 @@ const LANGUAGES = [
   "Chinese",
   "Arabic",
   "Hindi",
+];
+
+// ISO 639-1 codes for the ASR "speech language" hint. "" = auto-detect (the
+// default) — the model detects the spoken language. Pinning one improves
+// accuracy when you dictate mostly in a single language.
+const SPEECH_LANGUAGES: { code: string; label: string }[] = [
+  { code: "", label: "Auto-detect" },
+  { code: "en", label: "English" },
+  { code: "es", label: "Spanish" },
+  { code: "de", label: "German" },
+  { code: "fr", label: "French" },
+  { code: "it", label: "Italian" },
+  { code: "pt", label: "Portuguese" },
+  { code: "nl", label: "Dutch" },
+  { code: "pl", label: "Polish" },
+  { code: "ru", label: "Russian" },
+  { code: "ja", label: "Japanese" },
+  { code: "ko", label: "Korean" },
+  { code: "zh", label: "Chinese" },
+  { code: "ar", label: "Arabic" },
+  { code: "hi", label: "Hindi" },
 ];
 
 /** Dictation settings (hotkey, style, mic, voice profiles, dictionary) beside a
@@ -259,6 +286,44 @@ export function DictationPanel() {
                     {s.label}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            <div className="card-sunken">
+              <div className="spread hstack">
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>Recognition model</div>
+                  <div className="muted" style={{ fontSize: 12.5 }}>
+                    Higher accuracy for dictated wording
+                  </div>
+                </div>
+                <select
+                  aria-label="recognition model"
+                  style={{ width: "auto" }}
+                  value={settings.speechModel}
+                  onChange={(e) => void save({ ...settings, speechModel: e.target.value })}
+                >
+                  {SPEECH_MODELS.map((model) => (
+                    <option key={model.value} value={model.value}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="spread hstack" style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Speech language</div>
+                <select
+                  aria-label="speech language"
+                  style={{ width: "auto" }}
+                  value={settings.language ?? ""}
+                  onChange={(e) => void save({ ...settings, language: e.target.value || null })}
+                >
+                  {SPEECH_LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -484,91 +549,14 @@ export function DictationPanel() {
       </div>
 
       {/* RECENT DICTATIONS PANEL */}
-      <div className="panel" style={{ width: 300, flex: "0 0 300px" }}>
-        <div className="panel-head hstack spread">
-          <span className="section-label">Recent dictations</span>
-          {history.length > 0 ? (
-            <button type="button" className="btn-sm btn-danger" onClick={() => setClearOpen(true)}>
-              Clear all
-            </button>
-          ) : null}
-        </div>
-        <div className="panel-body">
-          {notice ? (
-            <p role="status" className="muted" style={{ fontSize: 12, padding: "0 4px 8px" }}>
-              {notice}
-            </p>
-          ) : null}
-          <ul aria-label="dictation history" className="plain">
-            {history.map((item) => (
-              <li
-                key={item.id}
-                className="card-sunken"
-                style={{ margin: "4px 0", padding: 12 }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  openMenu(item.id, e.clientX, e.clientY);
-                }}
-              >
-                {item.translatedText ? (
-                  <>
-                    <div style={{ fontSize: 13, lineHeight: 1.55, marginBottom: 3 }}>
-                      {item.translatedText}
-                    </div>
-                    <div
-                      className="muted"
-                      style={{ fontSize: 12, lineHeight: 1.5, marginBottom: 6 }}
-                    >
-                      <span className="mono" style={{ fontSize: 9.5 }}>
-                        {item.targetLang ? `${item.targetLang} ← EN` : "EN"}
-                      </span>{" "}
-                      {item.cleanText}
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ fontSize: 13, lineHeight: 1.55, marginBottom: 6 }}>
-                    {item.cleanText}
-                  </div>
-                )}
-                <div className="spread hstack">
-                  <span className="mono muted" style={{ fontSize: 10.5 }}>
-                    {(item.durationMs / 1000).toFixed(1)}s · ASR {item.asrMs}ms
-                    {item.appBundleId ? ` · ${item.appBundleId}` : ""}
-                  </span>
-                  <span className="hstack" style={{ gap: 2 }}>
-                    <button
-                      type="button"
-                      className="tab-close bare"
-                      aria-label={copiedId === item.id ? "copied" : "copy text"}
-                      title={copiedId === item.id ? "Copied!" : "Copy text"}
-                      onClick={() => void copyText(item.id, item.translatedText ?? item.cleanText)}
-                    >
-                      {copiedId === item.id ? (
-                        <CheckIcon className="hist-action-icon copied" />
-                      ) : (
-                        <CopyIcon className="hist-action-icon" />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className="tab-close bare"
-                      aria-label="dictation actions"
-                      onClick={(e) => openMenu(item.id, e.clientX, e.clientY)}
-                    >
-                      ⋯
-                    </button>
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-          {history.length === 0 ? (
-            <p className="muted" style={{ fontSize: 13, padding: 12 }}>
-              No dictations yet. Hold <span className="kbd">Right Shift</span> anywhere and speak.
-            </p>
-          ) : null}
-        </div>
-      </div>
+      <RecentDictations
+        history={history}
+        notice={notice}
+        copiedId={copiedId}
+        onClearAll={() => setClearOpen(true)}
+        onOpenMenu={openMenu}
+        onCopy={copyText}
+      />
 
       {menuFor ? (
         <div
