@@ -20,6 +20,8 @@ pub struct NoteSummary {
     pub processing_status: String,
     pub processing_error: Option<String>,
     pub folder_id: Option<String>,
+    /// Parent page, or `None` for a top-level note (F3 nesting).
+    pub parent_note_id: Option<String>,
     pub created_at: String,
 }
 
@@ -61,15 +63,40 @@ pub struct Folder {
 }
 
 pub async fn insert_note(pool: &SqlitePool, title: &str) -> Result<Note, sqlx::Error> {
+    insert_note_under(pool, title, None).await
+}
+
+/// Insert a note, optionally as a child of `parent_id` (F3 nesting).
+pub async fn insert_note_under(
+    pool: &SqlitePool,
+    title: &str,
+    parent_id: Option<&str>,
+) -> Result<Note, sqlx::Error> {
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query_as::<_, Note>(
-        "INSERT INTO notes (id, title, created_at)
-         VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        "INSERT INTO notes (id, title, parent_note_id, created_at)
+         VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
          RETURNING id, title, created_at",
     )
     .bind(&id)
     .bind(title)
+    .bind(parent_id)
     .fetch_one(pool)
+    .await
+}
+
+/// All descendant note ids of `id` (its subtree, excluding `id` itself).
+async fn descendant_ids(pool: &SqlitePool, id: &str) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE subtree(id) AS (
+             SELECT id FROM notes WHERE parent_note_id = ?1
+             UNION ALL
+             SELECT n.id FROM notes n JOIN subtree s ON n.parent_note_id = s.id
+         )
+         SELECT id FROM subtree",
+    )
+    .bind(id)
+    .fetch_all(pool)
     .await
 }
 
@@ -77,7 +104,8 @@ pub async fn fetch_notes(pool: &SqlitePool) -> Result<Vec<NoteSummary>, sqlx::Er
     // rowid is monotonic with insertion, so it's a stable newest-first tiebreak
     // when two notes share a created_at (unlike the random UUID id).
     sqlx::query_as::<_, NoteSummary>(
-        "SELECT id, title, processing_status, processing_error, folder_id, created_at
+        "SELECT id, title, processing_status, processing_error, folder_id,
+                parent_note_id, created_at
          FROM notes ORDER BY created_at DESC, rowid DESC",
     )
     .fetch_all(pool)
@@ -100,7 +128,7 @@ pub async fn search_notes_query(
     );
     sqlx::query_as::<_, NoteSummary>(
         "SELECT DISTINCT n.id, n.title, n.processing_status, n.processing_error,
-                n.folder_id, n.created_at
+                n.folder_id, n.parent_note_id, n.created_at
          FROM notes n
          LEFT JOIN transcript_turns t ON t.note_id = n.id
          WHERE n.title LIKE ?1 ESCAPE '\\'
@@ -115,8 +143,43 @@ pub async fn search_notes_query(
 }
 
 #[tauri::command]
-pub async fn create_note(pool: State<'_, SqlitePool>, title: String) -> Result<Note, String> {
-    insert_note(&pool, &title).await.map_err(|e| e.to_string())
+pub async fn create_note(
+    pool: State<'_, SqlitePool>,
+    title: String,
+    parent_id: Option<String>,
+) -> Result<Note, String> {
+    insert_note_under(&pool, &title, parent_id.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Re-parent a note (or move it to top level with `parentId = null`). Guards
+/// against cycles: a page cannot become its own parent or a child of one of its
+/// own descendants.
+#[tauri::command]
+pub async fn set_note_parent(
+    pool: State<'_, SqlitePool>,
+    note_id: String,
+    parent_id: Option<String>,
+) -> Result<(), String> {
+    if let Some(pid) = &parent_id {
+        if pid == &note_id {
+            return Err("a page cannot be its own parent".into());
+        }
+        let descendants = descendant_ids(&pool, &note_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if descendants.iter().any(|d| d == pid) {
+            return Err("cannot move a page into its own subtree".into());
+        }
+    }
+    sqlx::query("UPDATE notes SET parent_note_id = ?2 WHERE id = ?1")
+        .bind(&note_id)
+        .bind(&parent_id)
+        .execute(&*pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -239,30 +302,60 @@ pub async fn delete_note(pool: State<'_, SqlitePool>, id: String) -> Result<(), 
 pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String> {
     // Collect every file path BEFORE deleting: the rows that hold the paths
     // cascade away with the note, so afterwards they'd be unqueryable.
-    let audio_paths = sqlx::query_scalar::<_, String>(
-        "SELECT a.path FROM audio_artifacts a
-         JOIN recording_sessions s ON s.id = a.session_id WHERE s.note_id = ?1",
+    // The whole subtree — the note plus every descendant page — collected before
+    // the delete so their files and graph edges can be cleaned even though the
+    // rows cascade away.
+    let subtree_ids = sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE subtree(id) AS (
+             SELECT ?1
+             UNION ALL
+             SELECT n.id FROM notes n JOIN subtree s ON n.parent_note_id = s.id
+         )
+         SELECT id FROM subtree",
     )
     .bind(id)
     .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())?;
-    let attachment_paths =
-        sqlx::query_scalar::<_, String>("SELECT path FROM note_attachments WHERE note_id = ?1")
-            .bind(id)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| e.to_string())?;
 
+    let audio_paths = sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE subtree(id) AS (
+             SELECT ?1 UNION ALL
+             SELECT n.id FROM notes n JOIN subtree s ON n.parent_note_id = s.id
+         )
+         SELECT a.path FROM audio_artifacts a
+         JOIN recording_sessions s ON s.id = a.session_id
+         WHERE s.note_id IN (SELECT id FROM subtree)",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let attachment_paths = sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE subtree(id) AS (
+             SELECT ?1 UNION ALL
+             SELECT n.id FROM notes n JOIN subtree s ON n.parent_note_id = s.id
+         )
+         SELECT path FROM note_attachments WHERE note_id IN (SELECT id FROM subtree)",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Deleting the root cascades the descendant pages (parent_note_id ON DELETE
+    // CASCADE), and each page's sessions/attachments/turns cascade in turn.
     sqlx::query("DELETE FROM notes WHERE id = ?1")
         .bind(id)
         .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
 
-    // Best-effort, like the file cleanup below: the authoritative row is already
-    // gone, and a leftover edge is harmless (it resolves as "deleted" at read).
-    let _ = crate::links::delete_for_node(pool, "note", id).await;
+    // Drop graph edges for every page that was in the subtree (best-effort: the
+    // authoritative rows are already gone; a leftover edge resolves as deleted).
+    for node_id in &subtree_ids {
+        let _ = crate::links::delete_for_node(pool, "note", node_id).await;
+    }
 
     remove_files(audio_paths.into_iter().chain(attachment_paths));
     Ok(())
@@ -429,6 +522,78 @@ mod tests {
         assert_eq!(d2.document_json, r#"[{"type":"heading"}]"#);
         assert_eq!(d2.body_md, "# Title\n\nbody");
         assert_eq!(d2.manual_notes, "");
+    }
+
+    #[tokio::test]
+    async fn child_note_nests_under_its_parent() {
+        let pool = test_pool().await;
+        let parent = insert_note(&pool, "Parent").await.unwrap();
+        let child = insert_note_under(&pool, "Child", Some(&parent.id))
+            .await
+            .unwrap();
+        let notes = fetch_notes(&pool).await.unwrap();
+        let child_row = notes.iter().find(|n| n.id == child.id).unwrap();
+        assert_eq!(
+            child_row.parent_note_id.as_deref(),
+            Some(parent.id.as_str())
+        );
+        let parent_row = notes.iter().find(|n| n.id == parent.id).unwrap();
+        assert_eq!(parent_row.parent_note_id, None);
+    }
+
+    #[tokio::test]
+    async fn descendant_ids_walks_the_whole_subtree() {
+        let pool = test_pool().await;
+        let a = insert_note(&pool, "A").await.unwrap();
+        let b = insert_note_under(&pool, "B", Some(&a.id)).await.unwrap();
+        let c = insert_note_under(&pool, "C", Some(&b.id)).await.unwrap();
+        let d = insert_note(&pool, "D").await.unwrap(); // unrelated top-level
+        let mut desc = descendant_ids(&pool, &a.id).await.unwrap();
+        desc.sort();
+        let mut expected = vec![b.id.clone(), c.id.clone()];
+        expected.sort();
+        assert_eq!(desc, expected);
+        assert!(!desc.contains(&d.id));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_parent_removes_its_subtree_and_files() {
+        // Verifies the parent_note_id ON DELETE CASCADE *and* that the subtree's
+        // files are collected + removed even for a deep descendant.
+        let pool = test_pool().await;
+        let dir = std::env::temp_dir().join(format!("arya-nest-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let parent = insert_note(&pool, "Parent").await.unwrap();
+        let child = insert_note_under(&pool, "Child", Some(&parent.id))
+            .await
+            .unwrap();
+        let grandchild = insert_note_under(&pool, "Grandchild", Some(&child.id))
+            .await
+            .unwrap();
+
+        let attach = dir.join("deep.pdf");
+        std::fs::write(&attach, b"pdf").unwrap();
+        sqlx::query(
+            "INSERT INTO note_attachments (id, note_id, name, path, size_bytes, created_at)
+             VALUES ('a1', ?1, 'deep.pdf', ?2, 3, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+        )
+        .bind(&grandchild.id)
+        .bind(attach.to_str().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        delete_note_inner(&pool, &parent.id)
+            .await
+            .expect("delete subtree");
+
+        assert!(
+            fetch_notes(&pool).await.unwrap().is_empty(),
+            "the whole subtree cascaded away"
+        );
+        assert!(!attach.exists(), "the grandchild's file was removed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

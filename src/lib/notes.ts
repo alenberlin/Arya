@@ -13,6 +13,8 @@ export interface NoteSummary {
   processingStatus: string;
   processingError: string | null;
   folderId: string | null;
+  /** Parent page, or null for a top-level note (F3 nesting). */
+  parentNoteId: string | null;
   createdAt: string;
 }
 
@@ -62,7 +64,11 @@ export interface RecoverableRecording {
   startedAt: string;
 }
 
-export const createNote = (title: string) => invoke<Note>("create_note", { title });
+export const createNote = (title: string, parentId?: string) =>
+  invoke<Note>("create_note", { title, parentId: parentId ?? null });
+/** Re-parent a note, or move it to top level with `parentId = null` (F3). */
+export const setNoteParent = (noteId: string, parentId: string | null) =>
+  invoke<void>("set_note_parent", { noteId, parentId });
 export const listNotes = () => invoke<NoteSummary[]>("list_notes");
 export const searchNotes = (query: string) => invoke<NoteSummary[]>("search_notes", { query });
 export const getNote = (id: string) => invoke<NoteDetail>("get_note", { id });
