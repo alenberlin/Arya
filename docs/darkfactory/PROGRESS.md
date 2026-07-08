@@ -29,7 +29,7 @@ the real Tauri webview — headless verification can't drive the webview.
 | M8 — Direct/Polished + tone | ✅ done (Group C) | Cleanup seg (Direct/Clean/Polished) + PolishedTone (neutral/polite/friendly/professional) applied in the Polished prompt; 127 rust + 34 front tests |
 | M9 — translate a saved dictation | ✅ done (Group C) | right-click ⋯ → Translate to → language; non-destructive `dictation_translations` (one/lang, cascade), stacked in history; 128 rust + 34 front tests |
 | M10 — search everything | ✅ done (Group D) | literal `search_all` (title+content, offline) across notes/transcripts/dictations/translations, merged with semantic rag_search in SearchPanel; 130 rust + 34 front tests |
-| M11 — Galaxy 2D | pending (Group D) | — |
+| M11 — Galaxy 2D | ✅ done (Group D) | galaxy_graph (notes+dictations; mention/child edges from links+nesting; best-effort semantic top-K over rag_chunks); react-force-graph-2d panel + Galaxy tab; 131 rust tests; live canvas + semantic edges verify on-device |
 | M12 — Mind Map | pending (Group D) | — |
 | M13 — agent multi-line composer | pending (Group E) | — |
 | M14 — surface security + shell tidy | pending (Group E) | — |

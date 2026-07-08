@@ -7,8 +7,10 @@ import { AgentPanel } from "./agent/AgentPanel";
 import { McpPanel } from "./agent/McpPanel";
 import { RoutinesPanel } from "./agent/RoutinesPanel";
 import { DictationPanel } from "./dictation/DictationPanel";
+import { GalaxyPanel } from "./galaxy/GalaxyPanel";
 import { type AccountSnapshot, accountSnapshot } from "./lib/account";
 import { disableAutostart, enableAutostart, isAutostartEnabled } from "./lib/autostart";
+import { cap } from "./lib/text";
 import { loadTheme, saveTheme, type Theme } from "./lib/theme";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
 import { Onboarding, onboardingComplete } from "./onboarding/Onboarding";
@@ -18,6 +20,7 @@ import {
   AccountIcon,
   AgentIcon,
   DictationIcon,
+  GalaxyIcon,
   LockIcon,
   McpIcon,
   NotesIcon,
@@ -26,18 +29,17 @@ import {
   ThemeIcon,
 } from "./ui/icons";
 
-type Tab = "notes" | "agent" | "search" | "routines" | "mcp" | "dictation" | "account";
+type Tab = "notes" | "agent" | "search" | "galaxy" | "routines" | "mcp" | "dictation" | "account";
 
 const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.JSX.Element }[] = [
   { id: "notes", label: "Notes", icon: NotesIcon },
   { id: "agent", label: "Agent", icon: AgentIcon },
   { id: "dictation", label: "Dictation", icon: DictationIcon },
   { id: "search", label: "Search", icon: SearchIcon },
+  { id: "galaxy", label: "Galaxy", icon: GalaxyIcon },
   { id: "routines", label: "Routines", icon: RoutinesIcon },
   { id: "mcp", label: "MCP servers", icon: McpIcon },
 ];
-
-const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 /**
  * Main-window shell: a tinted sidebar of pillars over a warm ground, with each
@@ -115,6 +117,7 @@ export function App() {
     notes: <NotesWorkspace />,
     agent: <AgentPanel />,
     search: <SearchPanel />,
+    galaxy: <GalaxyPanel />,
     routines: <RoutinesPanel />,
     mcp: <McpPanel />,
     dictation: <DictationPanel />,

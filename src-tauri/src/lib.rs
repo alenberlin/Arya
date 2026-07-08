@@ -6,6 +6,7 @@ mod calendar;
 pub mod cleanup;
 mod db;
 mod dictation;
+mod galaxy;
 mod http;
 mod links;
 mod meeting_detect;
@@ -183,6 +184,7 @@ pub fn run() {
             rag::commands::rag_reindex,
             rag::commands::rag_search,
             search::search_all,
+            galaxy::galaxy_graph,
             account::commands::account_signin_state,
             account::commands::account_begin_signin,
             // Dev-only token backdoor; compiled out of release builds (must be

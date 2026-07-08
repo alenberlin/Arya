@@ -36,6 +36,16 @@ export const SearchIcon = (p: IconProps) => (
     <line x1="16" y1="16" x2="20.5" y2="20.5" />
   </svg>
 );
+export const GalaxyIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.6} {...p} aria-hidden="true">
+    <circle cx="12" cy="12" r="2.4" />
+    <circle cx="5" cy="6" r="1.5" />
+    <circle cx="19" cy="7" r="1.5" />
+    <circle cx="18" cy="18" r="1.5" />
+    <circle cx="6" cy="17.5" r="1.5" />
+    <path d="M10.1 10.5 6.3 7.2M13.9 10.7 17.6 8M13.7 13.6 16.8 16.6M10.1 13.8 7.1 16.3" />
+  </svg>
+);
 export const RoutinesIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
     <path d="M4.5 11a7.5 7.5 0 0 1 12.8-4.3L20 9" />
