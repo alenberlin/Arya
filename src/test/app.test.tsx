@@ -83,6 +83,8 @@ vi.mock("@tauri-apps/api/core", () => ({
         return [];
       case "list_attachments":
         return [];
+      case "list_links_to":
+        return [];
       case "recover_recording":
         backend.recovered.push(String(args?.sessionId));
         return "n1";

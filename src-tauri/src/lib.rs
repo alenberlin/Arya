@@ -136,6 +136,7 @@ pub fn run() {
             links::list_links_from,
             links::list_links_to,
             links::delete_link,
+            links::reconcile_links,
             recording::commands::start_recording,
             recording::commands::pause_recording,
             recording::commands::resume_recording,

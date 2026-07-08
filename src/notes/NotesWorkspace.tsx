@@ -2,6 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { type NodeKind, reconcileLinks } from "../lib/links";
 import {
   type Attachment,
   assignNoteToFolder,
@@ -44,7 +45,9 @@ import {
   StopIcon,
   TrashIcon,
 } from "../ui/icons";
-import { BlockEditor } from "./BlockEditor";
+import { BacklinksPanel } from "./BacklinksPanel";
+import { BlockEditor, type MentionItem } from "./BlockEditor";
+import type { MentionTarget } from "./blockDocument";
 import { NoteBanners } from "./NoteBanners";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -154,6 +157,7 @@ export function NotesWorkspace() {
   const savedDetailRef = useRef<NoteDetail | null>(null);
   const editRevisionRef = useRef(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const mentionsRef = useRef<MentionTarget[]>([]);
 
   // Close the note context menu on any click outside it, or on Escape.
   useEffect(() => {
@@ -384,6 +388,16 @@ export function NotesWorkspace() {
         documentJson: next.documentJson,
       })
         .then(async () => {
+          // Reconcile the note's mention edges only when the body changed. A
+          // link-graph failure must never roll back the saved note, so it's
+          // best-effort (matches the fault-isolated reconcile on the Rust side).
+          if (fields.documentJson !== undefined) {
+            await reconcileLinks(
+              "note",
+              next.id,
+              mentionsRef.current.map((m) => ({ kind: m.kind as NodeKind, id: m.id })),
+            ).catch(() => {});
+          }
           if (activeNoteRef.current === next.id) {
             savedDetailRef.current = next;
             if (revision === editRevisionRef.current) setError(null);
@@ -420,6 +434,12 @@ export function NotesWorkspace() {
       setError(String(e));
     }
   };
+
+  // Nodes offered in the editor's `@`-mention menu (notes for now; other node
+  // kinds join as those surfaces land). The open note can't mention itself.
+  const mentionItems: MentionItem[] = notes
+    .filter((n) => n.id !== detail?.id)
+    .map((n) => ({ kind: "note" as const, id: n.id, label: n.title }));
 
   const baseNotes = filter.trim() ? searchResults : notes;
   // "All notes" is the unfiled bucket: a note lives in exactly one place —
@@ -790,9 +810,23 @@ export function NotesWorkspace() {
                 key={detail.id}
                 initialDocumentJson={detail.documentJson}
                 initialBodyMd={detail.bodyMd}
-                onChange={(documentJson, bodyMd) => editDetail({ documentJson, bodyMd })}
+                mentionItems={mentionItems}
+                onChange={(documentJson, bodyMd, mentions) => {
+                  mentionsRef.current = mentions;
+                  editDetail({ documentJson, bodyMd });
+                }}
+                onOpenNode={(kind, id) => {
+                  if (kind === "note") void openNote(id);
+                }}
               />
             </div>
+            <BacklinksPanel
+              noteId={detail.id}
+              notes={notes}
+              onOpen={(kind, id) => {
+                if (kind === "note") void openNote(id);
+              }}
+            />
 
             <div style={{ marginTop: 18 }}>
               <div className="hstack spread" style={{ marginBottom: 8 }}>

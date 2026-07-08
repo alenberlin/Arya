@@ -12,7 +12,7 @@
 //! mentions on every save never duplicates. Distinct relations between the same
 //! pair coexist (a note can both `mention` and be `semantic`ally near another).
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
 
@@ -60,6 +60,15 @@ pub struct Link {
     pub origin: String,
     pub weight: f64,
     pub created_at: String,
+}
+
+/// A mention target `(kind, id)` sent by the client when reconciling a
+/// document's edges.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkTarget {
+    pub kind: String,
+    pub id: String,
 }
 
 const SELECT_COLS: &str =
@@ -161,6 +170,51 @@ pub async fn delete_for_kind(pool: &SqlitePool, kind: &str) -> Result<(), sqlx::
         .map(|_| ())
 }
 
+/// Replace a source node's edges of one relation with exactly `targets`, in a
+/// single transaction. This is how a document's mentions are reconciled on save:
+/// the old `mention` edges are cleared and the current set re-inserted, so the
+/// graph always mirrors the live document. Invalid targets (unknown kind, empty
+/// id, self-loop) are skipped rather than aborting the whole save, and duplicate
+/// targets collapse to one edge (the unique index + `DO NOTHING`).
+pub async fn reconcile_source_links(
+    pool: &SqlitePool,
+    source_kind: &str,
+    source_id: &str,
+    relation: &str,
+    targets: &[(String, String)],
+) -> Result<(), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM links WHERE source_kind = ?1 AND source_id = ?2 AND relation = ?3")
+        .bind(source_kind)
+        .bind(source_id)
+        .bind(relation)
+        .execute(&mut *tx)
+        .await?;
+    for (target_kind, target_id) in targets {
+        if !valid_kind(target_kind)
+            || target_id.trim().is_empty()
+            || (source_kind == target_kind && source_id == target_id)
+        {
+            continue;
+        }
+        sqlx::query(
+            "INSERT INTO links
+                 (id, source_kind, source_id, target_kind, target_id, relation, origin, weight, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'user', 1.0, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+             ON CONFLICT(source_kind, source_id, target_kind, target_id, relation) DO NOTHING",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(source_kind)
+        .bind(source_id)
+        .bind(target_kind)
+        .bind(target_id)
+        .bind(relation)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await
+}
+
 /// Create (or idempotently return) a **user-initiated** edge between two nodes.
 /// Origin is always `user` and the weight is the default here; semantic and
 /// agent edges (other origins, weighted) are created server-side via
@@ -225,6 +279,26 @@ pub async fn list_links_to(
 #[tauri::command]
 pub async fn delete_link(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
     delete_link_by_id(&pool, &id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Reconcile a source node's outbound edges of one relation (default `mention`)
+/// to exactly `targets`. Called on note save so the graph mirrors the document.
+#[tauri::command]
+pub async fn reconcile_links(
+    pool: State<'_, SqlitePool>,
+    source_kind: String,
+    source_id: String,
+    relation: Option<String>,
+    targets: Vec<LinkTarget>,
+) -> Result<(), String> {
+    if !valid_kind(&source_kind) {
+        return Err(format!("unknown source kind: {source_kind}"));
+    }
+    let relation = relation.unwrap_or_else(|| "mention".into());
+    let pairs: Vec<(String, String)> = targets.into_iter().map(|t| (t.kind, t.id)).collect();
+    reconcile_source_links(&pool, &source_kind, &source_id, &relation, &pairs)
         .await
         .map_err(|e| e.to_string())
 }
@@ -333,6 +407,42 @@ mod tests {
             links_to(&pool, "note", &b).await.unwrap().is_empty(),
             "the deleted note's outbound edge is gone"
         );
+    }
+
+    #[tokio::test]
+    async fn reconcile_replaces_a_sources_mention_edges() {
+        let pool = test_pool().await;
+        let a = note(&pool, "A").await;
+        let b = note(&pool, "B").await;
+        let c = note(&pool, "C").await;
+        let t = |id: &str| ("note".to_string(), id.to_string());
+
+        reconcile_source_links(&pool, "note", &a, "mention", &[t(&b)])
+            .await
+            .unwrap();
+        assert_eq!(links_from(&pool, "note", &a).await.unwrap().len(), 1);
+
+        // Re-save mentioning c and b (with a duplicate c) → exactly {b, c}.
+        reconcile_source_links(&pool, "note", &a, "mention", &[t(&c), t(&c), t(&b)])
+            .await
+            .unwrap();
+        assert_eq!(
+            links_from(&pool, "note", &a).await.unwrap().len(),
+            2,
+            "duplicates collapse; old edge replaced by the new set"
+        );
+
+        // Empty clears them; a self-loop and an unknown kind are skipped, not fatal.
+        reconcile_source_links(
+            &pool,
+            "note",
+            &a,
+            "mention",
+            &[t(&a), ("bogus".into(), "x".into())],
+        )
+        .await
+        .unwrap();
+        assert!(links_from(&pool, "note", &a).await.unwrap().is_empty());
     }
 
     #[test]

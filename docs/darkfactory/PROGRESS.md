@@ -12,7 +12,7 @@ quarantined and documented, not stopped on.
 |---|---|---|
 | M1 — links edge store | ✅ done | verify-rust green (fmt, clippy -D warnings, 115 tests incl. 8 links + note-cleanup); verify-front green (brand, scan-keys, biome, tsc, 23 vitest incl. links bindings); sidecar/api untouched |
 | M2 — BlockNote editor + migration | ✅ done | verify-rust green (116 tests incl. document_json round-trip + migration 0011); verify-front green (28 tests, typecheck, biome); production build bundles BlockNote offline; live webview render deferred to on-device QA |
-| M3 — @-mentions + backlinks | pending | — |
+| M3 — @-mentions + backlinks | ✅ done | verify-rust green (117 tests incl. reconcile); verify-front green (31 tests, typecheck, biome, build); mention chips + backlinks wired; live editor render deferred to on-device QA |
 | M4 — AI-transform primitive + F15/F16 | pending | — |
 | M5 — nested pages + Notion import | pending (Group B) | — |
 | M6 — forced-en fix + language picker | pending (Group C) | — |
@@ -76,7 +76,31 @@ verify-front green (28 tests: +5 parseInitialContent, rollback retargeted to
 manual-notes, BlockEditor stubbed in shell tests; typecheck + biome clean);
 `pnpm build` bundles BlockNote offline. **Deferred (not a blocker):** live visual
 QA of the editor in the Tauri webview → on-device (project pattern). **Commit:**
-recorded at next update.
+`90a3086`.
+
+### M3 — @-mentions + backlinks panel — ✅ done
+Made the connected brain real in the editor (F1/F3).
+- Rust: `reconcile_source_links` (transactional delete-by-source + re-insert of a
+  relation's edges) + `reconcile_links` command + `LinkTarget`. Invalid targets
+  (unknown kind, empty id, self-loop) are skipped not fatal; duplicates collapse.
+- Editor: a custom BlockNote `mention` inline content (`mentionSchema.tsx`) + an
+  `@` suggestion menu listing notes; mention chips navigate on click (delegated
+  native listener). Pure `extractMentionTargets` walks the document for targets;
+  the editor emits them on change.
+- Reconcile-on-save: NotesWorkspace reconciles the note's mention edges only when
+  the body changed, best-effort (a graph hiccup never rolls back the note).
+- `BacklinksPanel` — inbound edges for the open note, with jump-to; refetches on
+  note change (sufficient for the single-open-note model — the `refreshToken`
+  machinery was removed as unnecessary).
+
+**Evidence:** verify-rust green (117 tests, +1 reconcile); verify-front green
+(31 tests: +3 extractMentionTargets; shell mocks handle `list_links_to`;
+typecheck + biome clean); `pnpm build` OK. **Deferred (not a blocker):** live QA
+of the mention menu / chips / backlinks in the Tauri webview → on-device.
+**Mentionable kinds:** notes today; dictations/mindmaps join as those surfaces
+mature (the schema + reconcile already support all kinds). **Commit:** recorded
+at next update.
 
 ## Blockers (carry-forward)
-_None. (M2's live-webview visual QA is deferred to on-device, not a blocker.)_
+_None. (Live-webview visual QA for the editor/mentions is deferred to on-device,
+not a blocker.)_

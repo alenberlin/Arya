@@ -48,6 +48,7 @@ vi.mock("@tauri-apps/api/core", () => ({
       case "list_folders":
       case "get_note_turns":
       case "list_attachments":
+      case "list_links_to":
       case "scan_recoverable_recordings":
         return [];
       case "recording_status":

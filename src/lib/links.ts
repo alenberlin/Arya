@@ -55,3 +55,15 @@ export const listLinksTo = (kind: NodeKind, id: string) =>
 
 /** Delete one edge by id. */
 export const deleteLink = (id: string) => invoke<void>("delete_link", { id });
+
+/**
+ * Replace a node's outbound edges of a relation (default `mention`) with exactly
+ * `targets`, in one transaction. Called on note save so the graph mirrors the
+ * document's `@`-mentions.
+ */
+export const reconcileLinks = (
+  sourceKind: NodeKind,
+  sourceId: string,
+  targets: { kind: NodeKind; id: string }[],
+  relation = "mention",
+) => invoke<void>("reconcile_links", { sourceKind, sourceId, relation, targets });
