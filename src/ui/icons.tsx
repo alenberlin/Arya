@@ -46,6 +46,15 @@ export const GalaxyIcon = (p: IconProps) => (
     <path d="M10.1 10.5 6.3 7.2M13.9 10.7 17.6 8M13.7 13.6 16.8 16.6M10.1 13.8 7.1 16.3" />
   </svg>
 );
+export const MindMapIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.6} {...p} aria-hidden="true">
+    <rect x="9.3" y="10" width="5.4" height="4" rx="1" />
+    <rect x="3" y="3.6" width="4.6" height="3.2" rx="1" />
+    <rect x="16.4" y="4" width="4.6" height="3.2" rx="1" />
+    <rect x="16.4" y="17" width="4.6" height="3.2" rx="1" />
+    <path d="M9.3 11.4 7.6 5.6M14.7 11.4 16.6 6M14.7 13 16.6 18" />
+  </svg>
+);
 export const RoutinesIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
     <path d="M4.5 11a7.5 7.5 0 0 1 12.8-4.3L20 9" />

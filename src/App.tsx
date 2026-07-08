@@ -12,6 +12,7 @@ import { type AccountSnapshot, accountSnapshot } from "./lib/account";
 import { disableAutostart, enableAutostart, isAutostartEnabled } from "./lib/autostart";
 import { cap } from "./lib/text";
 import { loadTheme, saveTheme, type Theme } from "./lib/theme";
+import { MindMapPanel } from "./mindmap/MindMapPanel";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
 import { Onboarding, onboardingComplete } from "./onboarding/Onboarding";
 import { SearchPanel } from "./search/SearchPanel";
@@ -23,13 +24,23 @@ import {
   GalaxyIcon,
   LockIcon,
   McpIcon,
+  MindMapIcon,
   NotesIcon,
   RoutinesIcon,
   SearchIcon,
   ThemeIcon,
 } from "./ui/icons";
 
-type Tab = "notes" | "agent" | "search" | "galaxy" | "routines" | "mcp" | "dictation" | "account";
+type Tab =
+  | "notes"
+  | "agent"
+  | "search"
+  | "galaxy"
+  | "mindmap"
+  | "routines"
+  | "mcp"
+  | "dictation"
+  | "account";
 
 const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.JSX.Element }[] = [
   { id: "notes", label: "Notes", icon: NotesIcon },
@@ -37,6 +48,7 @@ const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.
   { id: "dictation", label: "Dictation", icon: DictationIcon },
   { id: "search", label: "Search", icon: SearchIcon },
   { id: "galaxy", label: "Galaxy", icon: GalaxyIcon },
+  { id: "mindmap", label: "Mind Map", icon: MindMapIcon },
   { id: "routines", label: "Routines", icon: RoutinesIcon },
   { id: "mcp", label: "MCP servers", icon: McpIcon },
 ];
@@ -118,6 +130,7 @@ export function App() {
     agent: <AgentPanel />,
     search: <SearchPanel />,
     galaxy: <GalaxyPanel />,
+    mindmap: <MindMapPanel />,
     routines: <RoutinesPanel />,
     mcp: <McpPanel />,
     dictation: <DictationPanel />,

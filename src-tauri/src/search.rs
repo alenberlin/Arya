@@ -77,7 +77,23 @@ pub async fn search_all_query(
     .await?;
 
     hits.extend(dictations);
-    // Newest-first across both kinds.
+
+    // Mind maps — the title, plus node labels embedded in the canvas JSON.
+    let mindmaps: Vec<TextHit> = sqlx::query_as::<_, TextHit>(
+        "SELECT 'mindmap' AS source_kind, id AS source_id, title AS title,
+                title AS snippet, created_at AS created_at
+         FROM mindmaps
+         WHERE title LIKE ?1 ESCAPE '\\' OR doc_json LIKE ?1 ESCAPE '\\'
+         ORDER BY updated_at DESC
+         LIMIT ?2",
+    )
+    .bind(&like)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    hits.extend(mindmaps);
+
+    // Newest-first across kinds.
     hits.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(hits)
 }
@@ -127,6 +143,10 @@ mod tests {
         .await
         .unwrap();
 
+        crate::mindmaps::insert_mindmap(&pool, "Budget board")
+            .await
+            .unwrap();
+
         let hits = search_all_query(&pool, "budget", 20).await.unwrap();
         assert!(hits
             .iter()
@@ -134,6 +154,10 @@ mod tests {
         assert!(hits
             .iter()
             .any(|h| h.source_kind == "dictation" && h.source_id == "d1"));
+        assert!(
+            hits.iter().any(|h| h.source_kind == "mindmap"),
+            "mind map title matched"
+        );
 
         // No match, and an empty query returns nothing.
         assert!(search_all_query(&pool, "zzz-nope", 20)

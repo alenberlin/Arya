@@ -10,6 +10,7 @@ mod galaxy;
 mod http;
 mod links;
 mod meeting_detect;
+mod mindmaps;
 mod notes;
 mod notion_import;
 mod paste;
@@ -185,6 +186,11 @@ pub fn run() {
             rag::commands::rag_search,
             search::search_all,
             galaxy::galaxy_graph,
+            mindmaps::create_mindmap,
+            mindmaps::list_mindmaps,
+            mindmaps::get_mindmap,
+            mindmaps::update_mindmap,
+            mindmaps::delete_mindmap,
             account::commands::account_signin_state,
             account::commands::account_begin_signin,
             // Dev-only token backdoor; compiled out of release builds (must be
