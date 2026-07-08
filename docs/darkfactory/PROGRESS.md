@@ -174,6 +174,20 @@ alone fixes non-English dictation. **Commit:** with the Group-C commits below.
   Both are enhancements over the working turbo baseline; the
   recommended-model-per-language map lands with them.
 
+### Group C — dictation daily-driver — ✅ complete (M7 has a documented carry-forward)
+- **M6** `0da53c5` — auto-detect default + full language picker (the observed-bug fix).
+- **M7** `9691a13` — ◐ baseline multilingual (turbo) + English-only guardrail;
+  specialist DE/FR pins + Parakeet engine are device/network blockers (below).
+- **M8** `a90d930` — Direct/Clean/Polished cleanup control + PolishedTone
+  (neutral/polite/friendly/professional) in the Polished prompt.
+- **M9** `cdf2bc6` — right-click translate a saved dictation, non-destructive +
+  stacked, one per language, cascade on delete.
+
+**✅ GROUP C COMPLETE (2026-07-08)** to the extent buildable headlessly; full
+`make verify` GREEN (rust 128 / front 34 / sidecar 23 / arya-api 41). Voice runtime
+(ASR + LLM polish/translate) verifies on-device. Next: Groups D–E (M10 search-all,
+M11 Galaxy, M12 Mind Map, M13 agent multi-line, M14 shell tidy).
+
 ## Blockers (carry-forward)
 - **M7 specialist models (DE/FR GGML pins) + Parakeet engine** — device/network
   work: download GB models to pin SHA-256, integrate the sherpa NeMo-transducer
