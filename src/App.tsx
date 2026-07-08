@@ -3,9 +3,7 @@ import { useEffect, useState } from "react";
 import brand from "../brand.json";
 import { AccountGate } from "./account/AccountGate";
 import { AccountPanel } from "./account/AccountPanel";
-import { AgentPanel } from "./agent/AgentPanel";
-import { McpPanel } from "./agent/McpPanel";
-import { RoutinesPanel } from "./agent/RoutinesPanel";
+import { AgentSection } from "./agent/AgentSection";
 import { DictationPanel } from "./dictation/DictationPanel";
 import { GalaxyPanel } from "./galaxy/GalaxyPanel";
 import { type AccountSnapshot, accountSnapshot } from "./lib/account";
@@ -23,24 +21,13 @@ import {
   DictationIcon,
   GalaxyIcon,
   LockIcon,
-  McpIcon,
   MindMapIcon,
   NotesIcon,
-  RoutinesIcon,
   SearchIcon,
   ThemeIcon,
 } from "./ui/icons";
 
-type Tab =
-  | "notes"
-  | "agent"
-  | "search"
-  | "galaxy"
-  | "mindmap"
-  | "routines"
-  | "mcp"
-  | "dictation"
-  | "account";
+type Tab = "notes" | "agent" | "search" | "galaxy" | "mindmap" | "dictation" | "account";
 
 const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.JSX.Element }[] = [
   { id: "notes", label: "Notes", icon: NotesIcon },
@@ -49,8 +36,6 @@ const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.
   { id: "search", label: "Search", icon: SearchIcon },
   { id: "galaxy", label: "Galaxy", icon: GalaxyIcon },
   { id: "mindmap", label: "Mind Map", icon: MindMapIcon },
-  { id: "routines", label: "Routines", icon: RoutinesIcon },
-  { id: "mcp", label: "MCP servers", icon: McpIcon },
 ];
 
 /**
@@ -127,12 +112,10 @@ export function App() {
 
   const panel = {
     notes: <NotesWorkspace />,
-    agent: <AgentPanel />,
+    agent: <AgentSection />,
     search: <SearchPanel />,
     galaxy: <GalaxyPanel />,
     mindmap: <MindMapPanel />,
-    routines: <RoutinesPanel />,
-    mcp: <McpPanel />,
     dictation: <DictationPanel />,
     account: <AccountPanel />,
   }[tab];

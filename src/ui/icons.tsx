@@ -109,6 +109,12 @@ export const LockIcon = (p: IconProps) => (
     <path d="M8 11V8a4 4 0 0 1 8 0v3" />
   </svg>
 );
+export const ShieldIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
+    <path d="M12 3.5l7 2.5v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9v-5z" />
+    <path d="M9 12l2 2 4-4.5" />
+  </svg>
+);
 export const ThemeIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
     <circle cx="12" cy="12" r="4.2" />
