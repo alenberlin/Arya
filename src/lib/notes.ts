@@ -20,6 +20,8 @@ export interface NoteDetail {
   id: string;
   title: string;
   bodyMd: string;
+  /** BlockNote block-JSON (the editor's source of truth); empty for legacy notes. */
+  documentJson: string;
   manualNotes: string;
   processingStatus: string;
   processingError: string | null;
@@ -67,13 +69,14 @@ export const getNote = (id: string) => invoke<NoteDetail>("get_note", { id });
 export const getNoteTurns = (id: string) => invoke<TranscriptTurn[]>("get_note_turns", { id });
 export const updateNote = (
   id: string,
-  fields: { title?: string; bodyMd?: string; manualNotes?: string },
+  fields: { title?: string; bodyMd?: string; manualNotes?: string; documentJson?: string },
 ) =>
   invoke<void>("update_note", {
     id,
     title: fields.title ?? null,
     bodyMd: fields.bodyMd ?? null,
     manualNotes: fields.manualNotes ?? null,
+    documentJson: fields.documentJson ?? null,
   });
 export const deleteNote = (id: string) => invoke<void>("delete_note", { id });
 /** Permanently deletes every note and its recordings/attachments. */

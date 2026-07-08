@@ -11,7 +11,7 @@ quarantined and documented, not stopped on.
 | Milestone | Status | Evidence |
 |---|---|---|
 | M1 — links edge store | ✅ done | verify-rust green (fmt, clippy -D warnings, 115 tests incl. 8 links + note-cleanup); verify-front green (brand, scan-keys, biome, tsc, 23 vitest incl. links bindings); sidecar/api untouched |
-| M2 — BlockNote editor + migration | pending | — |
+| M2 — BlockNote editor + migration | ✅ done | verify-rust green (116 tests incl. document_json round-trip + migration 0011); verify-front green (28 tests, typecheck, biome); production build bundles BlockNote offline; live webview render deferred to on-device QA |
 | M3 — @-mentions + backlinks | pending | — |
 | M4 — AI-transform primitive + F15/F16 | pending | — |
 | M5 — nested pages + Notion import | pending (Group B) | — |
@@ -43,11 +43,40 @@ The polymorphic edge store that F1/F3/F10/F15 ride. Delivered:
 **Evidence:** 8 Rust unit tests (round-trip both directions, idempotency,
 distinct-relations coexist, delete, delete-for-node, dangling target permitted,
 note-deletion cleanup, validation) + 4 TS binding tests, all green; fmt + clippy
-`-D warnings` clean; full frontend gate green. **Commit:** recorded at next update.
+`-D warnings` clean; full frontend gate green. **Commit:** `a26fd2d`
+(blueprint: `b2850d5`).
 
 **End-to-end note:** the data + command layer is proven end-to-end (Rust
 integration tests over the real migration). The *UI* surfacing of links lands in
 M3 (mentions + backlinks panel); M1 is the substrate.
 
+### M2 — BlockNote block editor + migration — ✅ done
+Replaced the plain-markdown note-body `<textarea>` with a **BlockNote** block
+editor (F2), backward-compatible with existing notes.
+- Chose BlockNote 0.51.4 (React-18 compatible) with the **Ariakit** UI variant —
+  the Mantine variant pulls Mantine 9, which requires React 19 (rejected: a
+  global React-19 upgrade is out of scope). The app CSP already permits the
+  inline styles ProseMirror needs.
+- `migrations/0011_note_documents.sql` — `document_json` column (block-JSON
+  source of truth); `body_md` becomes its markdown projection so search + RAG are
+  untouched; empty `document_json` = legacy note.
+- `notes.rs` — `document_json` on `NoteDetail`; testable `fetch_note_detail` and
+  `update_note_fields` helpers behind thin commands.
+- `BlockEditor.tsx` — uncontrolled editor keyed by note id; emits
+  `(documentJson, bodyMd)` on change; lazily converts a legacy note's markdown to
+  blocks on first mount (persisting the migration); follows the app light/dark
+  theme. Pure `blockDocument.parseInitialContent` extracted (no BlockNote runtime
+  dep), hardened against corrupt/missing JSON, and unit-tested.
+- **Env blocker resolved:** pnpm store v10/v11 mismatch → re-linked `node_modules`
+  with the pinned pnpm (frozen lockfile); resulting lockfile diff is
+  BlockNote-only (+740, no deletions, `lockfileVersion` unchanged).
+
+**Evidence:** verify-rust green (116 tests incl. document_json round-trip);
+verify-front green (28 tests: +5 parseInitialContent, rollback retargeted to
+manual-notes, BlockEditor stubbed in shell tests; typecheck + biome clean);
+`pnpm build` bundles BlockNote offline. **Deferred (not a blocker):** live visual
+QA of the editor in the Tauri webview → on-device (project pattern). **Commit:**
+recorded at next update.
+
 ## Blockers (carry-forward)
-_None yet._
+_None. (M2's live-webview visual QA is deferred to on-device, not a blocker.)_

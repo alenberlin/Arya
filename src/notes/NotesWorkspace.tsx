@@ -44,6 +44,8 @@ import {
   StopIcon,
   TrashIcon,
 } from "../ui/icons";
+import { BlockEditor } from "./BlockEditor";
+import { NoteBanners } from "./NoteBanners";
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "",
@@ -149,6 +151,8 @@ export function NotesWorkspace() {
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeNoteRef = useRef<string | null>(null);
   activeNoteRef.current = activeNoteId;
+  const savedDetailRef = useRef<NoteDetail | null>(null);
+  const editRevisionRef = useRef(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
   // Close the note context menu on any click outside it, or on Escape.
@@ -188,6 +192,9 @@ export function NotesWorkspace() {
       try {
         await assignNoteToFolder(noteId, folderId);
         await refreshNotes();
+        if (savedDetailRef.current?.id === noteId) {
+          savedDetailRef.current = { ...savedDetailRef.current, folderId };
+        }
         setDetail((d) => (d && d.id === noteId ? { ...d, folderId } : d));
       } catch (e) {
         setError(String(e));
@@ -210,6 +217,7 @@ export function NotesWorkspace() {
         listAttachments(id),
       ]);
       if (openReqRef.current !== req) return; // superseded by a newer open
+      savedDetailRef.current = nextDetail;
       setDetail(nextDetail);
       setTurns(nextTurns);
       setAttachments(nextAttachments);
@@ -355,13 +363,17 @@ export function NotesWorkspace() {
     if (activeNoteId === id) {
       setActiveNoteId(null);
       setDetail(null);
+      savedDetailRef.current = null;
       setTurns([]);
     }
   };
 
-  const editDetail = (fields: Partial<Pick<NoteDetail, "title" | "bodyMd" | "manualNotes">>) => {
+  const editDetail = (
+    fields: Partial<Pick<NoteDetail, "title" | "bodyMd" | "manualNotes" | "documentJson">>,
+  ) => {
     if (!detail) return;
     const next = { ...detail, ...fields };
+    const revision = ++editRevisionRef.current;
     setDetail(next);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
@@ -369,9 +381,26 @@ export function NotesWorkspace() {
         title: next.title,
         bodyMd: next.bodyMd,
         manualNotes: next.manualNotes,
+        documentJson: next.documentJson,
       })
-        .then(refreshNotes)
-        .catch((e) => setError(String(e)));
+        .then(async () => {
+          if (activeNoteRef.current === next.id) {
+            savedDetailRef.current = next;
+            if (revision === editRevisionRef.current) setError(null);
+          }
+          await refreshNotes();
+        })
+        .catch((e) => {
+          const saved = savedDetailRef.current;
+          if (
+            revision === editRevisionRef.current &&
+            activeNoteRef.current === next.id &&
+            saved?.id === next.id
+          ) {
+            setDetail(saved);
+          }
+          setError(String(e));
+        });
     }, 600);
   };
 
@@ -488,98 +517,27 @@ export function NotesWorkspace() {
         </div>
 
         <div className="panel-body">
-          {upcoming && !recording ? (
-            <div className="banner banner-accent" role="status" style={{ margin: "6px 6px 12px" }}>
-              <span>
-                <strong>{upcoming.title}</strong> starts in {Math.max(0, upcoming.startsInMin)} min.
-              </span>
-              <div className="hstack">
-                <button
-                  type="button"
-                  className="btn-sm btn-primary"
-                  onClick={() => void onRecord("microphone-and-system")}
-                >
-                  Record it
-                </button>
-                <button type="button" className="btn-sm" onClick={() => setUpcoming(null)}>
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {meeting && !recording ? (
-            <div className="banner banner-accent" role="status" style={{ margin: "6px 6px 12px" }}>
-              <div className="hstack">
-                <span className="dot-pulse" />
-                <span className="banner-title">Meeting detected in {meeting.appName}</span>
-              </div>
-              <div className="hstack">
-                <button
-                  type="button"
-                  className="btn-sm btn-primary"
-                  onClick={() => void onRecord("microphone-and-system")}
-                >
-                  Record
-                </button>
-                <button type="button" className="btn-sm" onClick={() => setMeeting(null)}>
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          ) : null}
-
-          {systemAudioWarning ? (
-            <div className="banner banner-warning" role="alert" style={{ margin: "6px 6px 12px" }}>
-              <span className="banner-title">System audio unavailable</span>
-              <small>
-                Recording microphone only. Grant "System audio recording" in System Settings for
-                meeting capture.
-              </small>
-            </div>
-          ) : null}
-
-          {recoverables.length > 0 ? (
-            <div className="banner banner-warning" role="alert" style={{ margin: "6px 6px 12px" }}>
-              <span className="banner-title">Interrupted recording found</span>
-              {recoverables.map((r) => (
-                <div key={r.sessionId} className="hstack spread">
-                  <small>
-                    {r.noteTitle} · {Math.round(r.sizeBytes / 1024)} KB
-                  </small>
-                  <div className="hstack">
-                    <button
-                      type="button"
-                      className="btn-sm btn-primary"
-                      onClick={() =>
-                        void recoverRecording(r.sessionId).then(() => {
-                          setRecoverables((list) =>
-                            list.filter((x) => x.sessionId !== r.sessionId),
-                          );
-                          return refreshNotes();
-                        })
-                      }
-                    >
-                      Recover
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-sm"
-                      onClick={() =>
-                        void discardRecording(r.sessionId).then(() => {
-                          setRecoverables((list) =>
-                            list.filter((x) => x.sessionId !== r.sessionId),
-                          );
-                        })
-                      }
-                    >
-                      Discard
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : null}
+          <NoteBanners
+            upcoming={upcoming}
+            meeting={meeting}
+            systemAudioWarning={systemAudioWarning}
+            recoverables={recoverables}
+            recording={recording}
+            onRecordMeeting={() => void onRecord("microphone-and-system")}
+            onDismissUpcoming={() => setUpcoming(null)}
+            onDismissMeeting={() => setMeeting(null)}
+            onRecover={(sessionId) => {
+              void recoverRecording(sessionId).then(() => {
+                setRecoverables((list) => list.filter((x) => x.sessionId !== sessionId));
+                return refreshNotes();
+              });
+            }}
+            onDiscard={(sessionId) => {
+              void discardRecording(sessionId).then(() => {
+                setRecoverables((list) => list.filter((x) => x.sessionId !== sessionId));
+              });
+            }}
+          />
 
           <nav aria-label="folders" className="hstack wrap" style={{ padding: "4px 8px 8px" }}>
             <button
@@ -824,16 +782,17 @@ export function NotesWorkspace() {
                 style={{ marginTop: 6 }}
               />
             </label>
-            <label style={{ marginTop: 14 }}>
-              Note
-              <textarea
-                aria-label="note body"
-                value={detail.bodyMd}
-                onChange={(e) => editDetail({ bodyMd: e.target.value })}
-                rows={12}
-                style={{ marginTop: 6 }}
+            <div className="note-editor-field" style={{ marginTop: 14 }}>
+              <span className="section-label" style={{ display: "block", marginBottom: 6 }}>
+                Note
+              </span>
+              <BlockEditor
+                key={detail.id}
+                initialDocumentJson={detail.documentJson}
+                initialBodyMd={detail.bodyMd}
+                onChange={(documentJson, bodyMd) => editDetail({ documentJson, bodyMd })}
               />
-            </label>
+            </div>
 
             <div style={{ marginTop: 18 }}>
               <div className="hstack spread" style={{ marginBottom: 8 }}>
@@ -921,8 +880,7 @@ export function NotesWorkspace() {
                 style={{ width: "auto" }}
                 onChange={(e) => {
                   const folderId = e.target.value || null;
-                  void assignNoteToFolder(detail.id, folderId).then(refreshNotes);
-                  setDetail({ ...detail, folderId });
+                  void moveNote(detail.id, folderId);
                 }}
               >
                 <option value="">No folder</option>
@@ -1015,6 +973,7 @@ export function NotesWorkspace() {
               setOpenTabs([]);
               setActiveNoteId(null);
               setDetail(null);
+              savedDetailRef.current = null;
               setTurns([]);
               setAttachments([]);
               setFilter("");

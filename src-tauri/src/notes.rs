@@ -30,6 +30,9 @@ pub struct NoteDetail {
     pub id: String,
     pub title: String,
     pub body_md: String,
+    /// BlockNote block-JSON — the editor's source of truth. Empty for legacy
+    /// notes authored before the block editor (they fall back to `body_md`).
+    pub document_json: String,
     pub manual_notes: String,
     pub processing_status: String,
     pub processing_error: Option<String>,
@@ -137,17 +140,23 @@ pub async fn search_notes(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub async fn get_note(pool: State<'_, SqlitePool>, id: String) -> Result<NoteDetail, String> {
+/// Fetch the full note payload for the editor.
+pub async fn fetch_note_detail(pool: &SqlitePool, id: &str) -> Result<NoteDetail, sqlx::Error> {
     sqlx::query_as::<_, NoteDetail>(
-        "SELECT id, title, body_md, manual_notes, processing_status, processing_error,
-                folder_id, calendar_context, created_at
+        "SELECT id, title, body_md, document_json, manual_notes, processing_status,
+                processing_error, folder_id, calendar_context, created_at
          FROM notes WHERE id = ?1",
     )
     .bind(id)
-    .fetch_one(&*pool)
+    .fetch_one(pool)
     .await
-    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_note(pool: State<'_, SqlitePool>, id: String) -> Result<NoteDetail, String> {
+    fetch_note_detail(&pool, &id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -165,19 +174,24 @@ pub async fn get_note_turns(
     .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub async fn update_note(
-    pool: State<'_, SqlitePool>,
-    id: String,
-    title: Option<String>,
-    body_md: Option<String>,
-    manual_notes: Option<String>,
-) -> Result<(), String> {
+/// Persist edited note fields. Any `None` field is left unchanged (COALESCE), so
+/// a caller can patch one field without clobbering the rest. `document_json` is
+/// the block-editor source of truth; `body_md` is its plaintext/markdown
+/// projection (kept in sync by the client so search + RAG stay accurate).
+pub async fn update_note_fields(
+    pool: &SqlitePool,
+    id: &str,
+    title: Option<&str>,
+    body_md: Option<&str>,
+    manual_notes: Option<&str>,
+    document_json: Option<&str>,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE notes SET
              title = COALESCE(?2, title),
              body_md = COALESCE(?3, body_md),
              manual_notes = COALESCE(?4, manual_notes),
+             document_json = COALESCE(?5, document_json),
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?1",
     )
@@ -185,9 +199,30 @@ pub async fn update_note(
     .bind(title)
     .bind(body_md)
     .bind(manual_notes)
-    .execute(&*pool)
+    .bind(document_json)
+    .execute(pool)
     .await
     .map(|_| ())
+}
+
+#[tauri::command]
+pub async fn update_note(
+    pool: State<'_, SqlitePool>,
+    id: String,
+    title: Option<String>,
+    body_md: Option<String>,
+    manual_notes: Option<String>,
+    document_json: Option<String>,
+) -> Result<(), String> {
+    update_note_fields(
+        &pool,
+        &id,
+        title.as_deref(),
+        body_md.as_deref(),
+        manual_notes.as_deref(),
+        document_json.as_deref(),
+    )
+    .await
     .map_err(|e| e.to_string())
 }
 
@@ -367,6 +402,33 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].id, created.id);
         assert_eq!(notes[0].processing_status, "idle");
+    }
+
+    #[tokio::test]
+    async fn document_json_defaults_empty_and_round_trips() {
+        let pool = test_pool().await;
+        let n = insert_note(&pool, "doc").await.unwrap();
+        // Legacy default: no rich document yet, empty body.
+        let d = fetch_note_detail(&pool, &n.id).await.unwrap();
+        assert_eq!(d.document_json, "");
+        assert_eq!(d.body_md, "");
+
+        // Save block-JSON + its markdown projection; a None field (manual_notes)
+        // is left untouched.
+        update_note_fields(
+            &pool,
+            &n.id,
+            None,
+            Some("# Title\n\nbody"),
+            None,
+            Some(r#"[{"type":"heading"}]"#),
+        )
+        .await
+        .unwrap();
+        let d2 = fetch_note_detail(&pool, &n.id).await.unwrap();
+        assert_eq!(d2.document_json, r#"[{"type":"heading"}]"#);
+        assert_eq!(d2.body_md, "# Title\n\nbody");
+        assert_eq!(d2.manual_notes, "");
     }
 
     #[tokio::test]
