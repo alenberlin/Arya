@@ -6,6 +6,9 @@ native desktop app — with a local AI agent that can work across all of it.
 
 **Website:** [alen-ai.com/arya](https://alen-ai.com/arya/)
 
+![Arya's Notes workspace — record a meeting and get a structured note with an
+expandable transcript, organized into folders, entirely on-device](docs/screenshots/notes.png)
+
 Most AI apps send everything you do to the cloud. Arya is built the other way
 around: your notes, recordings, and files stay on your Mac, and speech
 (transcription and dictation) happens on-device. Cloud AI is optional — free
@@ -31,6 +34,18 @@ local models cover most of it.
 - **MCP servers** — connect external tools via the Model Context Protocol.
 - **Local-first, cloud-optional** — free local models (via Ollama) are
   first-class; cloud providers are a clearly-labeled, metered upgrade.
+
+## Screenshots
+
+**Agent** — a local model doing real work in a sandbox, with tool calls shown
+inline and nothing leaving your Mac:
+
+![Arya's Agent running a local model to write a file, sandboxed](docs/screenshots/agent.png)
+
+**Dictation** — hold a hotkey, speak, release; cleaned-up text pastes into any
+app, and speech never leaves your Mac:
+
+![Arya's Dictation settings](docs/screenshots/dictation.png)
 
 ## Architecture
 
