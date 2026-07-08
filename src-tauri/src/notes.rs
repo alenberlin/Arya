@@ -225,6 +225,10 @@ pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String
         .await
         .map_err(|e| e.to_string())?;
 
+    // Best-effort, like the file cleanup below: the authoritative row is already
+    // gone, and a leftover edge is harmless (it resolves as "deleted" at read).
+    let _ = crate::links::delete_for_node(pool, "note", id).await;
+
     remove_files(audio_paths.into_iter().chain(attachment_paths));
     Ok(())
 }
@@ -255,6 +259,9 @@ pub async fn delete_all_notes_inner(pool: &SqlitePool) -> Result<(), String> {
         .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
+
+    // Every note is gone, so drop every edge touching a note (best-effort).
+    let _ = crate::links::delete_for_kind(pool, "note").await;
 
     remove_files(audio_paths.into_iter().chain(attachment_paths));
     Ok(())
