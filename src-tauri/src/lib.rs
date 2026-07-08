@@ -10,6 +10,7 @@ mod http;
 mod links;
 mod meeting_detect;
 mod notes;
+mod notion_import;
 mod paste;
 mod rag;
 mod recording;
@@ -134,6 +135,7 @@ pub fn run() {
             notes::rename_folder,
             notes::delete_folder,
             notes::assign_note_to_folder,
+            notion_import::import_notion,
             links::create_link,
             links::list_links_from,
             links::list_links_to,

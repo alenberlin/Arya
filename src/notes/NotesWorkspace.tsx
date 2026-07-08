@@ -16,6 +16,7 @@ import {
   finishRecording,
   getNote,
   getNoteTurns,
+  importNotion,
   listAttachments,
   listFolders,
   listNotes,
@@ -164,6 +165,7 @@ export function NotesWorkspace() {
   const [sorting, setSorting] = useState(false);
   const [editorEpoch, setEditorEpoch] = useState(0);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+  const [notice, setNotice] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeNoteRef = useRef<string | null>(null);
   activeNoteRef.current = activeNoteId;
@@ -291,6 +293,29 @@ export function NotesWorkspace() {
     },
     [refreshNotes],
   );
+
+  /** Import an unzipped Notion export folder as a page tree (F4). */
+  const importFromNotion = useCallback(async () => {
+    try {
+      const picked = await openDialog({
+        directory: true,
+        title: "Choose your unzipped Notion export folder",
+      });
+      if (!picked || Array.isArray(picked)) return;
+      setNotice("Importing from Notion…");
+      const report = await importNotion(picked);
+      await refreshNotes();
+      const pages = `${report.pagesCreated} page${report.pagesCreated === 1 ? "" : "s"}`;
+      const links = report.linksResolved
+        ? `, ${report.linksResolved} link${report.linksResolved === 1 ? "" : "s"}`
+        : "";
+      const skipped = report.skipped ? ` (${report.skipped} skipped)` : "";
+      setNotice(`Imported ${pages} from Notion${links}${skipped}.`);
+    } catch (e) {
+      setNotice(null);
+      setError(String(e));
+    }
+  }, [refreshNotes]);
 
   /** Create a blank note and open it, ready to type or dictate into (hold Right
    * Shift). Lands in "All notes" unless a folder is active. */
@@ -719,6 +744,27 @@ export function NotesWorkspace() {
             }}
           />
 
+          {notice ? (
+            <div
+              className="banner"
+              style={{
+                margin: "0 8px 8px",
+                background: "var(--accent-ghost)",
+                color: "var(--accent)",
+              }}
+            >
+              <span style={{ flex: 1 }}>{notice}</span>
+              <button
+                type="button"
+                className="tab-close bare"
+                aria-label="dismiss"
+                onClick={() => setNotice(null)}
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
+
           <nav aria-label="folders" className="hstack wrap" style={{ padding: "4px 8px 8px" }}>
             <button
               type="button"
@@ -772,6 +818,15 @@ export function NotesWorkspace() {
               onClick={() => setFolderDialogOpen(true)}
             >
               <PlusIcon />
+            </button>
+            <button
+              type="button"
+              className="btn-sm btn-ghost"
+              title="Import an unzipped Notion export folder"
+              style={{ marginLeft: "auto" }}
+              onClick={() => void importFromNotion()}
+            >
+              Import
             </button>
           </nav>
 

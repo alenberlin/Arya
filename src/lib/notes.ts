@@ -104,6 +104,15 @@ export const listAttachments = (noteId: string) =>
 export const removeAttachment = (id: string) => invoke<void>("remove_attachment", { id });
 export const openAttachment = (id: string) => invoke<void>("open_attachment", { id });
 
+/** Result of importing a Notion export folder (F4). */
+export interface ImportReport {
+  pagesCreated: number;
+  linksResolved: number;
+  skipped: number;
+}
+/** Import an unzipped Notion "Markdown & CSV" export folder as a page tree. */
+export const importNotion = (dirPath: string) => invoke<ImportReport>("import_notion", { dirPath });
+
 export const createFolder = (name: string) => invoke<Folder>("create_folder", { name });
 export const listFolders = () => invoke<Folder[]>("list_folders");
 export const deleteFolder = (id: string) => invoke<void>("delete_folder", { id });
