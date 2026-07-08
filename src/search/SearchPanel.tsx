@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 import { FileIcon, SearchIcon } from "../ui/icons";
 
-interface SearchHit {
+interface SemanticHit {
   sourceKind: string;
   sourceId: string;
   title: string;
@@ -10,16 +10,39 @@ interface SearchHit {
   score: number;
 }
 
+interface TextHit {
+  sourceKind: string;
+  sourceId: string;
+  title: string;
+  snippet: string;
+  createdAt: string;
+}
+
+type Match = { kind: "text" } | { kind: "semantic"; score: number };
+
+interface DisplayHit {
+  sourceKind: string;
+  sourceId: string;
+  title: string;
+  content: string;
+  match: Match;
+}
+
 interface RagStatus {
   embedderAvailable: boolean;
   indexedChunks: number;
 }
 
-/** Semantic search over the whole workspace, fully local. */
+/**
+ * Search across everything (F14). A literal title+content pass (`search_all`)
+ * always runs and works offline; when the local embedder is up, semantic results
+ * (`rag_search`) are merged in. Exact/text matches rank first, then semantic by
+ * score. Deduplicated by node.
+ */
 export function SearchPanel() {
   const [status, setStatus] = useState<RagStatus | null>(null);
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<SearchHit[]>([]);
+  const [hits, setHits] = useState<DisplayHit[]>([]);
   const [searched, setSearched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,10 +60,48 @@ export function SearchPanel() {
   }, [refreshStatus]);
 
   const onSearch = async () => {
-    if (!query.trim()) return;
+    const q = query.trim();
+    if (!q) return;
     setBusy(true);
     try {
-      setHits(await invoke<SearchHit[]>("rag_search", { query: query.trim(), limit: 10 }));
+      const [text, semantic] = await Promise.all([
+        invoke<TextHit[]>("search_all", { query: q, limit: 20 }),
+        status?.embedderAvailable
+          ? invoke<SemanticHit[]>("rag_search", { query: q, limit: 10 })
+          : Promise.resolve<SemanticHit[]>([]),
+      ]);
+
+      const byNode = new Map<string, DisplayHit>();
+      for (const h of text) {
+        byNode.set(`${h.sourceKind}:${h.sourceId}`, {
+          sourceKind: h.sourceKind,
+          sourceId: h.sourceId,
+          title: h.title,
+          content: h.snippet,
+          match: { kind: "text" },
+        });
+      }
+      for (const h of semantic) {
+        const key = `${h.sourceKind}:${h.sourceId}`;
+        // A literal (exact) hit already covers this node; keep it.
+        if (byNode.has(key)) continue;
+        byNode.set(key, {
+          sourceKind: h.sourceKind,
+          sourceId: h.sourceId,
+          title: h.title,
+          content: h.content,
+          match: { kind: "semantic", score: h.score },
+        });
+      }
+
+      const scoreOf = (m: Match) => (m.kind === "semantic" ? m.score : 1);
+      const merged = [...byNode.values()].sort((a, b) => {
+        // Exact/text matches first, then semantic by descending score.
+        const rank = (m: Match) => (m.kind === "text" ? 1 : 0);
+        return rank(b.match) - rank(a.match) || scoreOf(b.match) - scoreOf(a.match);
+      });
+
+      setHits(merged);
       setSearched(true);
       setError(null);
     } catch (e) {
@@ -71,7 +132,7 @@ export function SearchPanel() {
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           <h1 className="hero-title">Search everything</h1>
           <p className="muted" style={{ margin: "6px 0 0" }}>
-            Ask in plain language across notes, transcripts and dictations — on-device.
+            Search notes, transcripts, and dictations by title or content — on-device.
           </p>
         </div>
 
@@ -85,7 +146,7 @@ export function SearchPanel() {
           <SearchIcon className="search-icon" />
           <input
             aria-label="search query"
-            placeholder="Ask anything about your notes and meetings…"
+            placeholder="Search your notes, meetings, and dictations…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -104,7 +165,7 @@ export function SearchPanel() {
             />
             {searched ? `${hits.length} results · ` : ""}
             {status
-              ? `${status.indexedChunks} items indexed · ${status.embedderAvailable ? "engine ready" : "engine offline (start Ollama)"}`
+              ? `${status.indexedChunks} items indexed · ${status.embedderAvailable ? "semantic + text" : "text search (start Ollama for semantic)"}`
               : "checking index…"}
           </div>
           <button
@@ -125,14 +186,18 @@ export function SearchPanel() {
 
         <ul aria-label="search results" className="plain">
           {hits.map((hit) => (
-            <li key={`${hit.sourceId}-${hit.score}-${hit.content.slice(0, 40)}`}>
+            <li key={`${hit.sourceKind}:${hit.sourceId}`}>
               <button type="button" className="result-card">
                 <div className="result-meta">
                   <FileIcon className="result-kind-icon" />
                   <span>
                     {hit.sourceKind} · {hit.title}
                   </span>
-                  <span className="result-score">{pct(hit.score)}% match</span>
+                  <span className="result-score">
+                    {hit.match.kind === "semantic"
+                      ? `${pct(hit.match.score)}% match`
+                      : "text match"}
+                  </span>
                 </div>
                 <div style={{ fontSize: 14, color: "var(--text)", lineHeight: 1.6 }}>
                   {hit.content.slice(0, 320)}

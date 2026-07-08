@@ -14,6 +14,7 @@ mod notion_import;
 mod paste;
 mod rag;
 mod recording;
+mod search;
 pub mod speech;
 mod transform;
 mod translate;
@@ -181,6 +182,7 @@ pub fn run() {
             rag::commands::rag_status,
             rag::commands::rag_reindex,
             rag::commands::rag_search,
+            search::search_all,
             account::commands::account_signin_state,
             account::commands::account_begin_signin,
             // Dev-only token backdoor; compiled out of release builds (must be

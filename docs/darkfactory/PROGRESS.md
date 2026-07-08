@@ -28,7 +28,7 @@ the real Tauri webview — headless verification can't drive the webview.
 | M7 — multilingual model shelf | ◐ partial (Group C) | baseline multilingual via turbo works + English-only guardrail shipped; specialist DE/FR pins + Parakeet engine are device/network blockers (documented) |
 | M8 — Direct/Polished + tone | ✅ done (Group C) | Cleanup seg (Direct/Clean/Polished) + PolishedTone (neutral/polite/friendly/professional) applied in the Polished prompt; 127 rust + 34 front tests |
 | M9 — translate a saved dictation | ✅ done (Group C) | right-click ⋯ → Translate to → language; non-destructive `dictation_translations` (one/lang, cascade), stacked in history; 128 rust + 34 front tests |
-| M10 — search everything | pending (Group D) | — |
+| M10 — search everything | ✅ done (Group D) | literal `search_all` (title+content, offline) across notes/transcripts/dictations/translations, merged with semantic rag_search in SearchPanel; 130 rust + 34 front tests |
 | M11 — Galaxy 2D | pending (Group D) | — |
 | M12 — Mind Map | pending (Group D) | — |
 | M13 — agent multi-line composer | pending (Group E) | — |
