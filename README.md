@@ -4,6 +4,8 @@
 system-wide voice dictation tool, and a bot-free meeting notetaker into one
 native desktop app — with a local AI agent that can work across all of it.
 
+**Website:** [alen-ai.com/arya](https://alen-ai.com/arya/)
+
 Most AI apps send everything you do to the cloud. Arya is built the other way
 around: your notes, recordings, and files stay on your Mac, and speech
 (transcription and dictation) happens on-device. Cloud AI is optional — free
