@@ -38,6 +38,12 @@ pub fn ollama_chat(
     let body = serde_json::json!({
         "model": model,
         "stream": false,
+        // Hybrid-reasoning models (Qwen3, this app's Gemma default, etc.) burn
+        // thousands of hidden "thinking" tokens by default even on trivial
+        // instructions, routinely exceeding callers' 20-45s timeouts. All of
+        // this app's tasks are short deterministic rewrites, not problems that
+        // benefit from chain-of-thought, so thinking is off unconditionally.
+        "think": false,
         "options": { "temperature": temperature },
         "messages": [
             { "role": "system", "content": system },
