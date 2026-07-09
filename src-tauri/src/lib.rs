@@ -57,6 +57,18 @@ pub fn run() {
             Some(vec!["--minimized"]),
         ))
         .plugin(tauri_plugin_dialog::init())
+        // Arya keeps running in the tray/dock after the window closes (dictation
+        // and the agent scheduler must survive it), so the red-X close is a hide,
+        // not a destroy — otherwise neither the dock icon nor "Show Arya" in the
+        // tray has a window left to reveal (`get_webview_window` returns `None`).
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let pool = tauri::async_runtime::block_on(db::init_pool(&data_dir.join("arya.db")))?;
@@ -224,8 +236,25 @@ pub fn run() {
             dictation::commands::create_dictionary_entry,
             dictation::commands::delete_dictionary_entry,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Clicking the dock icon with the (hidden, not destroyed) main window
+            // closed sends Reopen rather than recreating anything on its own.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_main(app_handle);
+            }
+        });
+}
+
+/// Shows and focuses the main window — shared by the tray's "Show Arya" and the
+/// dock icon's reopen handling.
+pub(crate) fn show_main(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 /// Ticks the routine scheduler every 30s and reconnects MCP servers once at
