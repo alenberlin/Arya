@@ -143,6 +143,18 @@ export const PlusIcon = (p: IconProps) => (
     <line x1="6" y1="12" x2="18" y2="12" />
   </svg>
 );
+export const PaperclipIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
+    <path d="M17.5 8.5 9.9 16.1a3 3 0 0 1-4.24-4.24l8.14-8.14a2 2 0 0 1 2.83 2.83l-8.14 8.14a1 1 0 0 1-1.41-1.41l7.07-7.07" />
+  </svg>
+);
+export const MoreIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={2.2} {...p} aria-hidden="true">
+    <circle cx="12" cy="5" r="0.5" fill="currentColor" />
+    <circle cx="12" cy="12" r="0.5" fill="currentColor" />
+    <circle cx="12" cy="19" r="0.5" fill="currentColor" />
+  </svg>
+);
 export const ChevronDownIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={2} {...p} aria-hidden="true">
     <polyline points="6 9 12 15 18 9" />

@@ -41,7 +41,9 @@ import { aiTransform } from "../lib/transform";
 import { ConfirmDialog, PromptDialog, TypeToConfirmDialog } from "../ui/dialogs";
 import {
   MeetingIcon,
+  MoreIcon,
   NotesIcon,
+  PaperclipIcon,
   PlusIcon,
   RecordIcon,
   SearchIcon,
@@ -133,6 +135,29 @@ const SORT_INSTRUCTION =
   "heading. Preserve every idea, but do not add any information that is not already " +
   "in the text.";
 
+/** Auto-title: name an untitled note from its content once there's enough to
+ * go on. Never invents facts — just names what's already there. */
+const AUTO_TITLE_INSTRUCTION =
+  "Read this note and reply with ONLY a short, specific title for it (3-7 " +
+  "words) that captures what it's actually about. No quotes, no punctuation " +
+  "at the end, no preamble, no explanation — just the title text itself.";
+/** Below this many characters of body markdown, there isn't enough context
+ * yet for a meaningful title — wait for more before asking the model. */
+const AUTO_TITLE_MIN_CHARS = 24;
+const AUTO_TITLE_DEBOUNCE_MS = 2500;
+
+/** Strip quoting/trailing punctuation a model tends to add despite being
+ * asked not to, and cap length so a rambling reply can't become the title. */
+function sanitizeAutoTitle(raw: string): string {
+  const cleaned = raw
+    .trim()
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .replace(/[.!?]+$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.length > 80 ? `${cleaned.slice(0, 79)}…` : cleaned;
+}
+
 /** Notes workspace: a list panel (recorder, banners, folders, notes) beside an
  * editor panel (title, live capture, note body, transcript). */
 /** When another surface (e.g. Galaxy) asks to open a specific note, App passes
@@ -183,6 +208,11 @@ export function NotesWorkspace({
   const editRevisionRef = useRef(0);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const mentionsRef = useRef<MentionTarget[]>([]);
+  // Mirrors `detail` so the debounced auto-title callback below can read the
+  // truly-current title/id when it fires, not a stale render-time closure.
+  const detailRef = useRef<NoteDetail | null>(null);
+  detailRef.current = detail;
+  const autoTitleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Close the note context menu on any click outside it, or on Escape.
   useEffect(() => {
@@ -525,6 +555,46 @@ export function NotesWorkspace({
         });
     }, 600);
   };
+  // Mirrors `editDetail` so a callback that was frozen (via useCallback with
+  // stable deps) long before this render can still reach the CURRENT
+  // implementation at fire time, instead of a stale one whose own closed-over
+  // `detail` is permanently the value from whenever that callback was first
+  // created (e.g. null, on the component's very first render).
+  const editDetailRef = useRef(editDetail);
+  editDetailRef.current = editDetail;
+
+  /** F-auto-title: once an untitled note has enough body content, ask the
+   * (local by default) model for a short title — debounced so it fires once
+   * typing pauses, not on every keystroke, and only while the title is still
+   * exactly the unedited "New note" default. Re-checks both the note id and
+   * the title at fire time (via `detailRef`) so a note switch, a manual
+   * rename, or a prior auto-title landing first never gets clobbered by a
+   * late response. Applies the result through `editDetailRef.current` rather
+   * than `editDetail` directly: this callback is created once (stable `[]`
+   * deps, so the debounce timer survives re-renders) and would otherwise
+   * permanently hold the `editDetail` closure from whichever render first
+   * created it — on first mount that closure's own `detail` is `null`
+   * forever, so every apply would silently no-op via editDetail's own early
+   * `if (!detail) return`. Reading through the ref always gets the current
+   * implementation instead. */
+  const scheduleAutoTitle = useCallback((noteId: string, bodyMd: string) => {
+    if (autoTitleTimer.current) clearTimeout(autoTitleTimer.current);
+    if (bodyMd.trim().length < AUTO_TITLE_MIN_CHARS) return;
+    autoTitleTimer.current = setTimeout(() => {
+      void aiTransform(bodyMd, AUTO_TITLE_INSTRUCTION)
+        .then((result) => {
+          const title = sanitizeAutoTitle(result);
+          const current = detailRef.current;
+          if (title && current?.id === noteId && current.title === "New note") {
+            editDetailRef.current({ title });
+          }
+        })
+        .catch(() => {
+          // Silent: this is a background nicety, not a user-initiated action.
+          // Ollama being unavailable should never surface as a note error.
+        });
+    }, AUTO_TITLE_DEBOUNCE_MS);
+  }, []);
 
   const onRecord = async (sourceMode?: "microphone-only" | "microphone-and-system") => {
     try {
@@ -949,6 +1019,18 @@ export function NotesWorkspace({
                   {saveState === "saving" ? "Saving…" : "Saved"}
                 </span>
               ) : null}
+              <button
+                type="button"
+                className="btn-icon bare note-more-btn"
+                aria-label="Note options"
+                title="Folder, delete, and more"
+                onClick={(e) => {
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setNoteMenu({ id: detail.id, x: r.right - 210, y: r.bottom + 4 });
+                }}
+              >
+                <MoreIcon />
+              </button>
             </div>
             <div className="note-meta">
               {[
@@ -1053,6 +1135,7 @@ export function NotesWorkspace({
                 onChange={(documentJson, bodyMd, mentions) => {
                   mentionsRef.current = mentions;
                   editDetail({ documentJson, bodyMd });
+                  if (detail.title === "New note") scheduleAutoTitle(detail.id, bodyMd);
                 }}
                 onOpenNode={(kind, id) => {
                   if (kind === "note") void openNote(id);
@@ -1068,108 +1151,81 @@ export function NotesWorkspace({
               }}
             />
 
-            <div style={{ marginTop: 18 }}>
-              <div className="hstack spread" style={{ marginBottom: 8 }}>
-                <span className="section-label">Attachments</span>
-                <button type="button" className="btn-sm" onClick={() => void pickAttachments()}>
-                  Attach
-                </button>
-              </div>
-              {attachments.length > 0 ? (
-                <ul aria-label="attachments" className="plain">
-                  {attachments.map((a) => (
-                    <li
-                      key={a.id}
-                      className="card-sunken hstack spread"
-                      style={{ padding: "7px 10px", margin: "5px 0" }}
+            {attachments.length > 0 ? (
+              <ul aria-label="attachments" className="plain" style={{ marginTop: 18 }}>
+                {attachments.map((a) => (
+                  <li
+                    key={a.id}
+                    className="card-sunken hstack spread"
+                    style={{ padding: "7px 10px", margin: "5px 0" }}
+                  >
+                    <button
+                      type="button"
+                      className="hstack"
+                      style={{
+                        gap: 8,
+                        minWidth: 0,
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: 0,
+                        textAlign: "left",
+                      }}
+                      title={`Open ${a.name}`}
+                      onClick={() => void openAttachment(a.id).catch((e) => setError(String(e)))}
                     >
-                      <button
-                        type="button"
-                        className="hstack"
+                      <span
+                        className="mono"
                         style={{
-                          gap: 8,
-                          minWidth: 0,
-                          background: "none",
-                          border: "none",
-                          cursor: "pointer",
-                          padding: 0,
-                          textAlign: "left",
+                          fontSize: 10,
+                          fontWeight: 600,
+                          padding: "2px 5px",
+                          borderRadius: 4,
+                          background: "var(--surface-sunken)",
+                          color: "var(--text-secondary)",
+                          flexShrink: 0,
                         }}
-                        title={`Open ${a.name}`}
-                        onClick={() => void openAttachment(a.id).catch((e) => setError(String(e)))}
                       >
-                        <span
-                          className="mono"
-                          style={{
-                            fontSize: 10,
-                            fontWeight: 600,
-                            padding: "2px 5px",
-                            borderRadius: 4,
-                            background: "var(--surface-sunken)",
-                            color: "var(--text-secondary)",
-                            flexShrink: 0,
-                          }}
-                        >
-                          {extOf(a.name)}
-                        </span>
-                        <span
-                          style={{
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {a.name}
-                        </span>
-                        <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>
-                          {formatBytes(a.sizeBytes)}
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        className="tab-close bare"
-                        aria-label={`remove ${a.name}`}
-                        onClick={() =>
-                          void removeAttachment(a.id)
-                            .then(() => refreshAttachments(a.noteId))
-                            .catch((e) => setError(String(e)))
-                        }
+                        {extOf(a.name)}
+                      </span>
+                      <span
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
                       >
-                        ×
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="muted" style={{ fontSize: 12.5, margin: 0 }}>
-                  No files attached. Click Attach, or drop files onto this note.
-                </p>
-              )}
-            </div>
-
-            <div className="hstack spread" style={{ marginTop: 14 }}>
-              <select
-                aria-label="note folder"
-                value={detail.folderId ?? ""}
-                style={{ width: "auto" }}
-                onChange={(e) => {
-                  const folderId = e.target.value || null;
-                  void moveNote(detail.id, folderId);
-                }}
-              >
-                <option value="">No folder</option>
-                {folders.map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {f.name}
-                  </option>
+                        {a.name}
+                      </span>
+                      <span className="mono muted" style={{ fontSize: 11, flexShrink: 0 }}>
+                        {formatBytes(a.sizeBytes)}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className="tab-close bare"
+                      aria-label={`remove ${a.name}`}
+                      onClick={() =>
+                        void removeAttachment(a.id)
+                          .then(() => refreshAttachments(a.noteId))
+                          .catch((e) => setError(String(e)))
+                      }
+                    >
+                      ×
+                    </button>
+                  </li>
                 ))}
-              </select>
+              </ul>
+            ) : null}
+            <div className="note-attach-row">
               <button
                 type="button"
-                className="btn-danger btn-sm"
-                onClick={() => setDeleteTargetId(detail.id)}
+                className="btn-icon bare note-attach-btn"
+                aria-label="Attach a file"
+                title="Attach a file (or drop one onto this note)"
+                onClick={() => void pickAttachments()}
               >
-                Delete note
+                <PaperclipIcon />
               </button>
             </div>
 

@@ -29,7 +29,7 @@ pub enum TranslateProvider {
 
 /// Default local model when none is otherwise configured. The user must have it
 /// pulled in Ollama; if not, translation falls back to the source text.
-pub const DEFAULT_LOCAL_MODEL: &str = "llama3.2";
+pub const DEFAULT_LOCAL_MODEL: &str = "qwen3.6:35b";
 /// Default cloud model id (Arya API catalog).
 const DEFAULT_CLOUD_MODEL: &str = "anthropic:claude-sonnet-5";
 const CLOUD_PROVIDER: &str = "anthropic";

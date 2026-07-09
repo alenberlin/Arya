@@ -1,8 +1,21 @@
 /*
- * Notes page chrome — the small "finished" touches on the editor pane: a
- * save-status indicator by the title, a context line, and a designed empty
- * state. All in Arya's warm tokens.
+ * Notes page chrome — a single open document, not a stack of boxed fields:
+ * title + an unboxed, full-height canvas, with housekeeping (folder, delete,
+ * attach) folded into small, out-of-the-way affordances. All in Arya's warm
+ * tokens.
  */
+
+/* The scrolling column itself is a flex column so the editor below can grow
+ * to fill whatever space the title/meta/banners above it don't use. */
+.note-doc {
+  display: flex;
+  flex-direction: column;
+}
+.note-editor-field {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
 
 .note-detail-head {
   display: flex;
@@ -12,6 +25,11 @@
 .note-detail-head .note-title {
   flex: 1;
   min-width: 0;
+}
+
+.note-more-btn {
+  flex-shrink: 0;
+  color: var(--text-muted);
 }
 
 .note-savechip {
@@ -67,5 +85,24 @@
   margin-bottom: 4px;
   font-family: var(--font-serif);
   font-size: var(--fs-lg);
+  color: var(--text);
+}
+
+/* Attachments: a quiet paperclip, not a labeled panel. The list (when
+ * non-empty) is real content and stays visible; the "add" affordance doesn't
+ * need to announce itself — drag-and-drop onto the note works regardless. */
+.note-attach-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-subtle);
+}
+.note-attach-btn {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.note-attach-btn:hover {
   color: var(--text);
 }

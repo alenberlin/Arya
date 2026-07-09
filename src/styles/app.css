@@ -1852,13 +1852,18 @@ mark {
   }
 }
 
-/* Notes block editor (BlockNote / F2) and connected-brain chips (F1/F3). */
+/* Notes block editor (BlockNote / F2) and connected-brain chips (F1/F3). An
+ * open canvas, not a boxed input — no border/background of its own, and tall
+ * enough that clicking anywhere below the last line still focuses it and
+ * places the cursor at the end (ProseMirror's default), like Notion/AlenAI. */
 .block-editor {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 .block-editor .bn-editor {
+  flex: 1;
+  min-height: 50vh;
   padding-block: 10px;
 }
 .mention-chip {
