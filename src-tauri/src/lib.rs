@@ -47,6 +47,15 @@ pub fn run() {
     std::env::set_var("GGML_METAL_NO_RESIDENCY", "1");
 
     tauri::Builder::default()
+        // Must be the first plugin registered (per its own docs): a second
+        // launch (autostart-at-login racing a manual open, a stray dock
+        // double-click, `open -a Arya` while it's already running, …) is
+        // detected here and killed immediately, instead of silently running
+        // as a second full process with its own tray icon, global hotkey
+        // registration, and calendar/agent pollers duplicating the first.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main(app);
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())

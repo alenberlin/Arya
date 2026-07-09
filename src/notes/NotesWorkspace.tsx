@@ -1199,7 +1199,14 @@ export function NotesWorkspace({
                 <NotesIcon />
               </span>
               <div className="note-empty-title">Your notes live here</div>
-              <p>Select a note from the list, or press Record to capture one.</p>
+              <p>Select a note from the list, press Record to capture one, or start typing.</p>
+              <button
+                type="button"
+                className="btn-sm btn-primary"
+                onClick={() => void createNewNote()}
+              >
+                New note
+              </button>
             </div>
           </div>
         )}

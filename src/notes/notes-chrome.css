@@ -49,6 +49,9 @@
   flex-direction: column;
   align-items: center;
 }
+.note-empty .btn-sm {
+  margin-top: var(--sp-4);
+}
 .note-empty-icon {
   display: grid;
   place-items: center;
