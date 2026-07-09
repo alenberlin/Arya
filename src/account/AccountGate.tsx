@@ -10,12 +10,16 @@ export function AccountGate({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SignInState | null>(null);
 
   useEffect(() => {
-    void accountSignInState().then(setState);
-    const unlisten = listen("account:signed-in", () => {
-      void accountSignInState().then(setState);
-    });
+    const refresh = () => void accountSignInState().then(setState);
+    refresh();
+    // Re-check on BOTH transitions: sign-in unlocks the app, and sign-out must
+    // re-raise the wall without a reload (it previously only listened for
+    // signed-in, so the gate stayed unlocked after sign-out).
+    const unlistenIn = listen("account:signed-in", refresh);
+    const unlistenOut = listen("account:signed-out", refresh);
     return () => {
-      void unlisten.then((fn) => fn());
+      void unlistenIn.then((fn) => fn());
+      void unlistenOut.then((fn) => fn());
     };
   }, []);
 

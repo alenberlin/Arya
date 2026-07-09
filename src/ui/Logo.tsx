@@ -1,8 +1,9 @@
 /**
- * The Arya brand mark: a terracotta "planet" with four feature satellites
- * orbiting it — notes, dictation (waveform), a spark of intelligence, and
- * search. Recreated as vector art so it stays crisp at any size and follows the
- * warm palette. Pass `size` in px.
+ * The Arya brand mark: the Newsreader serif "A" (the same face as the
+ * wordmark) circled by a thin orbit ring with a single satellite dot that
+ * emits two small sound arcs — voice orbiting your work, reduced to one
+ * glyph. The letterform is baked in as a path so no font needs to be loaded.
+ * Pass `size` in px.
  */
 export function Logo({ size = 96, title = "Arya" }: { size?: number; title?: string }) {
   return (
@@ -16,61 +17,49 @@ export function Logo({ size = 96, title = "Arya" }: { size?: number; title?: str
       aria-label={title}
     >
       <defs>
-        <radialGradient id="arya-planet" cx="38%" cy="34%" r="72%">
-          <stop offset="0%" stopColor="#d17650" />
-          <stop offset="55%" stopColor="#be5a38" />
-          <stop offset="100%" stopColor="#a94a2c" />
-        </radialGradient>
-        <filter id="arya-sat" x="-40%" y="-40%" width="180%" height="180%">
-          <feDropShadow dx="0" dy="4" stdDeviation="6" floodColor="#3a2a1e" floodOpacity="0.22" />
-        </filter>
+        <linearGradient id="arya-a-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#C4714B" />
+          <stop offset="100%" stopColor="#A34527" />
+        </linearGradient>
       </defs>
 
       {/* orbit */}
-      <circle cx="256" cy="256" r="180" stroke="#7a5745" strokeWidth="3" opacity="0.8" />
-
-      {/* planet */}
-      <circle cx="256" cy="256" r="104" fill="url(#arya-planet)" />
-
-      {/* top — notes / list */}
-      <g filter="url(#arya-sat)">
-        <circle cx="256" cy="76" r="50" fill="#f1e9dc" />
-      </g>
-      <g stroke="#6d4c3d" strokeWidth="6" strokeLinecap="round">
-        <line x1="240" y1="63" x2="273" y2="63" />
-        <line x1="240" y1="76" x2="273" y2="76" />
-        <line x1="240" y1="89" x2="264" y2="89" />
-      </g>
-
-      {/* right — dictation waveform */}
-      <g filter="url(#arya-sat)">
-        <circle cx="436" cy="256" r="50" fill="#f1e9dc" />
-      </g>
-      <g stroke="#6d4c3d" strokeWidth="5.5" strokeLinecap="round">
-        <line x1="418" y1="249" x2="418" y2="263" />
-        <line x1="428" y1="238" x2="428" y2="274" />
-        <line x1="438" y1="245" x2="438" y2="267" />
-        <line x1="448" y1="234" x2="448" y2="278" />
-        <line x1="458" y1="250" x2="458" y2="262" />
-      </g>
-
-      {/* bottom — spark */}
-      <g filter="url(#arya-sat)">
-        <circle cx="256" cy="436" r="50" fill="#f1e9dc" />
-      </g>
-      <path
-        d="M256 408c3.4 16.2 7.4 20.2 23.6 23.6C263.4 435 259.4 439 256 455.2 252.6 439 248.6 435 232.4 431.6 248.6 428.2 252.6 424.2 256 408Z"
-        fill="#6d4c3d"
+      <ellipse
+        cx="256"
+        cy="262"
+        rx="220"
+        ry="82"
+        transform="rotate(-20 256 262)"
+        stroke="#B5623F"
+        strokeOpacity="0.5"
+        strokeWidth="9"
       />
 
-      {/* left — search */}
-      <g filter="url(#arya-sat)">
-        <circle cx="76" cy="256" r="50" fill="#f1e9dc" />
-      </g>
-      <g stroke="#6d4c3d" strokeWidth="6" strokeLinecap="round" fill="none">
-        <circle cx="70" cy="250" r="16" />
-        <line x1="82" y1="262" x2="95" y2="275" />
-      </g>
+      {/* Newsreader semibold "A", outlined */}
+      <path
+        d="M522-229L180.500-229L180.500-291.500L522-291.500L522-229M421.500-682L687.500-56L764.500-27.500L764.500 0L456.500 0L456.500-27.500L541-54.500L323.500-580L348-580L144-54.500L224-27.500L224 0L-7 0L-7-27.500L71-54.500L326-682"
+        transform="translate(104.94,398.00) scale(0.39883)"
+        fill="url(#arya-a-fill)"
+      />
+
+      {/* satellite */}
+      <circle cx="436.2" cy="250.1" r="16" fill="#9A4E30" />
+
+      {/* sound arcs radiating from the satellite */}
+      <path
+        d="M469.96 253.99 A34 34 0 0 1 440.61 283.86"
+        stroke="#9A4E30"
+        strokeOpacity="0.8"
+        strokeWidth="9"
+        strokeLinecap="round"
+      />
+      <path
+        d="M487.84 256.03 A52 52 0 0 1 442.97 301.70"
+        stroke="#9A4E30"
+        strokeOpacity="0.55"
+        strokeWidth="9"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

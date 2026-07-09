@@ -147,11 +147,73 @@ pub async fn agent_send_inner(
     .map_err(|e| e.to_string())?;
     let mode = WriteMode::parse(&session.mode);
 
-    // Restore the sidecar session if the process restarted since creation.
-    let history = sqlx::query_as::<_, (String, String)>(
-        "SELECT role, content_json FROM agent_messages WHERE session_id = ?1 ORDER BY created_at",
+    let workspace = super::agent_workspace(app)?;
+
+    // Title new sessions from the first message.
+    if session.title == "New session" {
+        let title: String = text.chars().take(48).collect();
+        let _ = sqlx::query("UPDATE agent_sessions SET title = ?2 WHERE id = ?1")
+            .bind(&session_id)
+            .bind(title.trim())
+            .execute(pool)
+            .await;
+    }
+
+    // Persist the user message before delivery so a restore below reads it back.
+    let user_msg_id = uuid::Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO agent_messages (id, session_id, role, content_json, created_at)
+         VALUES (?1, ?2, 'user', ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
     )
+    .bind(&user_msg_id)
     .bind(&session_id)
+    .bind(json!({ "text": text, "tools": [] }).to_string())
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Deliver only the new message: the sidecar keeps the running conversation
+    // in memory, so re-seeding the whole history is done ONLY when the sidecar
+    // has no session for this id (the process restarted). Previously session.start
+    // re-sent the entire transcript on every message — O(n^2) in tokens/transport.
+    let deliver = json!({ "sessionId": &session_id, "text": &text });
+    match runtime.request(app, mode, "session.message", deliver.clone()) {
+        Ok(_) => Ok(()),
+        Err(e) if e.contains("unknown session") => {
+            let history = restore_history(pool, &session_id, &user_msg_id).await?;
+            runtime.request(
+                app,
+                mode,
+                "session.start",
+                json!({
+                    "sessionId": &session_id,
+                    "model": session.model,
+                    "mode": session.mode,
+                    "workspace": workspace.to_string_lossy(),
+                    "history": history,
+                }),
+            )?;
+            runtime.request(app, mode, "session.message", deliver)?;
+            Ok(())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Prior turns for restoring a sidecar session after a restart, excluding the
+/// just-inserted current message (which `session.message` re-delivers, so
+/// including it would duplicate the user turn in the model's context).
+async fn restore_history(
+    pool: &SqlitePool,
+    session_id: &str,
+    exclude_message_id: &str,
+) -> Result<Vec<serde_json::Value>, String> {
+    Ok(sqlx::query_as::<_, (String, String)>(
+        "SELECT role, content_json FROM agent_messages
+         WHERE session_id = ?1 AND id != ?2 ORDER BY created_at",
+    )
+    .bind(session_id)
+    .bind(exclude_message_id)
     .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())?
@@ -165,50 +227,7 @@ pub async fn agent_send_inner(
             Some(json!({ "role": role, "text": text }))
         }
     })
-    .collect::<Vec<_>>();
-
-    let workspace = super::agent_workspace(app)?;
-    let _ = runtime.request(
-        app,
-        mode,
-        "session.start",
-        json!({
-            "sessionId": session_id,
-            "model": session.model,
-            "mode": session.mode,
-            "workspace": workspace.to_string_lossy(),
-            "history": history,
-        }),
-    );
-
-    // Title new sessions from the first message.
-    if session.title == "New session" {
-        let title: String = text.chars().take(48).collect();
-        let _ = sqlx::query("UPDATE agent_sessions SET title = ?2 WHERE id = ?1")
-            .bind(&session_id)
-            .bind(title.trim())
-            .execute(pool)
-            .await;
-    }
-
-    sqlx::query(
-        "INSERT INTO agent_messages (id, session_id, role, content_json, created_at)
-         VALUES (?1, ?2, 'user', ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-    )
-    .bind(uuid::Uuid::new_v4().to_string())
-    .bind(&session_id)
-    .bind(json!({ "text": text, "tools": [] }).to_string())
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    runtime.request(
-        app,
-        mode,
-        "session.message",
-        json!({ "sessionId": session_id, "text": text }),
-    )?;
-    Ok(())
+    .collect())
 }
 
 #[tauri::command]
@@ -268,11 +287,30 @@ pub async fn agent_resolve_approval(
 #[tauri::command]
 pub async fn agent_delete_session(
     pool: State<'_, SqlitePool>,
+    runtime: State<'_, AgentRuntime>,
     session_id: String,
 ) -> Result<(), String> {
+    agent_delete_session_inner(&pool, &runtime, session_id).await
+}
+
+pub async fn agent_delete_session_inner(
+    pool: &SqlitePool,
+    runtime: &AgentRuntime,
+    session_id: String,
+) -> Result<(), String> {
+    let mode = sqlx::query_scalar::<_, String>("SELECT mode FROM agent_sessions WHERE id = ?1")
+        .bind(&session_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Some(mode) = mode {
+        runtime.end_session_if_running(WriteMode::parse(&mode), &session_id);
+    } else {
+        runtime.clear_session_state(&session_id);
+    }
     sqlx::query("DELETE FROM agent_sessions WHERE id = ?1")
         .bind(session_id)
-        .execute(&*pool)
+        .execute(pool)
         .await
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -285,4 +323,51 @@ async fn session_mode(pool: &SqlitePool, session_id: &str) -> Result<WriteMode, 
         .await
         .map_err(|e| e.to_string())?;
     Ok(WriteMode::parse(&mode))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_pool;
+
+    #[tokio::test]
+    async fn delete_session_removes_row_and_runtime_state() {
+        let pool = test_pool().await;
+        let runtime = AgentRuntime::default();
+        let session_id = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO agent_sessions (id, title, model, mode, created_at, updated_at)
+             VALUES (?1, 'Doomed', 'ollama:test', 'sandboxed',
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .bind(&session_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        runtime.accumulators.lock().unwrap().insert(
+            session_id.clone(),
+            super::super::TurnAccumulator {
+                text: "partial".into(),
+                reasoning: String::new(),
+                tools: vec![],
+            },
+        );
+
+        agent_delete_session_inner(&pool, &runtime, session_id.clone())
+            .await
+            .unwrap();
+
+        let exists =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM agent_sessions WHERE id = ?1")
+                .bind(&session_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(exists, 0);
+        assert!(!runtime
+            .accumulators
+            .lock()
+            .unwrap()
+            .contains_key(&session_id));
+    }
 }

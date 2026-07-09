@@ -2,8 +2,8 @@
 //!
 //! Polls CoreAudio for processes actively using the microphone
 //! (`kAudioProcessPropertyIsRunningInput`) and matches their bundle ids
-//! against known meeting apps. Debounced; suppressed while Arya itself is
-//! recording. Emits `meeting:detected` / `meeting:cleared`.
+//! against known meeting apps. Debounced; suppressed while Arya's recorder is
+//! active. Emits `meeting:detected` / `meeting:cleared`.
 
 use serde::Serialize;
 
@@ -63,9 +63,6 @@ pub fn detect_from_bundles<'a>(bundles: impl Iterator<Item = &'a str>) -> Option
 
 #[cfg(target_os = "macos")]
 pub mod macos {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-
     use tauri::{Emitter, Manager};
 
     use super::{detect_from_bundles, MeetingInfo};
@@ -95,6 +92,13 @@ pub mod macos {
             data_size: *mut u32,
             data: *mut std::ffi::c_void,
         ) -> i32;
+        fn AudioObjectGetPropertyDataSize(
+            object_id: u32,
+            address: *const AudioObjectPropertyAddress,
+            qualifier_size: u32,
+            qualifier_data: *const std::ffi::c_void,
+            data_size: *mut u32,
+        ) -> i32;
     }
 
     fn property(selector: u32) -> AudioObjectPropertyAddress {
@@ -107,22 +111,39 @@ pub mod macos {
 
     fn process_objects() -> Vec<u32> {
         let address = property(K_AUDIO_HARDWARE_PROPERTY_PROCESS_OBJECT_LIST);
-        let mut ids = vec![0u32; 512];
-        let mut size = (ids.len() * 4) as u32;
+        // Ask CoreAudio the actual byte size first, then size the buffer to fit,
+        // rather than silently truncating the process list at a fixed cap on a
+        // busy machine (which could drop the Zoom/Teams process and miss it).
+        let mut size: u32 = 0;
+        let status = unsafe {
+            AudioObjectGetPropertyDataSize(
+                K_AUDIO_OBJECT_SYSTEM_OBJECT,
+                &address,
+                0,
+                std::ptr::null(),
+                &mut size,
+            )
+        };
+        if status != 0 || size == 0 {
+            return Vec::new();
+        }
+        let count = size as usize / std::mem::size_of::<u32>();
+        let mut ids = vec![0u32; count];
+        let mut size_out = size;
         let status = unsafe {
             AudioObjectGetPropertyData(
                 K_AUDIO_OBJECT_SYSTEM_OBJECT,
                 &address,
                 0,
                 std::ptr::null(),
-                &mut size,
+                &mut size_out,
                 ids.as_mut_ptr() as *mut _,
             )
         };
         if status != 0 {
             return Vec::new();
         }
-        ids.truncate(size as usize / 4);
+        ids.truncate(size_out as usize / std::mem::size_of::<u32>());
         ids
     }
 
@@ -180,9 +201,9 @@ pub mod macos {
         detect_from_bundles(bundles.iter().map(|s| s.as_str()))
     }
 
-    /// Spawns the detection poller. `suppressed` is flipped by the recorder
-    /// so Arya's own capture never triggers a prompt.
-    pub fn spawn_poller(app: tauri::AppHandle, suppressed: Arc<AtomicBool>) {
+    /// Spawns the detection poller. Detection is suppressed while Arya's own
+    /// recorder is active, so capturing a note never prompts to record itself.
+    pub fn spawn_poller(app: tauri::AppHandle) {
         std::thread::Builder::new()
             .name("arya-meeting-detect".into())
             .spawn(move || {
@@ -196,7 +217,7 @@ pub mod macos {
                             r.status().state != crate::recording::recorder::RecorderState::Idle
                         })
                         .unwrap_or(false);
-                    if suppressed.load(Ordering::Relaxed) || recording {
+                    if recording {
                         continue;
                     }
                     let found = scan();

@@ -15,6 +15,11 @@ on:
 jobs:
   build:
     runs-on: macos-14
+    env:
+      # Public hosted endpoints baked into the desktop binary. These are
+      # repository/environment variables, not secrets.
+      ARYA_API_URL: ${{ vars.ARYA_API_URL }}
+      ARYA_CLERK_SIGN_IN_URL: ${{ vars.ARYA_CLERK_SIGN_IN_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -38,6 +43,18 @@ jobs:
           if [ "${{ github.event.inputs.channel }}" = "rc" ] && [ ! -f src-tauri/tauri.rc.conf.json ]; then
             echo "::error::rc channel requires src-tauri/tauri.rc.conf.json (missing)"; exit 1
           fi
+
+      # Guard: a production/RC desktop build must not silently fall back to
+      # local mode because the public hosted endpoints were omitted.
+      - name: Validate hosted release config
+        run: |
+          missing=0
+          for var in ARYA_API_URL ARYA_CLERK_SIGN_IN_URL; do
+            if [ -z "${!var:-}" ]; then
+              echo "::error::$var must be configured as a GitHub Actions variable"; missing=1
+            fi
+          done
+          exit "$missing"
 
       - name: Build, sign, notarize
         uses: tauri-apps/tauri-action@v0

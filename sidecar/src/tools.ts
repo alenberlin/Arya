@@ -6,6 +6,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { ApprovalBroker } from "./approvals.js";
 import { generateImageToWorkspace, imageGenerationAvailable } from "./images.js";
+import { safeMcpEnv } from "./mcp.js";
 import { classifyReadable, resolveInWorkspace, resolveReadable } from "./paths.js";
 import type { AgentEvent } from "./protocol.js";
 
@@ -209,6 +210,10 @@ export function buildTools(ctx: ToolContext) {
             cwd: ctx.workspace,
             timeout: 120_000,
             maxBuffer: 4 * 1024 * 1024,
+            // Scrub the environment: the sidecar carries ARYA_API_TOKEN (and, in
+            // direct-key dev, provider keys). An approved program must never
+            // inherit those — same guard MCP server spawns already use.
+            env: safeMcpEnv(),
           });
           return clip(`${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}` || "(no output)");
         } catch (error) {

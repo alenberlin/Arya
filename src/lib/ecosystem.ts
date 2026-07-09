@@ -32,12 +32,6 @@ export interface RoutineRun {
   startedAt: string;
 }
 
-export interface WorkspaceEntry {
-  name: string;
-  isDir: boolean;
-  size: number;
-}
-
 export const mcpListServers = () => invoke<McpServer[]>("mcp_list_servers");
 export const mcpAddServer = (
   name: string,
@@ -62,8 +56,3 @@ export const routineRuns = (routineId: string) =>
 
 export const agentBranchSession = (sessionId: string, throughMessageId: string) =>
   invoke<AgentSession>("agent_branch_session", { sessionId, throughMessageId });
-
-export const agentWorkspaceList = (subPath?: string) =>
-  invoke<WorkspaceEntry[]>("agent_workspace_list", { subPath: subPath ?? null });
-export const agentWorkspaceRead = (path: string) =>
-  invoke<string>("agent_workspace_read", { path });

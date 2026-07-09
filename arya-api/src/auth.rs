@@ -37,6 +37,10 @@ struct Jwk {
     kid: String,
     n: String,
     e: String,
+    /// Key type. A JWKS may advertise non-RSA keys; we only build RSA keys and
+    /// pin RS256, so anything else is filtered out before it enters the set.
+    #[serde(default)]
+    kty: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -130,6 +134,13 @@ impl Verifier {
                 let mut validation = Validation::new(Algorithm::RS256);
                 validation.set_issuer(&[issuer]);
                 validation.set_audience(&[audience]);
+                // Require the security-critical claims to be present, not merely
+                // valid-if-present: a token missing exp/iss/aud must be rejected
+                // rather than leniently accepted. (nbf is still validated when
+                // present via the default.) Replay within the token's lifetime
+                // is an accepted risk of stateless verification — closing it
+                // needs a short-TTL seen-jti store, out of scope here.
+                validation.set_required_spec_claims(&["exp", "iss", "aud"]);
                 let data = decode::<Claims>(token, &key, &validation).map_err(|e| e.to_string())?;
                 Ok(data.claims.sub)
             }
@@ -163,7 +174,20 @@ async fn fetch_jwks(jwks_url: &str) -> Result<Vec<Jwk>, String> {
         .json::<Jwks>()
         .await
         .map_err(|e| e.to_string())?;
-    Ok(jwks.keys)
+    Ok(rsa_signing_keys(jwks.keys))
+}
+
+/// Keeps only RSA keys. Since the verifier pins RS256 and builds keys with
+/// `from_rsa_components`, an EC/oct entry is at best useless and at worst a
+/// foot-gun; drop it before it enters the trusted set. An absent `kty` is
+/// treated as RSA for compatibility with minimal JWKS.
+fn rsa_signing_keys(keys: Vec<Jwk>) -> Vec<Jwk> {
+    keys.into_iter()
+        .filter(|k| match k.kty.as_deref() {
+            Some(t) => t == "RSA",
+            None => true,
+        })
+        .collect()
 }
 
 async fn fetch_jwks_with_retry(jwks_url: &str, attempts: u32) -> Result<Vec<Jwk>, String> {
@@ -222,5 +246,19 @@ mod tests {
         let jwks: Jwks = serde_json::from_str(json).unwrap();
         assert_eq!(jwks.keys.len(), 1);
         assert_eq!(jwks.keys[0].kid, "abc");
+    }
+
+    #[test]
+    fn rsa_signing_keys_drops_non_rsa_entries() {
+        let json = r#"{"keys":[
+            {"kty":"RSA","kid":"rsa1","n":"AQAB","e":"AQAB"},
+            {"kty":"EC","kid":"ec1","n":"x","e":"y"},
+            {"kid":"nokty","n":"AQAB","e":"AQAB"}
+        ]}"#;
+        let jwks: Jwks = serde_json::from_str(json).unwrap();
+        let kept = rsa_signing_keys(jwks.keys);
+        let kids: Vec<&str> = kept.iter().map(|k| k.kid.as_str()).collect();
+        // RSA and kty-absent are kept; EC is dropped.
+        assert_eq!(kids, vec!["rsa1", "nokty"]);
     }
 }

@@ -1,54 +1,18 @@
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#faf4ea"/>
-      <stop offset="1" stop-color="#eee1cf"/>
+      <stop offset="0%" stop-color="#FDFBF7"/><stop offset="100%" stop-color="#F1E7D8"/>
     </linearGradient>
-    <radialGradient id="planet" cx="38%" cy="34%" r="72%">
-      <stop offset="0" stop-color="#d67c56"/>
-      <stop offset="0.55" stop-color="#be5a38"/>
-      <stop offset="1" stop-color="#a4472a"/>
-    </radialGradient>
+    <linearGradient id="af" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#C4714B"/><stop offset="100%" stop-color="#A34527"/>
+    </linearGradient>
   </defs>
-
-  <!-- macOS-style rounded-square backdrop -->
-  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
-
-  <!-- Arya emblem (drawn in 512 space, scaled to fit with padding) -->
-  <g transform="translate(138 138) scale(1.46)">
-    <!-- orbit -->
-    <circle cx="256" cy="256" r="180" fill="none" stroke="#7a5745" stroke-width="4.5" opacity="0.85"/>
-    <!-- planet -->
-    <circle cx="256" cy="256" r="106" fill="url(#planet)"/>
-
-    <!-- satellite discs -->
-    <g fill="#fbf5ec" stroke="#d8c6ab" stroke-width="3">
-      <circle cx="256" cy="76" r="51"/>
-      <circle cx="436" cy="256" r="51"/>
-      <circle cx="256" cy="436" r="51"/>
-      <circle cx="76" cy="256" r="51"/>
-    </g>
-
-    <!-- top: notes -->
-    <g stroke="#6d4c3d" stroke-width="6" stroke-linecap="round">
-      <line x1="240" y1="63" x2="273" y2="63"/>
-      <line x1="240" y1="76" x2="273" y2="76"/>
-      <line x1="240" y1="89" x2="264" y2="89"/>
-    </g>
-    <!-- right: waveform -->
-    <g stroke="#6d4c3d" stroke-width="5.5" stroke-linecap="round">
-      <line x1="418" y1="249" x2="418" y2="263"/>
-      <line x1="428" y1="238" x2="428" y2="274"/>
-      <line x1="438" y1="245" x2="438" y2="267"/>
-      <line x1="448" y1="234" x2="448" y2="278"/>
-      <line x1="458" y1="250" x2="458" y2="262"/>
-    </g>
-    <!-- bottom: spark -->
-    <path d="M256 408c2 20 8 26 28 28-20 2-26 8-28 28-2-20-8-26-28-28 20-2 26-8 28-28Z" fill="#6d4c3d"/>
-    <!-- left: search -->
-    <g stroke="#6d4c3d" stroke-width="6" stroke-linecap="round" fill="none">
-      <circle cx="70" cy="250" r="16"/>
-      <line x1="82" y1="262" x2="95" y2="275"/>
-    </g>
-  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="#E3D9C8" stroke-width="3"/>
+  <ellipse cx="512" cy="515" rx="354.1" ry="132.0" transform="rotate(-20 512 515)" fill="none"
+           stroke="#B5623F" stroke-opacity="0.5" stroke-width="14.5"/>
+  <path d="M522-229L180.500-229L180.500-291.500L522-291.500L522-229M421.500-682L687.500-56L764.500-27.500L764.500 0L456.500 0L456.500-27.500L541-54.500L323.500-580L348-580L144-54.500L224-27.500L224 0L-7 0L-7-27.500L71-54.500L326-682" transform="translate(268.89,733.88) scale(0.64186)" fill="url(#af)"/>
+  <circle cx="802.0" cy="495.9" r="25.8" fill="#9A4E30"/>
+  <path d="M856.3 502.1 A54.7 54.7 0 0 1 809.1 550.2" stroke="#9A4E30" stroke-opacity="0.8" stroke-width="14.5" stroke-linecap="round" fill="none"/>
+  <path d="M885.1 505.4 A83.7 83.7 0 0 1 812.9 578.9" stroke="#9A4E30" stroke-opacity="0.55" stroke-width="14.5" stroke-linecap="round" fill="none"/>
 </svg>

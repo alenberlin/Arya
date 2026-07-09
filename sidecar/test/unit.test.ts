@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { ApprovalBroker } from "../src/approvals.js";
 import { safeMcpEnv } from "../src/mcp.js";
 import { classifyReadable, resolveInWorkspace } from "../src/paths.js";
-import { resolveModel } from "../src/providers.js";
+import { isChatModel, resolveModel } from "../src/providers.js";
+import { buildTools } from "../src/tools.js";
 
 describe("workspace path jail", () => {
   const ws = "/tmp/arya-ws";
@@ -103,7 +104,11 @@ describe("MCP env scrubbing", () => {
     process.env.ANTHROPIC_API_KEY = "sk-ant-secret-value";
     process.env.PATH = "/usr/bin";
     try {
-      const env = safeMcpEnv({ MY_SERVER_TOKEN: "declared" });
+      const env = safeMcpEnv({
+        ARYA_API_TOKEN: "declared-arya-secret",
+        ANTHROPIC_API_KEY: "declared-provider-secret",
+        MY_SERVER_TOKEN: "declared",
+      });
       expect(env.ARYA_API_TOKEN).toBeUndefined();
       expect(env.ANTHROPIC_API_KEY).toBeUndefined();
       expect(env.PATH).toBe("/usr/bin");
@@ -142,6 +147,14 @@ describe("approval broker", () => {
     await expect(decision).resolves.toBe(false);
   });
 
+  it("denies legacy or invalid approval decisions without pre-approving", async () => {
+    const broker = new ApprovalBroker();
+    const decision = broker.wait("c1", "run_command");
+    expect(broker.resolve("c1", "always")).toBe(true);
+    await expect(decision).resolves.toBe(false);
+    expect(broker.isPreApproved("run_command")).toBe(false);
+  });
+
   it("denyAll flushes pending approvals", async () => {
     const broker = new ApprovalBroker();
     const a = broker.wait("a", "run_command");
@@ -175,5 +188,77 @@ describe("model resolution", () => {
     expect(resolveModel("ollama:llama3.2")).toBeTruthy();
     expect(resolveModel("anthropic:claude-sonnet-5")).toBeTruthy();
     expect(resolveModel("openai:gpt-5-mini")).toBeTruthy();
+  });
+
+  it("requires an explicit bearer token in proxy mode", () => {
+    const savedUrl = process.env.ARYA_API_URL;
+    const savedToken = process.env.ARYA_API_TOKEN;
+    process.env.ARYA_API_URL = "https://api.arya.example.com";
+    delete process.env.ARYA_API_TOKEN;
+    try {
+      expect(() => resolveModel("openai:gpt-5-mini")).toThrow(/ARYA_API_TOKEN/);
+    } finally {
+      if (savedUrl === undefined) delete process.env.ARYA_API_URL;
+      else process.env.ARYA_API_URL = savedUrl;
+      if (savedToken === undefined) delete process.env.ARYA_API_TOKEN;
+      else process.env.ARYA_API_TOKEN = savedToken;
+    }
+  });
+});
+
+describe("Ollama chat-model filtering", () => {
+  it("excludes embedding-only models by capability (the AI_NoOutput bug)", () => {
+    // nomic-embed-text reports ['embedding'] and errors on chat.
+    expect(isChatModel("nomic-embed-text:latest", "nomic-bert", ["embedding"])).toBe(false);
+    expect(isChatModel("dolphin3:latest", "llama", ["completion"])).toBe(true);
+    expect(isChatModel("ornith:35b", "qwen35moe", ["tools", "thinking", "completion"])).toBe(true);
+  });
+
+  it("falls back to a name/family heuristic when capabilities are absent", () => {
+    // Older Ollama with no `capabilities` field.
+    expect(isChatModel("nomic-embed-text:latest", "nomic-bert", undefined)).toBe(false);
+    expect(isChatModel("mxbai-embed-large:latest", undefined, undefined)).toBe(false);
+    expect(isChatModel("llama3.2:latest", "llama", undefined)).toBe(true);
+    expect(isChatModel("mystery-model", undefined, undefined)).toBe(true);
+  });
+
+  it("trusts capabilities over the heuristic when both are present", () => {
+    // A chat model whose name happens to contain 'embed' is still kept.
+    expect(isChatModel("embed-chat-tuned", "llama", ["completion"])).toBe(true);
+  });
+});
+
+describe("run_command environment scrubbing (C2)", () => {
+  it("does not leak ARYA_API_TOKEN to the spawned child", async () => {
+    const saved = process.env.ARYA_API_TOKEN;
+    process.env.ARYA_API_TOKEN = "leaktest-SECRET-98765";
+    const ws = mkdtempSync(join(tmpdir(), "arya-run-"));
+    try {
+      const tools = buildTools({
+        workspace: ws,
+        mode: "sandboxed",
+        // Pre-approve so gate() short-circuits without a UI round-trip.
+        broker: { isPreApproved: () => true } as unknown as ApprovalBroker,
+        emit: () => {},
+        nextCallId: () => "c1",
+        searchWorkspace: async () => "",
+      });
+      const run = tools.run_command as unknown as {
+        execute: (input: { program: string; args: string[] }, opts: unknown) => Promise<string>;
+      };
+      const result = await run.execute(
+        {
+          program: "node",
+          args: ["-e", "process.stdout.write(process.env.ARYA_API_TOKEN ?? 'UNSET')"],
+        },
+        {},
+      );
+      expect(result).toBe("UNSET");
+      expect(result).not.toContain("leaktest-SECRET");
+    } finally {
+      rmSync(ws, { recursive: true, force: true });
+      if (saved === undefined) delete process.env.ARYA_API_TOKEN;
+      else process.env.ARYA_API_TOKEN = saved;
+    }
   });
 });

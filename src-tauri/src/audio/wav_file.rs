@@ -21,8 +21,8 @@ pub enum WavFileError {
     Empty,
 }
 
-/// Canonical 16-bit PCM header size written by hound.
-const HEADER_LEN: u64 = 44;
+/// Canonical 16-bit PCM header size written by hound and the system-audio helper.
+pub const HEADER_LEN: u64 = 44;
 
 /// A WAV file being written incrementally (i16 PCM at the capture rate).
 pub struct WavSink {

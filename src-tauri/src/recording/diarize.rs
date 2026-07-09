@@ -4,8 +4,8 @@
 //! long enough to carry voice identity, a speaker embedding (WeSpeaker
 //! CAM++, ONNX via sherpa) is computed; turns are clustered by cosine
 //! similarity within each source, and clusters are matched against enrolled
-//! voice profiles for real names. Unmatched clusters get "Speaker N".
-//! The microphone source defaults to the enrolled owner profile or "Me".
+//! voice profiles for real names. Unmatched clusters get "Speaker N"; Arya
+//! only prints "Me" if the user enrolled a profile with that display name.
 //!
 //! Sub-turn speaker changes are out of scope for v1 (documented limitation);
 //! turn-level labels cover the dominant meeting shape.
@@ -72,18 +72,9 @@ pub const SAME_SPEAKER_THRESHOLD: f32 = 0.55;
 /// Minimum turn length that reliably carries voice identity.
 pub const MIN_EMBED_MS: u64 = 1_200;
 
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    if a.is_empty() || a.len() != b.len() {
-        return 0.0;
-    }
-    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
-    }
-    dot / (norm_a * norm_b)
-}
+// Cosine + f32<->blob live in one place (crate::vecmath), shared with the RAG
+// index, so the metric and encoding can't drift between the two.
+pub use crate::vecmath::{blob_to_f32, cosine as cosine_similarity, f32_to_blob};
 
 /// Greedy centroid clustering: each embedding joins the best cluster above
 /// `threshold` (running-mean centroids) or starts a new one. Returns a
@@ -181,16 +172,6 @@ pub async fn load_profiles(pool: &SqlitePool) -> Result<Vec<Profile>, sqlx::Erro
             embedding: blob_to_f32(&blob),
         })
         .collect())
-}
-
-pub fn f32_to_blob(values: &[f32]) -> Vec<u8> {
-    values.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-pub fn blob_to_f32(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
 }
 
 #[cfg(test)]

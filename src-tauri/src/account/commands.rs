@@ -6,7 +6,7 @@ use super::tokens;
 use super::{AccountSnapshot, SignInState};
 
 fn api_base() -> String {
-    std::env::var("ARYA_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8477".into())
+    tokens::api_url()
 }
 
 #[derive(Default)]
@@ -30,7 +30,7 @@ pub fn account_begin_signin(app: tauri::AppHandle) -> Result<(), String> {
     if !tokens::hosted_auth_configured() {
         return Ok(());
     }
-    let url = std::env::var("ARYA_CLERK_SIGN_IN_URL").map_err(|e| e.to_string())?;
+    let url = tokens::clerk_sign_in_url().ok_or("ARYA_CLERK_SIGN_IN_URL is not configured")?;
     super::signin_flow::begin(app, &url)
 }
 

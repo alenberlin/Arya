@@ -13,6 +13,7 @@ pub mod catalog;
 pub mod config;
 pub mod metering;
 pub mod proxy;
+pub mod ratelimit;
 
 use std::sync::Arc;
 
@@ -27,6 +28,7 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub verifier: Arc<auth::Verifier>,
     pub wallet: Arc<dyn billing::Wallet>,
+    pub rate_limit: Arc<ratelimit::RateLimit>,
 }
 
 /// Builds the router for a given state (shared by main and tests).
@@ -57,18 +59,31 @@ pub async fn build_state() -> AppState {
         http: build_http_client(),
         verifier,
         wallet: Arc::new(billing::LocalWallet::from_env()),
+        // Per-user throttle so a leaked-but-valid token can't drain the wallet
+        // as fast as the upstream will answer.
+        rate_limit: Arc::new(ratelimit::RateLimit::new(
+            120,
+            std::time::Duration::from_secs(60),
+        )),
     }
 }
 
+/// Ceiling on a single upstream request's total wall-clock time. It MUST stay
+/// below the metering hold TTL (`proxy::HOLD_TTL_SECONDS`): if a request could
+/// outlive its hold, the hold would expire mid-flight, stop counting against
+/// the balance, and let a concurrent request overspend (the C1 billing TOCTOU).
+pub const UPSTREAM_TOTAL_TIMEOUT_SECS: u64 = 300;
+
 /// The upstream HTTP client. Redirects are disabled so a 302 can't replay the
-/// `Authorization: Bearer <provider-key>` to an attacker host, and timeouts
-/// bound both connect and per-read so a slow/stalled upstream can't wedge a
-/// request (read_timeout is per-read, so it doesn't cap a long legitimate
-/// stream — only a stall does).
+/// `Authorization: Bearer <provider-key>` to an attacker host. `connect_timeout`
+/// bounds the handshake, `read_timeout` kills a stalled stream (per-read), and
+/// the total `timeout` caps the whole request so it can never outlive its
+/// metering hold (see `UPSTREAM_TOTAL_TIMEOUT_SECS`).
 pub fn build_http_client() -> reqwest::Client {
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .read_timeout(std::time::Duration::from_secs(120))
+        .timeout(std::time::Duration::from_secs(UPSTREAM_TOTAL_TIMEOUT_SECS))
         .redirect(reqwest::redirect::Policy::none())
         .build()
         .expect("build upstream http client")

@@ -23,33 +23,9 @@ pub struct SearchHit {
     pub score: f32,
 }
 
-pub fn cosine(a: &[f32], b: &[f32]) -> f32 {
-    if a.len() != b.len() || a.is_empty() {
-        return 0.0;
-    }
-    let mut dot = 0.0;
-    let mut na = 0.0;
-    let mut nb = 0.0;
-    for (x, y) in a.iter().zip(b) {
-        dot += x * y;
-        na += x * x;
-        nb += y * y;
-    }
-    if na == 0.0 || nb == 0.0 {
-        return 0.0;
-    }
-    dot / (na.sqrt() * nb.sqrt())
-}
-
-pub fn f32_to_blob(values: &[f32]) -> Vec<u8> {
-    values.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-pub fn blob_to_f32(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
-}
+// Cosine + f32<->blob live in one place (crate::vecmath), shared with the
+// diarizer, so the metric and encoding can't drift between the two indexes.
+pub use crate::vecmath::{blob_to_f32, cosine, f32_to_blob};
 
 /// Splits text into overlapping word-window chunks for indexing.
 pub fn chunk_text(text: &str, words_per_chunk: usize, overlap: usize) -> Vec<String> {

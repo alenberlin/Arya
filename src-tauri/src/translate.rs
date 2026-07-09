@@ -86,37 +86,18 @@ impl OllamaTranslator {
     }
 }
 
-#[derive(Deserialize)]
-struct OllamaResponse {
-    message: OllamaMessage,
-}
-#[derive(Deserialize)]
-struct OllamaMessage {
-    content: String,
-}
-
 impl Translator for OllamaTranslator {
     fn translate(&self, text: &str, target: &str) -> Option<String> {
-        let body = json!({
-            "model": self.model,
-            "stream": false,
-            "options": { "temperature": 0.2 },
-            "messages": [
-                { "role": "system", "content": system_prompt(target) },
-                { "role": "user", "content": text },
-            ],
-        });
-        let response = self
-            .client
-            .post(format!("{}/api/chat", self.base_url))
-            .timeout(self.timeout)
-            .json(&body)
-            .send()
-            .ok()?
-            .error_for_status()
-            .ok()?;
-        let parsed: OllamaResponse = response.json().ok()?;
-        non_empty(parsed.message.content)
+        // ollama_chat already trims + drops empty, matching non_empty().
+        crate::http::ollama_chat(
+            &self.client,
+            &self.base_url,
+            &self.model,
+            &system_prompt(target),
+            text,
+            0.2,
+            self.timeout,
+        )
     }
 }
 

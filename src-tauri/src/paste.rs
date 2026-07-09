@@ -1,8 +1,10 @@
 //! Inserting text into the foreground app (macOS).
 //!
-//! Strategy: swap the general pasteboard to the dictated text, synthesize
-//! Cmd+V into the frontmost app, then restore the previous pasteboard
-//! contents. Requires the Accessibility (TCC) grant for event synthesis.
+//! Strategy: prefer a direct Accessibility-API insertion into the focused
+//! element (no clipboard involved). If the app doesn't support that, fall back
+//! to swapping the general pasteboard to the dictated text, synthesizing Cmd+V,
+//! then restoring the previous pasteboard contents. Both require the
+//! Accessibility (TCC) grant.
 
 #[derive(Debug, thiserror::Error)]
 pub enum PasteError {
@@ -69,6 +71,8 @@ pub fn accessibility_trusted() -> bool {
 
 #[cfg(target_os = "macos")]
 mod macos {
+    use core_foundation::base::{CFRelease, CFTypeRef, TCFType};
+    use core_foundation::string::{CFString, CFStringRef};
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
     use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
     use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString, NSWorkspace};
@@ -78,9 +82,23 @@ mod macos {
 
     const KEY_V: u16 = 9; // kVK_ANSI_V
 
+    type AXUIElementRef = *const std::ffi::c_void;
+    const AX_SUCCESS: i32 = 0; // kAXErrorSuccess
+
     #[link(name = "ApplicationServices", kind = "framework")]
     unsafe extern "C" {
         fn AXIsProcessTrusted() -> bool;
+        fn AXUIElementCreateSystemWide() -> AXUIElementRef;
+        fn AXUIElementCopyAttributeValue(
+            element: AXUIElementRef,
+            attribute: CFStringRef,
+            value: *mut CFTypeRef,
+        ) -> i32;
+        fn AXUIElementSetAttributeValue(
+            element: AXUIElementRef,
+            attribute: CFStringRef,
+            value: CFTypeRef,
+        ) -> i32;
     }
 
     pub fn accessibility_trusted() -> bool {
@@ -117,9 +135,52 @@ mod macos {
         }
     }
 
+    /// Inserts `text` at the focused element's caret via the Accessibility API,
+    /// never touching the clipboard. Returns true on success; false when there
+    /// is no focused element or the app doesn't support setting selected text —
+    /// the caller then falls back to the pasteboard method.
+    ///
+    /// Setting `AXSelectedText` replaces the current selection with `text` (an
+    /// insertion at the caret when nothing is selected).
+    fn try_ax_insert(text: &str) -> bool {
+        unsafe {
+            let system = AXUIElementCreateSystemWide();
+            if system.is_null() {
+                return false;
+            }
+            let focused_attr = CFString::new("AXFocusedUIElement");
+            let mut focused: CFTypeRef = std::ptr::null();
+            let err = AXUIElementCopyAttributeValue(
+                system,
+                focused_attr.as_concrete_TypeRef(),
+                &mut focused,
+            );
+            CFRelease(system as CFTypeRef);
+            if err != AX_SUCCESS || focused.is_null() {
+                return false;
+            }
+            let selected_attr = CFString::new("AXSelectedText");
+            let value = CFString::new(text);
+            let set_err = AXUIElementSetAttributeValue(
+                focused as AXUIElementRef,
+                selected_attr.as_concrete_TypeRef(),
+                value.as_CFTypeRef(),
+            );
+            CFRelease(focused);
+            set_err == AX_SUCCESS
+        }
+    }
+
     pub fn paste_text(text: &str) -> Result<(), PasteError> {
         if !accessibility_trusted() {
             return Err(PasteError::AccessibilityDenied);
+        }
+        // Prefer direct AX insertion: it writes into the focused control without
+        // ever putting the dictated text on the shared clipboard, closing the
+        // save->paste->restore TOCTOU. Apps that don't support AX text setting
+        // fall through to the pasteboard method below (unchanged behavior).
+        if try_ax_insert(text) {
+            return Ok(());
         }
         unsafe {
             let pasteboard = NSPasteboard::generalPasteboard();

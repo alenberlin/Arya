@@ -1,6 +1,8 @@
-//! Tauri commands for the recording lifecycle, processing retry, and crash
-//! recovery. DB rows are the source of truth for session state; the recorder
-//! worker holds only the live stream.
+//! Tauri commands for the recording lifecycle (start/pause/resume/finish),
+//! processing retry, live preview, and generation settings. DB rows are the
+//! source of truth for session state; the recorder worker holds only the live
+//! stream. Crash recovery lives in [`super::recovery`], voice enrollment in
+//! [`super::enroll`].
 
 use std::sync::Mutex;
 
@@ -12,20 +14,12 @@ use super::settings::{save_generation_settings, GenerationSettings};
 use crate::audio::system_capture::SystemCapture;
 use crate::audio::wav_file;
 
+const BLANK_SYSTEM_AUDIO_MESSAGE: &str =
+    "System audio captured no samples. Check macOS System Audio Recording permission and make sure meeting audio is playing through this Mac.";
+
 /// Holds the live system-audio helper while a meeting-mode recording runs.
 #[derive(Default)]
 pub struct SystemCaptureSlot(pub Mutex<Option<SystemCapture>>);
-
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct RecoverableRecording {
-    pub session_id: String,
-    pub note_id: String,
-    pub note_title: String,
-    pub partial_path: String,
-    pub size_bytes: i64,
-    pub started_at: String,
-}
 
 fn recordings_dir(app: &AppHandle, session_id: &str) -> Result<std::path::PathBuf, String> {
     Ok(app
@@ -57,6 +51,11 @@ pub async fn start_recording_inner(
     source_mode: Option<String>,
 ) -> Result<String, String> {
     let want_system = source_mode.as_deref() == Some("microphone-and-system");
+    let helper_dir = if want_system {
+        Some(helper_bin_dir(app)?)
+    } else {
+        None
+    };
     let note_id = match note_id {
         Some(id) => id,
         None => {
@@ -69,19 +68,45 @@ pub async fn start_recording_inner(
     let session_id = uuid::Uuid::new_v4().to_string();
     let dir = recordings_dir(app, &session_id)?;
     let final_path = dir.join("microphone.wav");
+    let partial = wav_file::partial_path_for(&final_path);
+    let requested_mode = if want_system {
+        "microphone-and-system"
+    } else {
+        "microphone-only"
+    };
+    let system_partial = want_system.then(|| dir.join("system.partial.wav"));
 
-    let (sample_rate, channels) = recorder.start(StartSpec {
+    // Persist recoverability metadata BEFORE capture starts. If the app dies
+    // after the recorder creates bytes but before the final status update below,
+    // recovery can still find the session by its `starting` row and partial path.
+    insert_starting_session(
+        pool,
+        &session_id,
+        &note_id,
+        requested_mode,
+        &partial,
+        system_partial.as_deref(),
+    )
+    .await?;
+
+    let (sample_rate, channels) = match recorder.start(StartSpec {
         session_id: session_id.clone(),
         note_id: note_id.clone(),
         final_path: final_path.clone(),
         device: None,
-    })?;
+    }) {
+        Ok(spec) => spec,
+        Err(e) => {
+            cleanup_failed_start(pool, &session_id, &dir).await;
+            return Err(e);
+        }
+    };
 
     // Meeting mode: start the out-of-process system tap alongside the mic.
     // Failures degrade to mic-only with a visible warning, never a dead note.
     let mut system_started = false;
-    if want_system {
-        match SystemCapture::start(&helper_bin_dir(app)?, &dir) {
+    if let Some(helper_dir) = helper_dir.as_ref() {
+        match SystemCapture::start(helper_dir, &dir) {
             Ok(mut capture) => match capture.wait_ready(std::time::Duration::from_secs(8)) {
                 Ok(()) => {
                     let slot = app.state::<SystemCaptureSlot>();
@@ -91,11 +116,13 @@ pub async fn start_recording_inner(
                 Err(message) => {
                     let _ = app.emit("recording:system-audio-unavailable", message.clone());
                     eprintln!("system audio unavailable: {message}");
+                    remove_system_artifact(pool, &session_id).await?;
                 }
             },
             Err(message) => {
                 let _ = app.emit("recording:system-audio-unavailable", message.clone());
                 eprintln!("system audio unavailable: {message}");
+                remove_system_artifact(pool, &session_id).await?;
             }
         }
     }
@@ -105,60 +132,20 @@ pub async fn start_recording_inner(
         "microphone-only"
     };
 
-    let partial = wav_file::partial_path_for(&final_path);
-    // Persist the session + artifact rows atomically. The recorder and its WAV
-    // are already live, so if this fails we stop and remove them rather than
-    // leaving an orphaned recording with no recoverable session metadata.
-    let persisted = async {
-        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-        sqlx::query(
-            "INSERT INTO recording_sessions
-                 (id, note_id, status, source_mode, sample_rate, channels, started_at, updated_at)
-             VALUES (?1, ?2, 'recording', ?5, ?3, ?4,
-                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-        )
-        .bind(&session_id)
-        .bind(&note_id)
-        .bind(sample_rate as i64)
-        .bind(channels as i64)
-        .bind(mode_label)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-        sqlx::query(
-            "INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at)
-             VALUES (?1, ?2, 'microphone', ?3, 'partial', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-        )
-        .bind(uuid::Uuid::new_v4().to_string())
-        .bind(&session_id)
-        .bind(partial.to_string_lossy().to_string())
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-        if system_started {
-            sqlx::query(
-                "INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at)
-                 VALUES (?1, ?2, 'system', ?3, 'partial', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-            )
-            .bind(uuid::Uuid::new_v4().to_string())
-            .bind(&session_id)
-            .bind(dir.join("system.partial.wav").to_string_lossy().to_string())
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| e.to_string())?;
-        }
-        tx.commit().await.map_err(|e| e.to_string())
-    }
-    .await;
-    if let Err(e) = persisted {
+    if let Err(e) =
+        mark_session_recording(pool, &session_id, mode_label, sample_rate, channels).await
+    {
         let _ = recorder.finish();
-        if system_started {
-            *app.state::<SystemCaptureSlot>()
-                .0
-                .lock()
-                .expect("system capture slot") = None;
+        if let Some(capture) = app
+            .state::<SystemCaptureSlot>()
+            .0
+            .lock()
+            .expect("system capture slot")
+            .take()
+        {
+            let _ = capture.stop();
         }
-        let _ = std::fs::remove_dir_all(&dir);
+        cleanup_failed_start(pool, &session_id, &dir).await;
         return Err(e);
     }
     // Calendar context: title the note from the live event, keep attendees.
@@ -269,20 +256,29 @@ pub async fn finish_recording_inner(
             Ok(partial) => {
                 let system_final = partial.with_file_name("system.wav");
                 if std::fs::rename(&partial, &system_final).is_ok() {
-                    sqlx::query(
-                        "UPDATE audio_artifacts SET path = ?2, status = 'final', size_bytes = ?3
-                         WHERE session_id = ?1 AND source = 'system'",
-                    )
-                    .bind(&session_id)
-                    .bind(system_final.to_string_lossy().to_string())
-                    .bind(
-                        std::fs::metadata(&system_final)
-                            .map(|m| m.len() as i64)
-                            .unwrap_or(0),
-                    )
-                    .execute(pool)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    let size = std::fs::metadata(&system_final)
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                    if system_artifact_has_audio(size) {
+                        sqlx::query(
+                            "UPDATE audio_artifacts SET path = ?2, status = 'final', size_bytes = ?3
+                             WHERE session_id = ?1 AND source = 'system'",
+                        )
+                        .bind(&session_id)
+                        .bind(system_final.to_string_lossy().to_string())
+                        .bind(size as i64)
+                        .execute(pool)
+                        .await
+                        .map_err(|e| e.to_string())?;
+                    } else {
+                        let _ = app.emit(
+                            "recording:system-audio-unavailable",
+                            BLANK_SYSTEM_AUDIO_MESSAGE,
+                        );
+                        eprintln!("system audio unavailable: {BLANK_SYSTEM_AUDIO_MESSAGE}");
+                        let _ = std::fs::remove_file(&system_final);
+                        remove_system_artifact(pool, &session_id).await?;
+                    }
                 }
             }
             Err(message) => eprintln!("system capture stop failed: {message}"),
@@ -309,6 +305,96 @@ pub async fn finish_recording_inner(
     Ok(note_id)
 }
 
+async fn insert_starting_session(
+    pool: &SqlitePool,
+    session_id: &str,
+    note_id: &str,
+    source_mode: &str,
+    microphone_partial: &std::path::Path,
+    system_partial: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query(
+        "INSERT INTO recording_sessions
+             (id, note_id, status, source_mode, sample_rate, channels, started_at, updated_at)
+         VALUES (?1, ?2, 'starting', ?3, 0, 0,
+                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+    )
+    .bind(session_id)
+    .bind(note_id)
+    .bind(source_mode)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at)
+         VALUES (?1, ?2, 'microphone', ?3, 'partial', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+    )
+    .bind(uuid::Uuid::new_v4().to_string())
+    .bind(session_id)
+    .bind(microphone_partial.to_string_lossy().to_string())
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| e.to_string())?;
+    if let Some(path) = system_partial {
+        sqlx::query(
+            "INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at)
+             VALUES (?1, ?2, 'system', ?3, 'partial', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+        )
+        .bind(uuid::Uuid::new_v4().to_string())
+        .bind(session_id)
+        .bind(path.to_string_lossy().to_string())
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().await.map_err(|e| e.to_string())
+}
+
+async fn mark_session_recording(
+    pool: &SqlitePool,
+    session_id: &str,
+    source_mode: &str,
+    sample_rate: u32,
+    channels: u16,
+) -> Result<(), String> {
+    sqlx::query(
+        "UPDATE recording_sessions
+         SET status = 'recording', source_mode = ?2, sample_rate = ?3, channels = ?4,
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?1",
+    )
+    .bind(session_id)
+    .bind(source_mode)
+    .bind(sample_rate as i64)
+    .bind(channels as i64)
+    .execute(pool)
+    .await
+    .map(|_| ())
+    .map_err(|e| e.to_string())
+}
+
+async fn remove_system_artifact(pool: &SqlitePool, session_id: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM audio_artifacts WHERE session_id = ?1 AND source = 'system'")
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+fn system_artifact_has_audio(size_bytes: u64) -> bool {
+    size_bytes > wav_file::HEADER_LEN
+}
+
+async fn cleanup_failed_start(pool: &SqlitePool, session_id: &str, dir: &std::path::Path) {
+    let _ = sqlx::query("DELETE FROM recording_sessions WHERE id = ?1")
+        .bind(session_id)
+        .execute(pool)
+        .await;
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[tauri::command]
 pub fn recording_status(recorder: State<'_, Recorder>) -> RecorderStatus {
     recorder.status()
@@ -325,268 +411,6 @@ pub fn retry_processing(
     Ok(())
 }
 
-/// Sessions that were live when the app died, with recoverable bytes on disk.
-/// Disk wins: a session only counts when its partial file has audio data.
-#[tauri::command]
-pub async fn scan_recoverable_recordings(
-    pool: State<'_, SqlitePool>,
-) -> Result<Vec<RecoverableRecording>, String> {
-    scan_recoverable_inner(&pool).await
-}
-
-pub async fn scan_recoverable_inner(
-    pool: &SqlitePool,
-) -> Result<Vec<RecoverableRecording>, String> {
-    let candidates = sqlx::query_as::<_, RecoverableRecording>(
-        "SELECT s.id AS session_id, s.note_id, n.title AS note_title,
-                a.path AS partial_path, 0 AS size_bytes, s.started_at
-         FROM recording_sessions s
-         JOIN notes n ON n.id = s.note_id
-         JOIN audio_artifacts a ON a.session_id = s.id AND a.status = 'partial'
-         WHERE s.status IN ('recording', 'paused')
-         ORDER BY s.started_at DESC",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-
-    Ok(candidates
-        .into_iter()
-        .filter_map(|mut c| {
-            let len = std::fs::metadata(&c.partial_path).ok()?.len();
-            // 44-byte header + at least a second of audio to be worth it.
-            if len > 44 + 32_000 {
-                c.size_bytes = len as i64;
-                Some(c)
-            } else {
-                None
-            }
-        })
-        .collect())
-}
-
-/// Repairs the partial WAV, promotes it to final, and processes the note.
-#[tauri::command]
-pub async fn recover_recording(
-    app: AppHandle,
-    pool: State<'_, SqlitePool>,
-    session_id: String,
-) -> Result<String, String> {
-    recover_recording_inner(&app, &pool, &session_id).await
-}
-
-pub async fn recover_recording_inner(
-    app: &AppHandle,
-    pool: &SqlitePool,
-    session_id: &str,
-) -> Result<String, String> {
-    let note_id = recover_artifacts(pool, session_id).await?;
-    spawn_processing(app.clone(), pool.clone(), note_id.clone());
-    Ok(note_id)
-}
-
-/// The pure recovery core (no AppHandle): repair + promote every partial
-/// artifact of a crashed session, mark it finished, return the note id.
-/// Separated so the multi-artifact data-loss fix is covered by a fast,
-/// deterministic test instead of a flaky live-audio E2E.
-pub async fn recover_artifacts(pool: &SqlitePool, session_id: &str) -> Result<String, String> {
-    // A meeting-mode session has two partial artifacts (microphone, system).
-    // Recover every one that carries data; drop only silent/empty tracks.
-    let rows = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT s.note_id, a.source, a.path FROM recording_sessions s
-         JOIN audio_artifacts a ON a.session_id = s.id AND a.status = 'partial'
-         WHERE s.id = ?1",
-    )
-    .bind(session_id)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())?;
-    let note_id = rows
-        .first()
-        .map(|(note_id, _, _)| note_id.clone())
-        .ok_or_else(|| "no partial artifacts for session".to_string())?;
-
-    let mut recovered_any = false;
-    for (_, source, partial_path) in &rows {
-        let partial = std::path::PathBuf::from(partial_path);
-        // An empty/header-only track (repair returns Empty) is skipped, not
-        // fatal, so one silent source can't block recovering the other.
-        if wav_file::repair_header(&partial).is_err() {
-            continue;
-        }
-        let final_path = partial.with_file_name(format!("{source}.wav"));
-        if std::fs::rename(&partial, &final_path).is_err() {
-            continue;
-        }
-        recovered_any = true;
-        sqlx::query(
-            "UPDATE audio_artifacts SET path = ?3, status = 'final', size_bytes = ?4
-             WHERE session_id = ?1 AND source = ?2",
-        )
-        .bind(session_id)
-        .bind(source)
-        .bind(final_path.to_string_lossy().to_string())
-        .bind(
-            std::fs::metadata(&final_path)
-                .map(|m| m.len() as i64)
-                .unwrap_or(0),
-        )
-        .execute(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    }
-    if !recovered_any {
-        return Err("no recoverable audio in this session".to_string());
-    }
-    sqlx::query("UPDATE recording_sessions SET status = 'finished', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1")
-        .bind(session_id)
-        .execute(pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(note_id)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::test_pool;
-
-    /// Writes a canonical 16-bit PCM WAV, then zeroes the RIFF/data size
-    /// fields the way a `kill -9` leaves a torn file.
-    fn crashed_partial(path: &std::path::Path, seconds: u32) {
-        let spec = hound::WavSpec {
-            channels: 1,
-            sample_rate: 16_000,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        };
-        let mut writer = hound::WavWriter::create(path, spec).unwrap();
-        for i in 0..(16_000 * seconds) {
-            // A loud tone so the bytes are unambiguously real audio.
-            let v = ((i as f32 * 0.05).sin() * 12_000.0) as i16;
-            writer.write_sample(v).unwrap();
-        }
-        writer.finalize().unwrap();
-        let mut bytes = std::fs::read(path).unwrap();
-        bytes[4..8].copy_from_slice(&[0, 0, 0, 0]);
-        bytes[40..44].copy_from_slice(&[0, 0, 0, 0]);
-        std::fs::write(path, bytes).unwrap();
-    }
-
-    async fn seed_session(pool: &SqlitePool, dir: &std::path::Path, sources: &[&str]) -> String {
-        let note_id = uuid::Uuid::new_v4().to_string();
-        let session_id = uuid::Uuid::new_v4().to_string();
-        sqlx::query("INSERT INTO notes (id, title, created_at) VALUES (?1, 'New recording', '2026-01-01T00:00:00Z')")
-            .bind(&note_id).execute(pool).await.unwrap();
-        sqlx::query(
-            "INSERT INTO recording_sessions (id, note_id, status, source_mode, sample_rate, channels, started_at, updated_at)
-             VALUES (?1, ?2, 'recording', 'microphone-and-system', 16000, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-        ).bind(&session_id).bind(&note_id).execute(pool).await.unwrap();
-        for source in sources {
-            let partial = dir.join(format!("{source}.partial.wav"));
-            crashed_partial(&partial, 2);
-            sqlx::query("INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at) VALUES (?1, ?2, ?3, ?4, 'partial', '2026-01-01T00:00:00Z')")
-                .bind(uuid::Uuid::new_v4().to_string()).bind(&session_id).bind(*source)
-                .bind(partial.to_string_lossy().to_string()).execute(pool).await.unwrap();
-        }
-        session_id
-    }
-
-    /// The C2 regression guard: a crashed meeting session's mic AND system
-    /// tracks must both be promoted to final (the data-loss bug that dropped
-    /// the system track).
-    #[tokio::test]
-    async fn recovery_promotes_all_source_artifacts() {
-        let pool = test_pool().await;
-        let dir = std::env::temp_dir().join(format!("arya-rec-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let session_id = seed_session(&pool, &dir, &["microphone", "system"]).await;
-
-        recover_artifacts(&pool, &session_id).await.unwrap();
-
-        let finals = sqlx::query_as::<_, (String, String)>(
-            "SELECT source, status FROM audio_artifacts WHERE session_id = ?1 ORDER BY source",
-        )
-        .bind(&session_id)
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        assert_eq!(finals.len(), 2);
-        assert!(
-            finals.iter().all(|(_, status)| status == "final"),
-            "both tracks must be final: {finals:?}"
-        );
-        // Each promoted to <source>.wav with real bytes.
-        assert!(dir.join("microphone.wav").exists());
-        assert!(dir.join("system.wav").exists());
-        let session_status =
-            sqlx::query_scalar::<_, String>("SELECT status FROM recording_sessions WHERE id = ?1")
-                .bind(&session_id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(session_status, "finished");
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    /// One silent/empty track must not block recovering the other.
-    #[tokio::test]
-    async fn recovery_skips_empty_track_but_keeps_the_good_one() {
-        let pool = test_pool().await;
-        let dir = std::env::temp_dir().join(format!("arya-rec-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let session_id = seed_session(&pool, &dir, &["microphone", "system"]).await;
-        // Truncate the system track to a header-only (empty) file.
-        std::fs::write(dir.join("system.partial.wav"), vec![0u8; 44]).unwrap();
-
-        let note_id = recover_artifacts(&pool, &session_id).await.unwrap();
-        assert!(!note_id.is_empty());
-
-        let mic = sqlx::query_scalar::<_, String>(
-            "SELECT status FROM audio_artifacts WHERE session_id = ?1 AND source = 'microphone'",
-        )
-        .bind(&session_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        let sys = sqlx::query_scalar::<_, String>(
-            "SELECT status FROM audio_artifacts WHERE session_id = ?1 AND source = 'system'",
-        )
-        .bind(&session_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-        assert_eq!(mic, "final", "the good mic track must recover");
-        assert_eq!(
-            sys, "partial",
-            "the empty system track stays partial (skipped)"
-        );
-        std::fs::remove_dir_all(&dir).ok();
-    }
-}
-
-/// Discards a crashed session's audio and marks it discarded.
-#[tauri::command]
-pub async fn discard_recording(
-    pool: State<'_, SqlitePool>,
-    session_id: String,
-) -> Result<(), String> {
-    let paths =
-        sqlx::query_scalar::<_, String>("SELECT path FROM audio_artifacts WHERE session_id = ?1")
-            .fetch_all(&*pool)
-            .await
-            .map_err(|e| e.to_string())?;
-    for path in paths {
-        let _ = std::fs::remove_file(&path);
-    }
-    sqlx::query("UPDATE recording_sessions SET status = 'discarded', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1")
-        .bind(&session_id)
-        .execute(&*pool)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 #[tauri::command]
 pub fn get_generation_settings(app: AppHandle) -> GenerationSettings {
     super::settings::load_generation_settings(&app)
@@ -597,132 +421,13 @@ pub fn set_generation_settings(app: AppHandle, settings: GenerationSettings) -> 
     save_generation_settings(&app, &settings)
 }
 
-fn spawn_processing(app: AppHandle, pool: SqlitePool, note_id: String) {
+pub(super) fn spawn_processing(app: AppHandle, pool: SqlitePool, note_id: String) {
     std::thread::Builder::new()
         .name("arya-note-processing".into())
         .spawn(move || {
             let _ = super::processing::process_note(&app, &pool, &note_id);
         })
         .expect("spawn processing thread");
-}
-
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
-#[serde(rename_all = "camelCase")]
-pub struct SpeakerProfileInfo {
-    pub id: String,
-    pub name: String,
-    pub created_at: String,
-}
-
-/// Records `seconds` of mic audio and enrolls it as a named voice profile.
-#[tauri::command]
-pub async fn enroll_speaker_profile(
-    app: AppHandle,
-    pool: State<'_, SqlitePool>,
-    name: String,
-    seconds: Option<u32>,
-) -> Result<SpeakerProfileInfo, String> {
-    let name = name.trim().to_string();
-    if name.is_empty() {
-        return Err("a name is required".into());
-    }
-    let seconds = seconds.unwrap_or(6).clamp(3, 20);
-    let pool = pool.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || enroll_blocking(&app, &pool, &name, seconds))
-        .await
-        .map_err(|e| e.to_string())?
-}
-
-/// Blocking enrollment body (shared with dev hooks): capture, embed, upsert.
-pub fn enroll_blocking(
-    app: &AppHandle,
-    pool: &SqlitePool,
-    name: &str,
-    seconds: u32,
-) -> Result<SpeakerProfileInfo, String> {
-    {
-        let handle = crate::audio::start_capture(None).map_err(|e| e.to_string())?;
-        std::thread::sleep(std::time::Duration::from_secs(seconds as u64));
-        let clip = handle.stop().map_err(|e| e.to_string())?;
-        if clip.duration_secs() < 2.0 {
-            return Err("recording too short".to_string());
-        }
-        // Embed speech only: concatenate the energetic spans so the profile
-        // matches what turn slices look like (no silence dilution).
-        let spans =
-            crate::audio::turns::detect_turns(&clip, &crate::audio::turns::TurnConfig::default());
-        let clip = if spans.is_empty() {
-            clip
-        } else {
-            let mut samples = Vec::new();
-            for span in &spans {
-                samples
-                    .extend_from_slice(&crate::audio::turns::slice_turn(&clip, span, 100).samples);
-            }
-            crate::speech::AudioClip { samples }
-        };
-        if clip.duration_secs() < 1.5 {
-            return Err("not enough speech in the enrollment recording".to_string());
-        }
-        let models_dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("models");
-        let model_path = tauri::async_runtime::block_on(crate::speech::models::ensure_model(
-            &super::diarize::SPEAKER_MODEL,
-            &models_dir,
-        ))
-        .map_err(|e| e.to_string())?;
-        let extractor = super::diarize::get_or_load_extractor(&model_path.to_string_lossy())?;
-        let embedding = extractor
-            .lock()
-            .expect("extractor lock")
-            .compute_speaker_embedding(clip.samples, crate::speech::AudioClip::SAMPLE_RATE)
-            .map_err(|e| e.to_string())?;
-        let blob = super::diarize::f32_to_blob(&embedding);
-        let id = uuid::Uuid::new_v4().to_string();
-        tauri::async_runtime::block_on(async {
-            sqlx::query(
-                "INSERT INTO speaker_profiles (id, name, embedding, created_at)
-                 VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-                 ON CONFLICT(name) DO UPDATE SET embedding = excluded.embedding",
-            )
-            .bind(&id)
-            .bind(name)
-            .bind(&blob)
-            .execute(pool)
-            .await
-            .map_err(|e| e.to_string())
-        })?;
-        Ok(SpeakerProfileInfo {
-            id,
-            name: name.to_string(),
-            created_at: String::new(),
-        })
-    }
-}
-
-#[tauri::command]
-pub async fn list_speaker_profiles(
-    pool: State<'_, SqlitePool>,
-) -> Result<Vec<SpeakerProfileInfo>, String> {
-    sqlx::query_as::<_, SpeakerProfileInfo>(
-        "SELECT id, name, created_at FROM speaker_profiles ORDER BY name",
-    )
-    .fetch_all(&*pool)
-    .await
-    .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn delete_speaker_profile(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
-    sqlx::query("DELETE FROM speaker_profiles WHERE id = ?1")
-        .bind(id)
-        .execute(&*pool)
-        .await
-        .map(|_| ())
-        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -815,4 +520,51 @@ async fn update_session_status(
     .await
     .map(|_| ())
     .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_pool;
+
+    #[tokio::test]
+    async fn starting_session_with_partial_bytes_is_recoverable() {
+        let pool = test_pool().await;
+        let note = crate::notes::insert_note(&pool, "Crash window")
+            .await
+            .unwrap();
+        let session_id = uuid::Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("arya-starting-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mic_partial = dir.join("microphone.partial.wav");
+
+        insert_starting_session(
+            &pool,
+            &session_id,
+            &note.id,
+            "microphone-only",
+            &mic_partial,
+            None,
+        )
+        .await
+        .unwrap();
+        std::fs::write(&mic_partial, vec![0u8; 44 + 32_001]).unwrap();
+
+        let recoverable = super::super::recovery::scan_recoverable_inner(&pool)
+            .await
+            .unwrap();
+        assert!(
+            recoverable.iter().any(|r| r.session_id == session_id),
+            "a crash after capture starts but before the status update must be recoverable"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn header_only_system_audio_is_blank() {
+        assert!(!system_artifact_has_audio(wav_file::HEADER_LEN));
+        assert!(!system_artifact_has_audio(0));
+        assert!(system_artifact_has_audio(wav_file::HEADER_LEN + 2));
+    }
 }

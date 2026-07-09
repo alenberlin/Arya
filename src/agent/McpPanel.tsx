@@ -113,13 +113,26 @@ export function McpPanel() {
                     {server.name}
                   </div>
                 </div>
-                <span
-                  className="hstack mono"
-                  style={{ fontSize: 11, color: "var(--success)", gap: 5 }}
-                >
-                  <span className="tier-dot" style={{ background: "var(--success)" }} />
-                  Connected
-                </span>
+                {/* Reflects the stored enabled flag, not a live process probe —
+                    "Connected" was hardcoded and lied about disabled/crashed
+                    servers. A real status probe would need a backend command. */}
+                {server.enabled !== 0 ? (
+                  <span
+                    className="hstack mono"
+                    style={{ fontSize: 11, color: "var(--success)", gap: 5 }}
+                  >
+                    <span className="tier-dot" style={{ background: "var(--success)" }} />
+                    Enabled
+                  </span>
+                ) : (
+                  <span
+                    className="hstack mono"
+                    style={{ fontSize: 11, color: "var(--text-muted)", gap: 5 }}
+                  >
+                    <span className="tier-dot" style={{ background: "var(--text-muted)" }} />
+                    Disabled
+                  </span>
+                )}
               </div>
               <div className="muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
                 <code>{server.command}</code>
