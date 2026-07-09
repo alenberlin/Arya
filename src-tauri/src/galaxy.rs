@@ -1,13 +1,18 @@
 //! The Galaxy knowledge-graph assembly (F10).
 //!
-//! Builds a node+edge graph of the connected brain: notes and dictations are
-//! nodes (a "meeting" is a note with a transcript — same kind). Edges come from
-//! three sources: `mention`/manual edges in the `links` table (the `@`-mentions),
-//! structural `child` edges from note nesting, and — best-effort, only when the
-//! local embeddings exist — `semantic` edges from cosine similarity over
-//! `rag_chunks` (per-node averaged vector, top-K neighbours). Without an Ollama
-//! reindex the semantic layer is simply empty; the mention/structural graph
-//! always renders. Node ids are composite: `"<kind>:<uuid>"`.
+//! Builds a node+edge graph of the connected brain from the durable *documents*
+//! a person actually keeps: notes (a "meeting" is a note with a transcript —
+//! same kind) and mind maps. Raw dictation-history rows are deliberately NOT
+//! nodes: that table is a transient capture log (every phrase ever spoken,
+//! including one-word tests), so surfacing each as a star buried the real
+//! documents in noise. A dictation worth keeping becomes a note. Edges come
+//! from three sources: `mention`/manual edges in the `links` table (the
+//! `@`-mentions), structural `child` edges from note nesting, and —
+//! best-effort, only when the local embeddings exist — `semantic` edges from
+//! cosine similarity over `rag_chunks` (per-node averaged vector, top-K
+//! neighbours). Without an Ollama reindex the semantic layer is simply empty;
+//! the mention/structural graph always renders. Node ids are composite:
+//! `"<kind>:<uuid>"`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -68,21 +73,20 @@ pub async fn assemble_graph(pool: &SqlitePool) -> Result<Graph, sqlx::Error> {
         });
     }
 
-    let dictations: Vec<(String, String)> =
-        sqlx::query_as("SELECT id, substr(clean_text, 1, 48) FROM dictation_history")
-            .fetch_all(pool)
-            .await?;
-    for (id, text) in dictations {
-        let cid = format!("dictation:{id}");
+    let mindmaps: Vec<(String, String)> = sqlx::query_as("SELECT id, title FROM mindmaps")
+        .fetch_all(pool)
+        .await?;
+    for (id, title) in mindmaps {
+        let cid = format!("mindmap:{id}");
         node_ids.insert(cid.clone());
-        let label = if text.trim().is_empty() {
-            "(empty)".to_string()
+        let label = if title.trim().is_empty() {
+            "Untitled map".to_string()
         } else {
-            text
+            title
         };
         nodes.push(GraphNode {
             id: cid,
-            kind: "dictation".into(),
+            kind: "mindmap".into(),
             label,
         });
     }
@@ -136,7 +140,7 @@ pub async fn assemble_graph(pool: &SqlitePool) -> Result<Graph, sqlx::Error> {
     Ok(Graph { nodes, edges })
 }
 
-/// Add best-effort semantic edges. No-op when there are no note/dictation
+/// Add best-effort semantic edges between notes. No-op when there are no note
 /// embeddings (the local index hasn't been built), so the graph degrades to
 /// structural + mention edges offline.
 async fn add_semantic_edges(
@@ -147,7 +151,7 @@ async fn add_semantic_edges(
 ) -> Result<(), sqlx::Error> {
     let chunks: Vec<(String, String, Vec<u8>)> = sqlx::query_as(
         "SELECT source_kind, source_id, embedding FROM rag_chunks
-         WHERE source_kind IN ('note', 'dictation')",
+         WHERE source_kind = 'note'",
     )
     .fetch_all(pool)
     .await?;
@@ -242,5 +246,39 @@ mod tests {
         );
         // No embeddings in the test DB → no semantic edges.
         assert!(!g.edges.iter().any(|e| e.relation == "semantic"));
+    }
+
+    #[tokio::test]
+    async fn mindmaps_are_nodes_but_dictation_history_is_not() {
+        let pool = test_pool().await;
+        let note = crate::notes::insert_note(&pool, "Real note").await.unwrap();
+        sqlx::query(
+            "INSERT INTO mindmaps (id, title, doc_json, created_at, updated_at)
+             VALUES ('m1', 'My map', '', '2026-01-01', '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // A transient dictation-history row is a capture-log entry, not a document.
+        sqlx::query(
+            "INSERT INTO dictation_history (id, raw_text, clean_text, duration_ms, asr_ms, created_at)
+             VALUES ('d1', 'test', 'test', 100, 50, '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let g = assemble_graph(&pool).await.unwrap();
+        assert!(g.nodes.iter().any(|n| n.id == format!("note:{}", note.id)));
+        assert!(
+            g.nodes
+                .iter()
+                .any(|n| n.kind == "mindmap" && n.id == "mindmap:m1"),
+            "mind maps are documents and should be stars"
+        );
+        assert!(
+            !g.nodes.iter().any(|n| n.kind == "dictation"),
+            "dictation-history rows must never become stars"
+        );
     }
 }

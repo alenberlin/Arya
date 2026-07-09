@@ -71,16 +71,16 @@ describe("NotesWorkspace", () => {
     const notesList = await screen.findByRole("list", { name: "notes" });
     await user.click(within(notesList).getAllByRole("button", { name: /Saved note/ })[0]);
     // Rollback is shared across every edited field (editDetail); assert it via
-    // the manual-notes field, which stays a controlled textarea after the body
-    // moved to the block editor.
-    const manual = await screen.findByLabelText("manual notes");
-    expect(manual).toHaveValue("Persisted manual notes");
+    // the title, which is always present (the manual-notes capture now only
+    // shows while recording, and the body moved to the block editor).
+    const title = await screen.findByLabelText("note title");
+    expect(title).toHaveValue("Saved note");
 
-    await user.clear(manual);
-    await user.type(manual, "Unsaved manual notes");
-    expect(manual).toHaveValue("Unsaved manual notes");
+    await user.clear(title);
+    await user.type(title, "Unsaved title");
+    expect(title).toHaveValue("Unsaved title");
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("disk full"));
-    expect(manual).toHaveValue("Persisted manual notes");
+    expect(title).toHaveValue("Saved note");
   });
 });

@@ -52,6 +52,7 @@ import { BacklinksPanel } from "./BacklinksPanel";
 import { BlockEditor, type MentionItem } from "./BlockEditor";
 import type { MentionTarget } from "./blockDocument";
 import { NoteBanners } from "./NoteBanners";
+import "./notes-chrome.css";
 
 const STATUS_LABEL: Record<string, string> = {
   idle: "",
@@ -134,7 +135,15 @@ const SORT_INSTRUCTION =
 
 /** Notes workspace: a list panel (recorder, banners, folders, notes) beside an
  * editor panel (title, live capture, note body, transcript). */
-export function NotesWorkspace() {
+/** When another surface (e.g. Galaxy) asks to open a specific note, App passes
+ * its id here; the workspace opens it on mount/change, then clears the request. */
+export function NotesWorkspace({
+  openNoteId,
+  onOpenConsumed,
+}: {
+  openNoteId?: string | null;
+  onOpenConsumed?: () => void;
+} = {}) {
   const [notes, setNotes] = useState<NoteSummary[]>([]);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
@@ -164,6 +173,7 @@ export function NotesWorkspace() {
   const [sortPreview, setSortPreview] = useState<string | null>(null);
   const [sorting, setSorting] = useState(false);
   const [editorEpoch, setEditorEpoch] = useState(0);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -228,6 +238,7 @@ export function NotesWorkspace() {
     // response overwrite B's editor.
     const req = ++openReqRef.current;
     setActiveNoteId(id);
+    setSaveState("idle");
     setOpenTabs((tabs) => (tabs.includes(id) ? tabs : [...tabs, id]));
     try {
       const [nextDetail, nextTurns, nextAttachments] = await Promise.all([
@@ -244,6 +255,13 @@ export function NotesWorkspace() {
       if (openReqRef.current === req) setError(String(e));
     }
   }, []);
+
+  // Honour an external open request (e.g. Galaxy's "Open"), then clear it.
+  useEffect(() => {
+    if (!openNoteId) return;
+    void openNote(openNoteId);
+    onOpenConsumed?.();
+  }, [openNoteId, openNote, onOpenConsumed]);
 
   /** F15: resolve a mentioned node's text and apply the instruction to it. Only
    * notes are resolvable today; returns "" (insert nothing) on any failure. */
@@ -466,6 +484,7 @@ export function NotesWorkspace() {
     const next = { ...detail, ...fields };
     const revision = ++editRevisionRef.current;
     setDetail(next);
+    setSaveState("saving");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       void updateNote(next.id, {
@@ -475,6 +494,7 @@ export function NotesWorkspace() {
         documentJson: next.documentJson,
       })
         .then(async () => {
+          if (revision === editRevisionRef.current) setSaveState("saved");
           // Reconcile the note's mention edges only when the body changed. A
           // link-graph failure must never roll back the saved note, so it's
           // best-effort (matches the fault-isolated reconcile on the Rust side).
@@ -500,6 +520,7 @@ export function NotesWorkspace() {
           ) {
             setDetail(saved);
           }
+          if (revision === editRevisionRef.current) setSaveState("idle");
           setError(String(e));
         });
     }, 600);
@@ -880,7 +901,10 @@ export function NotesWorkspace() {
         ) : null}
 
         {detail ? (
-          <div className="panel-body" style={{ padding: "22px 28px 28px" }}>
+          <div
+            className="panel-body note-doc"
+            style={{ padding: "22px 28px 28px", maxWidth: 760, width: "100%", margin: "0 auto" }}
+          >
             {error ? (
               <p role="alert" style={{ marginBottom: 12 }}>
                 {error}
@@ -913,12 +937,27 @@ export function NotesWorkspace() {
                 </span>
               </div>
             ) : null}
-            <input
-              aria-label="note title"
-              className="note-title"
-              value={detail.title}
-              onChange={(e) => editDetail({ title: e.target.value })}
-            />
+            <div className="note-detail-head">
+              <input
+                aria-label="note title"
+                className="note-title"
+                value={detail.title}
+                onChange={(e) => editDetail({ title: e.target.value })}
+              />
+              {saveState !== "idle" ? (
+                <span className="note-savechip" data-state={saveState}>
+                  {saveState === "saving" ? "Saving…" : "Saved"}
+                </span>
+              ) : null}
+            </div>
+            <div className="note-meta">
+              {[
+                detail.folderId ? folders.find((f) => f.id === detail.folderId)?.name : null,
+                formatWhen(detail.createdAt),
+              ]
+                .filter(Boolean)
+                .join(" · ") || "Draft"}
+            </div>
             {recording ? (
               <div className="waveform" style={{ margin: "12px 0" }} aria-hidden="true">
                 {WAVE.map((b, i) => (
@@ -969,36 +1008,43 @@ export function NotesWorkspace() {
               </blockquote>
             ) : null}
 
-            <label style={{ marginTop: 18 }}>
-              Manual notes
-              <textarea
-                aria-label="manual notes"
-                value={detail.manualNotes}
-                onChange={(e) => editDetail({ manualNotes: e.target.value })}
-                rows={3}
-                style={{ marginTop: 6 }}
-              />
-            </label>
+            {/* The note is one document. The manual-notes capture only appears
+                while recording — that's the only time you jot alongside a live
+                transcript; afterwards it's folded into the note during
+                processing, so a permanent second field just confused things. */}
+            {recording ? (
+              <label style={{ marginTop: 18 }}>
+                Notes while recording
+                <textarea
+                  aria-label="manual notes"
+                  value={detail.manualNotes}
+                  onChange={(e) => editDetail({ manualNotes: e.target.value })}
+                  rows={3}
+                  style={{ marginTop: 6 }}
+                />
+              </label>
+            ) : null}
             <div className="note-editor-field" style={{ marginTop: 14 }}>
-              <div className="hstack spread" style={{ marginBottom: 6 }}>
-                <span className="section-label">Note</span>
-                <button
-                  type="button"
-                  className="btn-sm btn-ghost"
-                  disabled={sorting || !detail.bodyMd.trim()}
-                  title="Reorganize this note into coherent sections"
-                  onClick={() => {
-                    if (sorting) return;
-                    setSorting(true);
-                    void aiTransform(detail.bodyMd, SORT_INSTRUCTION)
-                      .then(setSortPreview)
-                      .catch((e) => setError(String(e)))
-                      .finally(() => setSorting(false));
-                  }}
-                >
-                  {sorting ? "Sorting…" : "Sort"}
-                </button>
-              </div>
+              {detail.bodyMd.trim() ? (
+                <div className="hstack" style={{ justifyContent: "flex-end", marginBottom: 6 }}>
+                  <button
+                    type="button"
+                    className="btn-sm btn-ghost"
+                    disabled={sorting}
+                    title="Reorganize this note into coherent sections"
+                    onClick={() => {
+                      if (sorting) return;
+                      setSorting(true);
+                      void aiTransform(detail.bodyMd, SORT_INSTRUCTION)
+                        .then(setSortPreview)
+                        .catch((e) => setError(String(e)))
+                        .finally(() => setSorting(false));
+                    }}
+                  >
+                    {sorting ? "Sorting…" : "Sort"}
+                  </button>
+                </div>
+              ) : null}
               <BlockEditor
                 key={`${detail.id}:${editorEpoch}`}
                 initialDocumentJson={detail.documentJson}
@@ -1148,9 +1194,12 @@ export function NotesWorkspace() {
           </div>
         ) : (
           <div className="panel-body">
-            <div className="empty">
-              <NotesIcon className="muted" />
-              <p style={{ marginTop: 8 }}>Select a note, or press Record to capture one.</p>
+            <div className="empty note-empty">
+              <span className="note-empty-icon">
+                <NotesIcon />
+              </span>
+              <div className="note-empty-title">Your notes live here</div>
+              <p>Select a note from the list, or press Record to capture one.</p>
             </div>
           </div>
         )}

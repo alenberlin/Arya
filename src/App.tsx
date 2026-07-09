@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import brand from "../brand.json";
 import { AccountGate } from "./account/AccountGate";
 import { AccountPanel } from "./account/AccountPanel";
@@ -48,6 +48,9 @@ export function App() {
   const [account, setAccount] = useState<AccountSnapshot | null>(null);
   const [autostart, setAutostart] = useState(false);
   const [autostartPrompt, setAutostartPrompt] = useState(false);
+  const [pendingNote, setPendingNote] = useState<string | null>(null);
+
+  const clearPendingNote = useCallback(() => setPendingNote(null), []);
 
   const setTheme = (next: Theme) => {
     saveTheme(next);
@@ -66,6 +69,25 @@ export function App() {
     }
     localStorage.setItem("arya-autostart-decided", "true");
   };
+
+  // Cross-surface deep-links (e.g. Galaxy's "Open"): switch to the owning tab,
+  // and hand a note request to the workspace so it opens even on fresh mount.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ kind: string; id: string }>).detail;
+      if (!detail) return;
+      if (detail.kind === "note") {
+        setPendingNote(detail.id);
+        setTab("notes");
+      } else if (detail.kind === "dictation") {
+        setTab("dictation");
+      } else if (detail.kind === "mindmap") {
+        setTab("mindmap");
+      }
+    };
+    window.addEventListener("arya:open-node", handler);
+    return () => window.removeEventListener("arya:open-node", handler);
+  }, []);
 
   useEffect(() => {
     const unlisten = listen("tray:new-session", () => setTab("agent"));
@@ -110,7 +132,7 @@ export function App() {
   }
 
   const panel = {
-    notes: <NotesWorkspace />,
+    notes: <NotesWorkspace openNoteId={pendingNote} onOpenConsumed={clearPendingNote} />,
     agent: <AgentSection />,
     search: <SearchPanel />,
     galaxy: <GalaxyPanel />,

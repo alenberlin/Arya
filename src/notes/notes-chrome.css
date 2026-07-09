@@ -1,0 +1,68 @@
+/*
+ * Notes page chrome — the small "finished" touches on the editor pane: a
+ * save-status indicator by the title, a context line, and a designed empty
+ * state. All in Arya's warm tokens.
+ */
+
+.note-detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.note-detail-head .note-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-savechip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.2s ease;
+}
+.note-savechip::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.note-savechip[data-state="saving"] {
+  color: var(--warning);
+}
+.note-savechip[data-state="saved"] {
+  color: var(--success);
+}
+
+.note-meta {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.note-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.note-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: var(--sp-3);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+.note-empty-title {
+  margin-bottom: 4px;
+  font-family: var(--font-serif);
+  font-size: var(--fs-lg);
+  color: var(--text);
+}
