@@ -2,16 +2,22 @@ import "@xyflow/react/dist/style.css";
 import {
   Background,
   BackgroundVariant,
+  BaseEdge,
   Controls,
   type Edge,
+  type EdgeProps,
+  getBezierPath,
   Handle,
   type Node,
   type NodeProps,
+  NodeResizer,
   NodeToolbar,
   Position,
   ReactFlow,
   ReactFlowProvider,
+  SelectionMode,
   useEdgesState,
+  useInternalNode,
   useNodesState,
   useReactFlow,
 } from "@xyflow/react";
@@ -24,17 +30,29 @@ import {
   type MindmapSummary,
   updateMindmap,
 } from "../lib/mindmap";
-import { PlusIcon, TrashIcon } from "../ui/icons";
+import { PlusIcon, StickyNoteIcon, TrashIcon } from "../ui/icons";
 import "./mindmap.css";
 
 type Shape = "rounded" | "square" | "diamond";
 type MindData = { label?: string; depth?: number; shape?: Shape; color?: string };
 type MindNode = Node<MindData, "mind">;
 
+/** A freestanding annotation — not part of the tree (no edges), same as
+ * AlenAI's sticky notes: text + colour only, no rotation, no recolour UI. */
+type StickyData = { text?: string; color?: string };
+type StickyNode = Node<StickyData, "sticky">;
+
+type MMNode = MindNode | StickyNode;
+
 /** Warm depth palette — node hue by distance from a root (AlenAI colours by
  * hierarchy depth; these are muted warm hues that read on the cream ground). */
 const WARM_DEPTH = ["#be5a38", "#c2952f", "#5e7b57", "#8a6ea8", "#6e857e", "#a8582f", "#9a7b4f"];
 const nodeColor = (d: MindData) => d.color ?? WARM_DEPTH[(d.depth ?? 0) % WARM_DEPTH.length];
+
+/** Pastel sticky-note palette in Arya's warm language (AlenAI picks one of a
+ * fixed set at random on creation; ours are muted to read on the cream ground). */
+const STICKY_COLORS = ["#f3dfa3", "#f0c8ac", "#d9c7e6", "#c3d9bc", "#f0c2c3", "#c1d8e0", "#e6d2ab"];
+const randomStickyColor = () => STICKY_COLORS[Math.floor(Math.random() * STICKY_COLORS.length)];
 
 /** The four sides — each carries a visible source dot and an invisible target
  * anchor so programmatic parent→child edges attach to the facing side. */
@@ -82,9 +100,10 @@ function offsetFor(dir: (typeof ADD_DIRS)[number]["dir"], w: number, h: number, 
   }
 }
 
-/** Assign each node a depth (distance from a root, BFS) so colours reflect the
- * hierarchy even for maps saved before depth was tracked. */
-function withDepths(nodes: MindNode[], edges: Edge[]): MindNode[] {
+/** Assign each mind-node a depth (distance from a root, BFS) so colours reflect
+ * the hierarchy even for maps saved before depth was tracked. Sticky notes
+ * aren't part of the tree (no edges reference them) and pass through as-is. */
+export function withDepths(nodes: MMNode[], edges: Edge[]): MMNode[] {
   const childrenOf = new Map<string, string[]>();
   const hasParent = new Set<string>();
   for (const e of edges) {
@@ -94,7 +113,10 @@ function withDepths(nodes: MindNode[], edges: Edge[]): MindNode[] {
     childrenOf.set(e.source, list);
   }
   const depth = new Map<string, number>();
-  const queue: [string, number][] = nodes.filter((n) => !hasParent.has(n.id)).map((n) => [n.id, 0]);
+  const mindNodes = nodes.filter((n) => n.type !== "sticky");
+  const queue: [string, number][] = mindNodes
+    .filter((n) => !hasParent.has(n.id))
+    .map((n) => [n.id, 0]);
   const seen = new Set<string>();
   while (queue.length) {
     const [id, d] = queue.shift() as [string, number];
@@ -103,11 +125,11 @@ function withDepths(nodes: MindNode[], edges: Edge[]): MindNode[] {
     depth.set(id, d);
     for (const c of childrenOf.get(id) ?? []) queue.push([c, d + 1]);
   }
-  return nodes.map((n) => ({
-    ...n,
-    type: "mind" as const,
-    data: { ...n.data, depth: depth.get(n.id) ?? 0 },
-  }));
+  return nodes.map((n) =>
+    n.type === "sticky"
+      ? n
+      : { ...n, type: "mind" as const, data: { ...n.data, depth: depth.get(n.id) ?? 0 } },
+  );
 }
 
 /** A node card. Select it for four directional "+" buttons; double-click to
@@ -240,18 +262,164 @@ function MindNodeView({ id, data, selected }: NodeProps<MindNode>) {
   );
 }
 
-const nodeTypes = { mind: MindNodeView };
+/** A freestanding sticky note: double-click to edit, drag to move, resize from
+ * the corners when selected. Not connected to the tree — no handles, no edges. */
+function StickyNoteView({ id, data, selected }: NodeProps<StickyNode>) {
+  const rf = useReactFlow<MMNode, Edge>();
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(data.text ?? "");
+
+  useEffect(() => {
+    if (!editing) setText(data.text ?? "");
+  }, [data.text, editing]);
+
+  const commit = () => {
+    setEditing(false);
+    rf.setNodes((nds) => nds.map((n) => (n.id === id ? { ...n, data: { ...n.data, text } } : n)));
+  };
+
+  // The card is a control only when not editing (the textarea takes over then).
+  const interactive = editing
+    ? {}
+    : {
+        role: "button" as const,
+        tabIndex: 0,
+        onDoubleClick: () => setEditing(true),
+        onKeyDown: (e: React.KeyboardEvent) => {
+          if (e.key === "Enter" || e.key === "F2") {
+            e.preventDefault();
+            setEditing(true);
+          }
+        },
+      };
+
+  return (
+    <>
+      <NodeResizer isVisible={selected} minWidth={100} minHeight={60} />
+      <div
+        className="sticky-note"
+        style={{ background: data.color ?? STICKY_COLORS[0] }}
+        {...interactive}
+      >
+        {editing ? (
+          <textarea
+            // biome-ignore lint/a11y/noAutofocus: edit UX expects the field focused on open
+            autoFocus
+            className="sticky-note-input"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onBlur={commit}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setEditing(false);
+                setText(data.text ?? "");
+              }
+            }}
+          />
+        ) : (
+          <p className="sticky-note-text">{data.text || "Type a note…"}</p>
+        )}
+      </div>
+    </>
+  );
+}
+
+const nodeTypes = { mind: MindNodeView, sticky: StickyNoteView };
+
+type SideName = "top" | "right" | "bottom" | "left";
+const OPPOSITE_SIDE: Record<SideName, SideName> = {
+  top: "bottom",
+  right: "left",
+  bottom: "top",
+  left: "right",
+};
+const RF_POSITION: Record<SideName, Position> = {
+  top: Position.Top,
+  right: Position.Right,
+  bottom: Position.Bottom,
+  left: Position.Left,
+};
+
+/** Which side of a node faces a point at (dx, dy) away from its centre, by
+ * dominant axis — mirrors AlenAI's floating-edge routing exactly. */
+export function facingSide(dx: number, dy: number): SideName {
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? "right" : "left";
+  return dy > 0 ? "bottom" : "top";
+}
+
+function sidePoint(
+  node: {
+    internals: { positionAbsolute: { x: number; y: number } };
+    measured: { width?: number; height?: number };
+  },
+  side: SideName,
+) {
+  const { x, y } = node.internals.positionAbsolute;
+  const w = node.measured.width ?? 0;
+  const h = node.measured.height ?? 0;
+  switch (side) {
+    case "top":
+      return { x: x + w / 2, y };
+    case "bottom":
+      return { x: x + w / 2, y: y + h };
+    case "left":
+      return { x, y: y + h / 2 };
+    default:
+      return { x: x + w, y: y + h / 2 };
+  }
+}
+
+/** A connector that re-picks its attachment side every render from the two
+ * nodes' live positions, instead of staying pinned to whichever side was
+ * closest when the edge was first created — so dragging a node never leaves
+ * a line looping out of the wrong side. */
+function FloatingMindEdge({ id, source, target, markerEnd, style }: EdgeProps) {
+  const sourceNode = useInternalNode(source);
+  const targetNode = useInternalNode(target);
+  if (!sourceNode || !targetNode) return null;
+
+  const sw = sourceNode.measured.width ?? 0;
+  const sh = sourceNode.measured.height ?? 0;
+  const tw = targetNode.measured.width ?? 0;
+  const th = targetNode.measured.height ?? 0;
+  const sCenter = {
+    x: sourceNode.internals.positionAbsolute.x + sw / 2,
+    y: sourceNode.internals.positionAbsolute.y + sh / 2,
+  };
+  const tCenter = {
+    x: targetNode.internals.positionAbsolute.x + tw / 2,
+    y: targetNode.internals.positionAbsolute.y + th / 2,
+  };
+  const side = facingSide(tCenter.x - sCenter.x, tCenter.y - sCenter.y);
+  const from = sidePoint(sourceNode, side);
+  const to = sidePoint(targetNode, OPPOSITE_SIDE[side]);
+
+  const [path] = getBezierPath({
+    sourceX: from.x,
+    sourceY: from.y,
+    sourcePosition: RF_POSITION[side],
+    targetX: to.x,
+    targetY: to.y,
+    targetPosition: RF_POSITION[OPPOSITE_SIDE[side]],
+  });
+
+  return <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />;
+}
+
+const edgeTypes = { mindEdge: FloatingMindEdge };
+
 type Menu = { x: number; y: number; nodeId: string | null; flowX: number; flowY: number };
 
 /** The canvas for one map: nodes/edges persisted as an opaque JSON document
  * with debounced autosave, keyed by map id so it re-initializes on switch. */
 function MindMapCanvas({ mapId }: { mapId: string }) {
-  const [nodes, setNodes, onNodesChange] = useNodesState<MindNode>([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<MMNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [menu, setMenu] = useState<Menu | null>(null);
-  const rf = useReactFlow<MindNode, Edge>();
+  const rf = useReactFlow<MMNode, Edge>();
   const loaded = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let active = true;
@@ -261,7 +429,7 @@ function MindMapCanvas({ mapId }: { mapId: string }) {
         if (!active) return;
         try {
           const doc = map.docJson ? JSON.parse(map.docJson) : {};
-          const rawNodes: MindNode[] = Array.isArray(doc.nodes) ? doc.nodes : [];
+          const rawNodes: MMNode[] = Array.isArray(doc.nodes) ? doc.nodes : [];
           const rawEdges: Edge[] = Array.isArray(doc.edges) ? doc.edges : [];
           setNodes(withDepths(rawNodes, rawEdges));
           setEdges(rawEdges);
@@ -315,6 +483,27 @@ function MindMapCanvas({ mapId }: { mapId: string }) {
       },
     ]);
 
+  /** Spawn a sticky at the viewport centre, cascading like AlenAI's so
+   * repeated clicks don't stack notes exactly on top of each other. */
+  const addSticky = () => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const center = rect
+      ? rf.screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
+      : { x: 0, y: 0 };
+    const cascade = nodes.filter((n) => n.type === "sticky").length * 20;
+    setNodes((nds) => [
+      ...nds,
+      {
+        id: newId(),
+        type: "sticky",
+        position: { x: center.x - 75 + cascade, y: center.y - 50 + cascade },
+        width: 150,
+        height: 100,
+        data: { text: "", color: randomStickyColor() },
+      },
+    ]);
+  };
+
   const setShape = (nodeId: string, shape: Shape) => {
     setNodes((nds) => nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, shape } } : n)));
     setMenu(null);
@@ -325,9 +514,12 @@ function MindMapCanvas({ mapId }: { mapId: string }) {
     setMenu(null);
   };
 
-  const deleteBranch = (nodeId: string) => {
-    // Remove the node and everything downstream of it (its branch).
-    const doomed = new Set<string>([nodeId]);
+  /** Remove a set of nodes and, for any mind-node among them, everything
+   * downstream of it too (its branch). Stickies have no outgoing edges, so
+   * they just fall out with a plain removal — one path handles both, and
+   * this backs both the context-menu delete and multi-select Backspace. */
+  const deleteBranches = (nodeIds: string[]) => {
+    const doomed = new Set<string>(nodeIds);
     let grew = true;
     while (grew) {
       grew = false;
@@ -349,14 +541,22 @@ function MindMapCanvas({ mapId }: { mapId: string }) {
   };
 
   return (
-    <div className="mind-canvas">
+    <div className="mind-canvas" ref={canvasRef}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        defaultEdgeOptions={{ type: "mindEdge" }}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onNodesDelete={(deleted) => deleteBranches(deleted.map((n) => n.id))}
         nodesConnectable={false}
+        selectionOnDrag
+        selectionMode={SelectionMode.Partial}
+        panOnDrag={[1, 2]}
+        panOnScroll
+        zoomOnScroll={false}
         fitView
         onNodeContextMenu={(e, node) => {
           e.preventDefault();
@@ -372,11 +572,24 @@ function MindMapCanvas({ mapId }: { mapId: string }) {
         <Controls showInteractive={false} />
       </ReactFlow>
 
+      <button type="button" className="mind-sticky-btn" title="Add sticky note" onClick={addSticky}>
+        <StickyNoteIcon />
+        Add note
+      </button>
+
       {menu ? (
         <div className="mind-ctx" style={{ left: menu.x, top: menu.y }}>
           {/* A window-level click/Escape listener closes this; item clicks run
               their action first, then bubble to close. */}
-          {menu.nodeId ? (
+          {menu.nodeId && nodes.find((n) => n.id === menu.nodeId)?.type === "sticky" ? (
+            <button
+              type="button"
+              className="mind-ctx-item danger"
+              onClick={() => menu.nodeId && deleteBranches([menu.nodeId])}
+            >
+              Delete
+            </button>
+          ) : menu.nodeId ? (
             <>
               <div className="mind-ctx-label">Shape</div>
               {SHAPES.map((s) => (
@@ -407,7 +620,7 @@ function MindMapCanvas({ mapId }: { mapId: string }) {
               <button
                 type="button"
                 className="mind-ctx-item danger"
-                onClick={() => menu.nodeId && deleteBranch(menu.nodeId)}
+                onClick={() => menu.nodeId && deleteBranches([menu.nodeId])}
               >
                 Delete branch
               </button>
