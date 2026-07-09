@@ -15,11 +15,23 @@ import {
   agentSend,
   agentSteer,
   agentWorkspaceReadB64,
+  convertSessionToNote,
   modelPrivacy,
   type ToolInfo,
 } from "../lib/agent";
 import { agentBranchSession } from "../lib/ecosystem";
-import { AgentIcon, CheckIcon, FileWriteIcon, LockIcon, PlusIcon, SendIcon } from "../ui/icons";
+import { TRANSLATE_LANGUAGES, translateInstruction } from "../lib/languages";
+import { getNote, updateNote } from "../lib/notes";
+import { aiTransform } from "../lib/transform";
+import {
+  AgentIcon,
+  CheckIcon,
+  FileWriteIcon,
+  LockIcon,
+  MoreIcon,
+  PlusIcon,
+  SendIcon,
+} from "../ui/icons";
 import { MessageView, toolSummary } from "./MessageView";
 
 interface PendingApproval {
@@ -48,6 +60,9 @@ export function AgentPanel() {
   const [steerText, setSteerText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState<string | null>(null);
+  const [sessionMenu, setSessionMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const sessionMenuRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = active?.id ?? null;
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -83,6 +98,74 @@ export function AgentPanel() {
       setError(String(e));
     }
   }, []);
+
+  // Auto-dismiss transient notices.
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  const openSessionMenu = (id: string, clientX: number, clientY: number) => {
+    const x = Math.max(8, Math.min(clientX, window.innerWidth - 232));
+    const y = Math.max(8, Math.min(clientY, window.innerHeight - 300));
+    setSessionMenu({ id, x, y });
+  };
+
+  // Close the session ⋯ menu on any outside click or Escape.
+  useEffect(() => {
+    if (!sessionMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        sessionMenuRef.current &&
+        e.target instanceof Node &&
+        sessionMenuRef.current.contains(e.target)
+      ) {
+        return;
+      }
+      setSessionMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSessionMenu(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [sessionMenu]);
+
+  /** Convert a chat to a note (markdown transcript). */
+  const convertChatToNote = (id: string) => {
+    setSessionMenu(null);
+    setNotice("Creating note…");
+    void convertSessionToNote(id)
+      .then(() => setNotice("Note created — see the Notes tab."))
+      .catch((e) => {
+        setNotice(null);
+        setError(String(e));
+      });
+  };
+
+  /** Convert a chat to a note, then append its translation side-by-side. The
+   * note is fresh markdown (no rich blocks), so appending is lossless. */
+  const translateChatToNote = (id: string, lang: string) => {
+    setSessionMenu(null);
+    setNotice(`Translating chat to ${lang}…`);
+    void convertSessionToNote(id)
+      .then(async (noteId) => {
+        const note = await getNote(noteId);
+        const translated = await aiTransform(note.bodyMd, translateInstruction(lang));
+        const combined = `${note.bodyMd}\n\n---\n\n## ${lang}\n\n${translated}`;
+        await updateNote(noteId, { bodyMd: combined });
+        setNotice(`Translated chat to ${lang} — see the Notes tab.`);
+      })
+      .catch((e) => {
+        setNotice(null);
+        setError(String(e));
+      });
+  };
 
   useEffect(() => {
     void refreshSessions();
@@ -296,18 +379,14 @@ export function AgentPanel() {
                   type="button"
                   className="btn-icon bare"
                   style={{ color: "var(--text-muted)" }}
-                  aria-label={`delete ${session.title}`}
-                  onClick={() =>
-                    void agentDeleteSession(session.id).then(() => {
-                      if (active?.id === session.id) {
-                        setActive(null);
-                        setMessages([]);
-                      }
-                      return refreshSessions();
-                    })
-                  }
+                  aria-label={`actions for ${session.title}`}
+                  title="Chat actions"
+                  onClick={(e) => {
+                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    openSessionMenu(session.id, r.right - 210, r.bottom + 4);
+                  }}
                 >
-                  ×
+                  <MoreIcon />
                 </button>
               </li>
             ))}
@@ -521,6 +600,73 @@ export function AgentPanel() {
           </>
         )}
       </div>
+
+      {notice ? (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            bottom: 16,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 950,
+            padding: "8px 14px",
+            background: "var(--surface-raise)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-md)",
+            boxShadow: "var(--shadow-lg)",
+            fontSize: "var(--fs-sm)",
+            color: "var(--text)",
+          }}
+        >
+          {notice}
+        </div>
+      ) : null}
+
+      {sessionMenu ? (
+        <div
+          ref={sessionMenuRef}
+          className="context-menu"
+          style={{ top: sessionMenu.y, left: sessionMenu.x }}
+          role="menu"
+        >
+          <button type="button" role="menuitem" onClick={() => convertChatToNote(sessionMenu.id)}>
+            Convert to note
+          </button>
+          <div className="context-menu-label">Translate to</div>
+          <div className="context-menu-scroll">
+            {TRANSLATE_LANGUAGES.map((l) => (
+              <button
+                key={l}
+                type="button"
+                role="menuitem"
+                onClick={() => translateChatToNote(sessionMenu.id, l)}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+          <div className="context-menu-sep" />
+          <button
+            type="button"
+            role="menuitem"
+            className="danger"
+            onClick={() => {
+              const id = sessionMenu.id;
+              setSessionMenu(null);
+              void agentDeleteSession(id).then(() => {
+                if (active?.id === id) {
+                  setActive(null);
+                  setMessages([]);
+                }
+                return refreshSessions();
+              });
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -1772,6 +1772,15 @@ mark {
   margin: 4px 6px;
   background: var(--border);
 }
+/* A bounded, vertically-scrolling list inside a context menu — keeps a long
+ * run of items (folders, languages) from pushing the rest of the menu
+ * off-screen or spilling the menu sideways. */
+.context-menu-scroll {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+}
 
 /* Dictation-history row actions (copy / ⋯). */
 .hist-action-icon {

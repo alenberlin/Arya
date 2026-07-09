@@ -102,6 +102,9 @@ export const copyToClipboard = (text: string) => invoke<void>("copy_to_clipboard
 /** Generates a meeting-minutes note from a dictation; returns the new note id. */
 export const convertDictationToNote = (id: string) =>
   invoke<string>("convert_dictation_to_note", { id });
+/** Converts a dictation into a plain note (its text as the body); returns the note id. */
+export const convertDictationToPlainNote = (id: string) =>
+  invoke<string>("convert_dictation_to_plain_note", { id });
 export const listDictionaryEntries = () => invoke<DictionaryItem[]>("list_dictionary_entries");
 export const createDictionaryEntry = (pattern: string, replacement: string) =>
   invoke<DictionaryItem>("create_dictionary_entry", { pattern, replacement });

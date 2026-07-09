@@ -55,6 +55,9 @@ export const agentResolveApproval = (sessionId: string, callId: string, decision
   invoke<void>("agent_resolve_approval", { sessionId, callId, decision });
 export const agentDeleteSession = (sessionId: string) =>
   invoke<void>("agent_delete_session", { sessionId });
+/** Converts an agent chat into a note (markdown transcript); returns the note id. */
+export const convertSessionToNote = (sessionId: string) =>
+  invoke<string>("convert_session_to_note", { sessionId });
 /** Generates an image into the agent workspace; returns its saved path. */
 export const agentGenerateImage = (prompt: string, size?: string | null) =>
   invoke<{ path: string }>("agent_generate_image", { prompt, size: size ?? null });

@@ -23,6 +23,7 @@ const CATEGORY: Record<string, { color: string; label: string }> = {
   dictation: { color: "#c2952f", label: "Dictations" },
   mindmap: { color: "#8a6ea8", label: "Mind maps" },
   meeting: { color: "#5e7b57", label: "Meetings" },
+  agent: { color: "#4f7d8a", label: "Agent chats" },
 };
 const FALLBACK_COLOR = "#9a8f7d";
 const categoryColor = (kind: string) => CATEGORY[kind]?.color ?? FALLBACK_COLOR;

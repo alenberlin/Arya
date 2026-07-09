@@ -3,6 +3,7 @@ pub mod agent;
 mod attachments;
 pub mod audio;
 mod calendar;
+mod classify;
 pub mod cleanup;
 mod db;
 mod dictation;
@@ -159,6 +160,8 @@ pub fn run() {
             notes::rename_folder,
             notes::delete_folder,
             notes::assign_note_to_folder,
+            notes::assign_notes_to_folders,
+            classify::classify_notes_into_folders,
             notion_import::import_notion,
             links::create_link,
             links::list_links_from,
@@ -191,6 +194,7 @@ pub fn run() {
             agent::commands::agent_cancel,
             agent::commands::agent_resolve_approval,
             agent::commands::agent_delete_session,
+            agent::commands::convert_session_to_note,
             agent::agent_workspace_read_b64,
             agent::agent_generate_image,
             agent::ecosystem::mcp_list_servers,
@@ -233,6 +237,7 @@ pub fn run() {
             dictation::commands::delete_dictation_history_item,
             dictation::commands::clear_dictation_history,
             dictation::commands::convert_dictation_to_note,
+            dictation::commands::convert_dictation_to_plain_note,
             dictation::commands::dictation_stop,
             dictation::commands::dictation_cancel,
             dictation::commands::dictation_set_session_polish,

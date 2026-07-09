@@ -119,6 +119,19 @@ export const deleteFolder = (id: string) => invoke<void>("delete_folder", { id }
 export const assignNoteToFolder = (noteId: string, folderId: string | null) =>
   invoke<void>("assign_note_to_folder", { noteId, folderId });
 
+/** One AI-proposed move: a note into an existing folder (F-sort review). */
+export interface FolderSuggestion {
+  noteId: string;
+  folderId: string;
+}
+/** Ask the local model which existing folder each note best fits. Returns only
+ * confident matches — notes it's unsure about are simply omitted, never forced. */
+export const classifyNotesIntoFolders = (noteIds: string[], model?: string) =>
+  invoke<FolderSuggestion[]>("classify_notes_into_folders", { noteIds, model: model ?? null });
+/** Apply confirmed folder moves in one transaction. */
+export const assignNotesToFolders = (assignments: FolderSuggestion[]) =>
+  invoke<void>("assign_notes_to_folders", { assignments });
+
 export type SourceMode = "microphone-only" | "microphone-and-system";
 export const startRecording = (noteId?: string, sourceMode?: SourceMode) =>
   invoke<string>("start_recording", {

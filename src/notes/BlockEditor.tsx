@@ -64,6 +64,10 @@ interface BlockEditorProps {
     mention: { kind: string; id: string; label: string },
     instruction: string,
   ) => Promise<string>;
+  /** Append markdown as blocks at the end of the document (e.g. a side-by-side
+   * translation). The `token` must change to trigger each append; the original
+   * blocks are left intact. */
+  appendRequest?: { token: number; markdown: string };
 }
 
 /**
@@ -82,6 +86,7 @@ export function BlockEditor({
   onChange,
   onOpenNode,
   onInlineCommand,
+  appendRequest,
 }: BlockEditorProps) {
   const scheme = useResolvedScheme();
   const initialContent = useMemo(
@@ -145,6 +150,20 @@ export function BlockEditor({
     const doc = editor.document;
     onChange(JSON.stringify(doc), editor.blocksToMarkdownLossy(doc), extractMentionTargets(doc));
   }, [editor, onChange]);
+
+  // Append a side-by-side translation (or any markdown) as new blocks at the
+  // end, leaving the original blocks untouched. Token-gated so a stable request
+  // object never re-appends; only a new token does.
+  const lastAppendToken = useRef(0);
+  useEffect(() => {
+    if (!appendRequest || appendRequest.token === lastAppendToken.current) return;
+    lastAppendToken.current = appendRequest.token;
+    const blocks = editor.tryParseMarkdownToBlocks(appendRequest.markdown);
+    if (blocks.length === 0) return;
+    const doc = editor.document;
+    editor.insertBlocks(blocks, doc[doc.length - 1], "after");
+    emit();
+  }, [appendRequest, editor, emit]);
 
   const getMentionItems = useCallback(
     (query: string) =>

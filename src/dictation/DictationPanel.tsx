@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearDictationHistory,
   convertDictationToNote,
+  convertDictationToPlainNote,
   copyToClipboard,
   createDictionaryEntry,
   type DictationSettings,
@@ -26,6 +27,7 @@ import {
   setDictationSettings,
   translateDictation,
 } from "../lib/dictation";
+import { TRANSLATE_LANGUAGES } from "../lib/languages";
 import { TypeToConfirmDialog } from "../ui/dialogs";
 import { RecentDictations } from "./RecentDictations";
 
@@ -55,24 +57,6 @@ const SPEECH_MODELS: { value: string; label: string; englishOnly?: boolean }[] =
   { value: "whisper-large-v3-turbo-q5_0", label: "High accuracy · multilingual" },
   { value: "whisper-base.en", label: "Fast · English only", englishOnly: true },
   { value: "whisper-tiny.en", label: "Tiny · English only", englishOnly: true },
-];
-
-// Curated target languages; the value is the language name passed to the model.
-const LANGUAGES = [
-  "German",
-  "Spanish",
-  "French",
-  "Italian",
-  "Portuguese",
-  "Dutch",
-  "Polish",
-  "Russian",
-  "Turkish",
-  "Japanese",
-  "Korean",
-  "Chinese",
-  "Arabic",
-  "Hindi",
 ];
 
 // ISO 639-1 codes for the ASR "speech language" hint. "" = auto-detect (the
@@ -160,6 +144,17 @@ export function DictationPanel() {
     setNotice("Generating meeting minutes…");
     void convertDictationToNote(id)
       .then(() => setNotice("Meeting minutes created — see the Notes tab."))
+      .catch((e) => {
+        setNotice(null);
+        setError(String(e));
+      });
+  };
+
+  const convertToNote = (id: string) => {
+    setMenuFor(null);
+    setNotice("Creating note…");
+    void convertDictationToPlainNote(id)
+      .then(() => setNotice("Note created — see the Notes tab."))
       .catch((e) => {
         setNotice(null);
         setError(String(e));
@@ -422,7 +417,7 @@ export function DictationPanel() {
                   onChange={(e) => void save({ ...settings, translate: e.target.value || null })}
                 >
                   <option value="">Off</option>
-                  {LANGUAGES.map((l) => (
+                  {TRANSLATE_LANGUAGES.map((l) => (
                     <option key={l} value={l}>
                       {l}
                     </option>
@@ -651,12 +646,16 @@ export function DictationPanel() {
           style={{ top: menuFor.y, left: menuFor.x }}
           role="menu"
         >
+          <button type="button" role="menuitem" onClick={() => convertToNote(menuFor.id)}>
+            Convert to note
+          </button>
           <button type="button" role="menuitem" onClick={() => convertToMinutes(menuFor.id)}>
             Convert to meeting minutes
           </button>
+          <div className="context-menu-sep" />
           <div className="context-menu-label">Translate to</div>
-          <div style={{ maxHeight: 168, overflowY: "auto" }}>
-            {LANGUAGES.map((l) => (
+          <div className="context-menu-scroll">
+            {TRANSLATE_LANGUAGES.map((l) => (
               <button
                 key={l}
                 type="button"

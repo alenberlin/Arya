@@ -1,18 +1,16 @@
 //! The Galaxy knowledge-graph assembly (F10).
 //!
-//! Builds a node+edge graph of the connected brain from the durable *documents*
-//! a person actually keeps: notes (a "meeting" is a note with a transcript —
-//! same kind) and mind maps. Raw dictation-history rows are deliberately NOT
-//! nodes: that table is a transient capture log (every phrase ever spoken,
-//! including one-word tests), so surfacing each as a star buried the real
-//! documents in noise. A dictation worth keeping becomes a note. Edges come
-//! from three sources: `mention`/manual edges in the `links` table (the
-//! `@`-mentions), structural `child` edges from note nesting, and —
-//! best-effort, only when the local embeddings exist — `semantic` edges from
-//! cosine similarity over `rag_chunks` (per-node averaged vector, top-K
-//! neighbours). Without an Ollama reindex the semantic layer is simply empty;
-//! the mention/structural graph always renders. Node ids are composite:
-//! `"<kind>:<uuid>"`.
+//! Builds a node+edge graph of the whole connected brain: notes (a "meeting" is
+//! a note with a transcript — same kind), mind maps, dictations, and agent
+//! chats. Each kind is a distinct, separately-filterable layer in the UI, so a
+//! large or noisy layer (e.g. many one-line dictations) can be toggled off
+//! without losing the rest. Edges come from three sources: `mention`/manual
+//! edges in the `links` table (the `@`-mentions), structural `child` edges from
+//! note nesting, and — best-effort, only when the local embeddings exist —
+//! `semantic` edges from cosine similarity over `rag_chunks` (per-node averaged
+//! vector, top-K neighbours). Without an Ollama reindex the semantic layer is
+//! simply empty; the mention/structural graph always renders. Node ids are
+//! composite: `"<kind>:<uuid>"`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -51,6 +49,27 @@ pub struct Graph {
 const SEMANTIC_TOP_K: usize = 3;
 const SEMANTIC_MIN: f32 = 0.75;
 
+/// A compact node label from free text: first non-empty line, whitespace
+/// collapsed, capped so a long dictation/chat title stays a readable star
+/// label. Falls back when the text is blank.
+fn short_label(text: &str, fallback: &str) -> String {
+    let first = text
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    if first.is_empty() {
+        return fallback.to_string();
+    }
+    let collapsed = first.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > 48 {
+        let head: String = collapsed.chars().take(48).collect();
+        format!("{head}…")
+    } else {
+        collapsed
+    }
+}
+
 pub async fn assemble_graph(pool: &SqlitePool) -> Result<Graph, sqlx::Error> {
     let mut nodes: Vec<GraphNode> = Vec::new();
     let mut node_ids: HashSet<String> = HashSet::new();
@@ -88,6 +107,36 @@ pub async fn assemble_graph(pool: &SqlitePool) -> Result<Graph, sqlx::Error> {
             id: cid,
             kind: "mindmap".into(),
             label,
+        });
+    }
+
+    // Dictations: a full, filterable layer (the owner opted every dictation in).
+    // Labelled by their cleaned text — the transcript is the "title" here.
+    let dictations: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, clean_text FROM dictation_history")
+            .fetch_all(pool)
+            .await?;
+    for (id, text) in dictations {
+        let cid = format!("dictation:{id}");
+        node_ids.insert(cid.clone());
+        nodes.push(GraphNode {
+            id: cid,
+            kind: "dictation".into(),
+            label: short_label(&text, "Dictation"),
+        });
+    }
+
+    // Agent chats: one node per conversation, labelled by session title.
+    let sessions: Vec<(String, String)> = sqlx::query_as("SELECT id, title FROM agent_sessions")
+        .fetch_all(pool)
+        .await?;
+    for (id, title) in sessions {
+        let cid = format!("agent:{id}");
+        node_ids.insert(cid.clone());
+        nodes.push(GraphNode {
+            id: cid,
+            kind: "agent".into(),
+            label: short_label(&title, "Chat"),
         });
     }
 
@@ -249,7 +298,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mindmaps_are_nodes_but_dictation_history_is_not() {
+    async fn every_brain_kind_becomes_a_node() {
         let pool = test_pool().await;
         let note = crate::notes::insert_note(&pool, "Real note").await.unwrap();
         sqlx::query(
@@ -259,10 +308,16 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        // A transient dictation-history row is a capture-log entry, not a document.
         sqlx::query(
             "INSERT INTO dictation_history (id, raw_text, clean_text, duration_ms, asr_ms, created_at)
-             VALUES ('d1', 'test', 'test', 100, 50, '2026-01-01')",
+             VALUES ('d1', 'raw', 'A quick spoken thought', 100, 50, '2026-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO agent_sessions (id, title, model, mode, created_at, updated_at)
+             VALUES ('s1', 'Refactor plan', 'local', 'sandboxed', '2026-01-01', '2026-01-01')",
         )
         .execute(&pool)
         .await
@@ -270,15 +325,34 @@ mod tests {
 
         let g = assemble_graph(&pool).await.unwrap();
         assert!(g.nodes.iter().any(|n| n.id == format!("note:{}", note.id)));
+        assert!(g
+            .nodes
+            .iter()
+            .any(|n| n.kind == "mindmap" && n.id == "mindmap:m1"));
         assert!(
             g.nodes
                 .iter()
-                .any(|n| n.kind == "mindmap" && n.id == "mindmap:m1"),
-            "mind maps are documents and should be stars"
+                .any(|n| n.kind == "dictation" && n.id == "dictation:d1"),
+            "dictations are their own filterable layer now"
         );
         assert!(
-            !g.nodes.iter().any(|n| n.kind == "dictation"),
-            "dictation-history rows must never become stars"
+            g.nodes
+                .iter()
+                .any(|n| n.kind == "agent" && n.id == "agent:s1"),
+            "agent chats are nodes too"
         );
+        // Labels come from the content, not the id.
+        let d = g.nodes.iter().find(|n| n.id == "dictation:d1").unwrap();
+        assert_eq!(d.label, "A quick spoken thought");
+    }
+
+    #[test]
+    fn short_label_takes_first_line_and_caps_length() {
+        assert_eq!(short_label("  \n  hello world \n more", "x"), "hello world");
+        assert_eq!(short_label("   ", "Chat"), "Chat");
+        let long = "a".repeat(60);
+        let out = short_label(&long, "x");
+        assert_eq!(out.chars().count(), 49); // 48 + ellipsis
+        assert!(out.ends_with('…'));
     }
 }

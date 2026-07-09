@@ -106,3 +106,104 @@
 .note-attach-btn:hover {
   color: var(--text);
 }
+
+/* Folder overflow: the folders that don't fit inline fold into a "More"
+ * dropdown — filterable and scrollable so a taxonomy of dozens stays usable. */
+.folder-dd {
+  position: relative;
+}
+.folder-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 901;
+  width: 220px;
+  padding: var(--sp-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  animation: ar-fade 0.12s ease;
+}
+.folder-menu-filter {
+  width: 100%;
+  height: auto;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.folder-menu-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.folder-menu-list button {
+  height: auto;
+  justify-content: flex-start;
+  padding: var(--sp-2) 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  color: var(--text);
+  text-align: left;
+}
+.folder-menu-list button:hover {
+  background: var(--surface-2);
+}
+.folder-menu-list button[aria-current="true"] {
+  color: var(--accent);
+  font-weight: var(--fw-semibold);
+}
+.folder-menu-empty {
+  padding: 6px 10px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* AI folder-sort review: one scrollable list of proposed note → folder moves,
+ * each row individually keepable/skippable before anything is applied. */
+.sort-review-list {
+  max-height: 46vh;
+  margin: var(--sp-2) 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.sort-review-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.sort-review-row:last-child {
+  border-bottom: none;
+}
+.sort-review-row.skipped {
+  opacity: 0.45;
+}
+.sort-review-text {
+  flex: 1;
+  min-width: 0;
+}
+.sort-review-title {
+  display: block;
+  overflow: hidden;
+  font-size: var(--fs-md);
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sort-review-folder {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.sort-review-toggle {
+  flex-shrink: 0;
+}

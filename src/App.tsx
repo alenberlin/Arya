@@ -83,6 +83,8 @@ export function App() {
         setTab("dictation");
       } else if (detail.kind === "mindmap") {
         setTab("mindmap");
+      } else if (detail.kind === "agent") {
+        setTab("agent");
       }
     };
     window.addEventListener("arya:open-node", handler);

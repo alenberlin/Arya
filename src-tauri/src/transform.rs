@@ -27,7 +27,7 @@ fn user_message(instruction: &str, text: &str) -> String {
     format!("Instruction: {instruction}\n\nText:\n{text}")
 }
 
-fn ollama_url() -> String {
+pub(crate) fn ollama_url() -> String {
     std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into())
 }
 

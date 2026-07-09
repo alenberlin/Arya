@@ -333,6 +333,44 @@ pub async fn convert_dictation_to_note(
     Ok(note.id)
 }
 
+/// Converts a dictation straight into a plain note: its cleaned text becomes the
+/// note body verbatim, titled from the first line — no meeting-minutes model
+/// pass (fast, offline). The note then joins the connected brain like any other.
+/// Returns the new note id.
+#[tauri::command]
+pub async fn convert_dictation_to_plain_note(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> Result<String, String> {
+    let clean: String =
+        sqlx::query_scalar("SELECT clean_text FROM dictation_history WHERE id = ?1")
+            .bind(&id)
+            .fetch_optional(&*pool)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "dictation not found".to_string())?;
+    if clean.trim().is_empty() {
+        return Err("this dictation has no text to convert".into());
+    }
+
+    let title = crate::notes::title_from_text(&clean);
+    let note = crate::notes::insert_note(&pool, &title)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE notes SET body_md = ?2, processing_status = 'ready',
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?1",
+    )
+    .bind(&note.id)
+    .bind(&clean)
+    .execute(&*pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(note.id)
+}
+
 /// Stops a hands-free dictation (invoked from the pill's Stop button) and
 /// resets the right-Shift gesture state machine.
 #[tauri::command]

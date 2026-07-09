@@ -2,17 +2,21 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { TRANSLATE_LANGUAGES, translateInstruction } from "../lib/languages";
 import { type NodeKind, reconcileLinks } from "../lib/links";
 import {
   type Attachment,
+  assignNotesToFolders,
   assignNoteToFolder,
   attachFile,
+  classifyNotesIntoFolders,
   createFolder,
   createNote,
   deleteAllNotes,
   deleteNote,
   discardRecording,
   type Folder,
+  type FolderSuggestion,
   finishRecording,
   getNote,
   getNoteTurns,
@@ -38,8 +42,9 @@ import {
   updateNote,
 } from "../lib/notes";
 import { aiTransform } from "../lib/transform";
-import { ConfirmDialog, PromptDialog, TypeToConfirmDialog } from "../ui/dialogs";
+import { ConfirmDialog, Modal, PromptDialog, TypeToConfirmDialog } from "../ui/dialogs";
 import {
+  ChevronDownIcon,
   MeetingIcon,
   MoreIcon,
   NotesIcon,
@@ -158,6 +163,27 @@ function sanitizeAutoTitle(raw: string): string {
   return cleaned.length > 80 ? `${cleaned.slice(0, 79)}…` : cleaned;
 }
 
+/** How many folder chips sit inline before the rest fold into "More". */
+const MAX_VISIBLE_FOLDERS = 3;
+
+/** Split folders into the inline chips and the overflow that folds into the
+ * "More" dropdown. The active folder is always kept visible as a chip (swapped
+ * into the last inline slot if it would otherwise overflow), so the current
+ * selection is never hidden behind the menu. */
+export function splitFolders(
+  all: Folder[],
+  active: string | null,
+): { visible: Folder[]; overflow: Folder[] } {
+  if (all.length <= MAX_VISIBLE_FOLDERS) return { visible: all, overflow: [] };
+  let visible = all.slice(0, MAX_VISIBLE_FOLDERS);
+  if (active && !visible.some((f) => f.id === active)) {
+    const activeFolder = all.find((f) => f.id === active);
+    if (activeFolder) visible = [...all.slice(0, MAX_VISIBLE_FOLDERS - 1), activeFolder];
+  }
+  const visibleIds = new Set(visible.map((f) => f.id));
+  return { visible, overflow: all.filter((f) => !visibleIds.has(f.id)) };
+}
+
 /** Notes workspace: a list panel (recorder, banners, folders, notes) beside an
  * editor panel (title, live capture, note body, transcript). */
 /** When another surface (e.g. Galaxy) asks to open a specific note, App passes
@@ -193,11 +219,24 @@ export function NotesWorkspace({
   const [clearAllOpen, setClearAllOpen] = useState(false);
   const [noteMenu, setNoteMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [folderMenuOpen, setFolderMenuOpen] = useState(false);
+  const [folderMenuFilter, setFolderMenuFilter] = useState("");
+  const [moveFilter, setMoveFilter] = useState("");
+  const folderMenuRef = useRef<HTMLDivElement | null>(null);
+  // AI folder-sort: null = idle; otherwise the review modal is open with the
+  // model's proposed moves and a per-note accept toggle.
+  const [sortReview, setSortReview] = useState<FolderSuggestion[] | null>(null);
+  const [sortRejected, setSortRejected] = useState<Set<string>>(() => new Set());
+  const [sortingFolders, setSortingFolders] = useState(false);
   const [filter, setFilter] = useState("");
   const [searchResults, setSearchResults] = useState<NoteSummary[]>([]);
   const [sortPreview, setSortPreview] = useState<string | null>(null);
   const [sorting, setSorting] = useState(false);
   const [editorEpoch, setEditorEpoch] = useState(0);
+  const [appendRequest, setAppendRequest] = useState<
+    { token: number; markdown: string } | undefined
+  >(undefined);
+  const appendTokenRef = useRef(0);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const [notice, setNotice] = useState<string | null>(null);
@@ -217,6 +256,7 @@ export function NotesWorkspace({
   // Close the note context menu on any click outside it, or on Escape.
   useEffect(() => {
     if (!noteMenu) return;
+    setMoveFilter("");
     const onDown = (e: MouseEvent) => {
       if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) {
         return;
@@ -233,6 +273,30 @@ export function NotesWorkspace({
       document.removeEventListener("keydown", onKey);
     };
   }, [noteMenu]);
+
+  // Close the folder-overflow dropdown on any click outside it, or on Escape.
+  useEffect(() => {
+    if (!folderMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        folderMenuRef.current &&
+        e.target instanceof Node &&
+        folderMenuRef.current.contains(e.target)
+      ) {
+        return;
+      }
+      setFolderMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFolderMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [folderMenuOpen]);
 
   const refreshNotes = useCallback(async () => {
     try {
@@ -314,6 +378,42 @@ export function NotesWorkspace({
     [],
   );
 
+  /** Translate a note and append the result side-by-side within the same note,
+   * as new blocks after the original (which is left intact). Opens the note
+   * first so the translation lands in its live editor. */
+  const translateNote = useCallback(
+    async (id: string, lang: string) => {
+      setNoteMenu(null);
+      try {
+        if (activeNoteRef.current !== id) await openNote(id);
+        const note = await getNote(id);
+        const source = note.bodyMd.trim();
+        if (!source) {
+          setError("This note has no text to translate yet.");
+          return;
+        }
+        setNotice(`Translating to ${lang}…`);
+        const translated = await aiTransform(source, translateInstruction(lang));
+        // The user may have navigated away during the model call; only append
+        // if the note is still the open one.
+        if (activeNoteRef.current !== id) {
+          setNotice(null);
+          return;
+        }
+        appendTokenRef.current += 1;
+        setAppendRequest({
+          token: appendTokenRef.current,
+          markdown: `## ${lang}\n\n${translated}`,
+        });
+        setNotice(`Translated to ${lang}.`);
+      } catch (e) {
+        setNotice(null);
+        setError(String(e));
+      }
+    },
+    [openNote],
+  );
+
   /** Create a new page nested under `parentId`, open it, and expand the parent. */
   const addSubPage = useCallback(
     async (parentId: string) => {
@@ -377,6 +477,58 @@ export function NotesWorkspace({
       setError(String(e));
     }
   }, [activeFolder, refreshNotes, openNote]);
+
+  /** AI folder-sort (suggest-then-confirm): ask the local model which existing
+   * folder each unfoldered note best fits, then open the review modal. Notes
+   * the model is unsure about are left out of the proposal, never force-moved. */
+  const runFolderSort = useCallback(async () => {
+    if (folders.length === 0) {
+      setNotice("Create a folder first, then Arya can sort notes into it.");
+      return;
+    }
+    const targets = notes.filter((n) => !n.folderId).map((n) => n.id);
+    if (targets.length === 0) {
+      setNotice("Every note is already in a folder.");
+      return;
+    }
+    setSortingFolders(true);
+    setNotice(`Sorting ${targets.length} note${targets.length === 1 ? "" : "s"}…`);
+    try {
+      const suggestions = await classifyNotesIntoFolders(targets);
+      setSortingFolders(false);
+      setNotice(null);
+      if (suggestions.length === 0) {
+        setNotice("No confident folder matches — nothing to suggest.");
+        return;
+      }
+      setSortRejected(new Set());
+      setSortReview(suggestions);
+    } catch (e) {
+      setSortingFolders(false);
+      setNotice(null);
+      setError(String(e));
+    }
+  }, [folders, notes]);
+
+  /** Apply the accepted rows from the sort review in one transaction. */
+  const applyFolderSort = useCallback(async () => {
+    if (!sortReview) return;
+    const accepted = sortReview.filter((s) => !sortRejected.has(s.noteId));
+    try {
+      if (accepted.length > 0) {
+        await assignNotesToFolders(accepted);
+        await refreshNotes();
+      }
+      setSortReview(null);
+      setNotice(
+        accepted.length > 0
+          ? `Sorted ${accepted.length} note${accepted.length === 1 ? "" : "s"} into folders.`
+          : null,
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [sortReview, sortRejected, refreshNotes]);
 
   const refreshAttachments = useCallback(async (noteId: string) => {
     try {
@@ -632,6 +784,11 @@ export function NotesWorkspace({
   // folder-visible notes with no visible parent; children nest beneath them
   // (from the full list, so a child shows even if its folder differs).
   const treeMode = !filter.trim();
+  const { visible: visibleFolders, overflow: overflowFolders } = splitFolders(
+    folders,
+    activeFolder,
+  );
+  const sortAccepted = sortReview?.filter((s) => !sortRejected.has(s.noteId)) ?? [];
   const noteIds = new Set(notes.map((n) => n.id));
   const childrenByParent = new Map<string, NoteSummary[]>();
   for (const n of notes) {
@@ -650,6 +807,31 @@ export function NotesWorkspace({
       else next.add(id);
       return next;
     });
+
+  /** A folder tab: click to filter, and a drop target for dragging a note in. */
+  const folderChip = (folder: Folder) => (
+    <button
+      key={folder.id}
+      type="button"
+      className={`${activeFolder === folder.id ? "btn-sm btn-primary" : "btn-sm btn-ghost"}${
+        dragOverFolder === folder.id ? " drop-hot" : ""
+      }`}
+      onClick={() => setActiveFolder(folder.id)}
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOverFolder(folder.id);
+      }}
+      onDragLeave={() => setDragOverFolder((f) => (f === folder.id ? null : f))}
+      onDrop={(e) => {
+        e.preventDefault();
+        const id = e.dataTransfer.getData("text/plain");
+        setDragOverFolder(null);
+        if (id) void moveNote(id, folder.id);
+      }}
+    >
+      {folder.name}
+    </button>
+  );
 
   const renderNoteRow = (note: NoteSummary, depth: number) => {
     const kids = childrenByParent.get(note.id) ?? [];
@@ -877,29 +1059,65 @@ export function NotesWorkspace({
             >
               All notes
             </button>
-            {folders.map((folder) => (
-              <button
-                key={folder.id}
-                type="button"
-                className={`${
-                  activeFolder === folder.id ? "btn-sm btn-primary" : "btn-sm btn-ghost"
-                }${dragOverFolder === folder.id ? " drop-hot" : ""}`}
-                onClick={() => setActiveFolder(folder.id)}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragOverFolder(folder.id);
-                }}
-                onDragLeave={() => setDragOverFolder((f) => (f === folder.id ? null : f))}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  const id = e.dataTransfer.getData("text/plain");
-                  setDragOverFolder(null);
-                  if (id) void moveNote(id, folder.id);
-                }}
-              >
-                {folder.name}
-              </button>
-            ))}
+            {visibleFolders.map(folderChip)}
+            {overflowFolders.length > 0 ? (
+              <div className="folder-dd" ref={folderMenuRef}>
+                <button
+                  type="button"
+                  className="btn-sm btn-ghost hstack"
+                  aria-haspopup="true"
+                  aria-expanded={folderMenuOpen}
+                  title="More folders"
+                  onClick={() => {
+                    setFolderMenuFilter("");
+                    setFolderMenuOpen((o) => !o);
+                  }}
+                >
+                  More
+                  <ChevronDownIcon />
+                </button>
+                {folderMenuOpen ? (
+                  <div className="folder-menu" role="menu">
+                    {folders.length > 8 ? (
+                      <input
+                        // biome-ignore lint/a11y/noAutofocus: opening the folder menu should focus its filter
+                        autoFocus
+                        className="folder-menu-filter"
+                        placeholder="Filter folders…"
+                        value={folderMenuFilter}
+                        onChange={(e) => setFolderMenuFilter(e.target.value)}
+                        aria-label="Filter folders"
+                      />
+                    ) : null}
+                    <div className="folder-menu-list">
+                      {overflowFolders
+                        .filter((f) =>
+                          f.name.toLowerCase().includes(folderMenuFilter.trim().toLowerCase()),
+                        )
+                        .map((f) => (
+                          <button
+                            key={f.id}
+                            type="button"
+                            role="menuitem"
+                            aria-current={activeFolder === f.id ? "true" : undefined}
+                            onClick={() => {
+                              setActiveFolder(f.id);
+                              setFolderMenuOpen(false);
+                            }}
+                          >
+                            {f.name}
+                          </button>
+                        ))}
+                      {overflowFolders.filter((f) =>
+                        f.name.toLowerCase().includes(folderMenuFilter.trim().toLowerCase()),
+                      ).length === 0 ? (
+                        <div className="folder-menu-empty">No folders match.</div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <button
               type="button"
               className="btn-sm btn-ghost"
@@ -910,15 +1128,25 @@ export function NotesWorkspace({
             >
               <PlusIcon />
             </button>
-            <button
-              type="button"
-              className="btn-sm btn-ghost"
-              title="Import an unzipped Notion export folder"
-              style={{ marginLeft: "auto" }}
-              onClick={() => void importFromNotion()}
-            >
-              Import
-            </button>
+            <div className="hstack" style={{ marginLeft: "auto", gap: 4 }}>
+              <button
+                type="button"
+                className="btn-sm btn-ghost"
+                title="Sort unfoldered notes into folders with AI"
+                disabled={sortingFolders}
+                onClick={() => void runFolderSort()}
+              >
+                {sortingFolders ? "Sorting…" : "Auto-sort"}
+              </button>
+              <button
+                type="button"
+                className="btn-sm btn-ghost"
+                title="Import an unzipped Notion export folder"
+                onClick={() => void importFromNotion()}
+              >
+                Import
+              </button>
+            </div>
           </nav>
 
           <ul aria-label="notes" className="plain">
@@ -1141,6 +1369,7 @@ export function NotesWorkspace({
                   if (kind === "note") void openNote(id);
                 }}
                 onInlineCommand={runInlineCommand}
+                appendRequest={appendRequest}
               />
             </div>
             <BacklinksPanel
@@ -1325,6 +1554,64 @@ export function NotesWorkspace({
         onCancel={() => setClearAllOpen(false)}
       />
 
+      <Modal
+        open={sortReview !== null}
+        onClose={() => setSortReview(null)}
+        labelledBy="sort-review-title"
+      >
+        <h3 id="sort-review-title" className="modal-title">
+          Sort into folders
+        </h3>
+        <p className="modal-message">
+          Arya suggests a folder for each note below. Skip any you don't want, then apply — nothing
+          moves until you do.
+        </p>
+        <div className="sort-review-list">
+          {(sortReview ?? []).map((s) => {
+            const note = notes.find((n) => n.id === s.noteId);
+            const folder = folders.find((f) => f.id === s.folderId);
+            const skipped = sortRejected.has(s.noteId);
+            return (
+              <div key={s.noteId} className={`sort-review-row${skipped ? " skipped" : ""}`}>
+                <div className="sort-review-text">
+                  <span className="sort-review-title">{note?.title || "Untitled"}</span>{" "}
+                  <span className="sort-review-folder">→ {folder?.name ?? "—"}</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn-sm btn-ghost sort-review-toggle"
+                  onClick={() =>
+                    setSortRejected((r) => {
+                      const next = new Set(r);
+                      if (next.has(s.noteId)) next.delete(s.noteId);
+                      else next.add(s.noteId);
+                      return next;
+                    })
+                  }
+                >
+                  {skipped ? "Keep" : "Skip"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <div className="modal-actions">
+          <button type="button" className="btn-ghost" onClick={() => setSortReview(null)}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            disabled={sortAccepted.length === 0}
+            onClick={() => void applyFolderSort()}
+          >
+            {sortAccepted.length > 0
+              ? `Move ${sortAccepted.length} note${sortAccepted.length === 1 ? "" : "s"}`
+              : "Move notes"}
+          </button>
+        </div>
+      </Modal>
+
       {sortPreview !== null ? (
         <div role="dialog" aria-label="sorted note preview" className="modal-overlay">
           <div className="panel modal-card">
@@ -1405,23 +1692,50 @@ export function NotesWorkspace({
           >
             All notes
           </button>
-          {folders.map((f) => (
-            <button
-              key={f.id}
-              type="button"
-              role="menuitem"
-              disabled={notes.find((n) => n.id === noteMenu.id)?.folderId === f.id}
-              onClick={() => {
-                void moveNote(noteMenu.id, f.id);
-                setNoteMenu(null);
-              }}
-            >
-              {f.name}
-            </button>
-          ))}
+          {folders.length > 8 ? (
+            <input
+              className="folder-menu-filter"
+              placeholder="Filter folders…"
+              value={moveFilter}
+              onChange={(e) => setMoveFilter(e.target.value)}
+              aria-label="Filter folders"
+            />
+          ) : null}
+          <div className="context-menu-scroll">
+            {folders
+              .filter((f) => f.name.toLowerCase().includes(moveFilter.trim().toLowerCase()))
+              .map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  role="menuitem"
+                  disabled={notes.find((n) => n.id === noteMenu.id)?.folderId === f.id}
+                  onClick={() => {
+                    void moveNote(noteMenu.id, f.id);
+                    setNoteMenu(null);
+                  }}
+                >
+                  {f.name}
+                </button>
+              ))}
+          </div>
           {folders.length === 0 ? (
             <div className="context-menu-empty">No folders yet — add one with +</div>
           ) : null}
+          <div className="context-menu-sep" />
+          <div className="context-menu-label">Translate to</div>
+          <div className="context-menu-scroll">
+            {TRANSLATE_LANGUAGES.map((l) => (
+              <button
+                key={l}
+                type="button"
+                role="menuitem"
+                onClick={() => void translateNote(noteMenu.id, l)}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
           <div className="context-menu-sep" />
           <button
             type="button"

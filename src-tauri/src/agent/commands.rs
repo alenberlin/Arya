@@ -118,6 +118,82 @@ pub async fn agent_get_messages(
     .map_err(|e| e.to_string())
 }
 
+/// The visible text of one persisted message (`content_json` is
+/// `{text, reasoning?, tools}`; only `text` is the conversation itself).
+fn message_text(content_json: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(content_json)
+        .ok()
+        .and_then(|v| v.get("text").and_then(|t| t.as_str()).map(String::from))
+        .unwrap_or_default()
+}
+
+/// Render a conversation as a readable markdown transcript (You / Arya turns),
+/// skipping empty turns. Shared so a converted chat reads the same everywhere.
+fn transcript_markdown(messages: &[AgentMessage]) -> String {
+    let mut md = String::new();
+    for m in messages {
+        let text = message_text(&m.content_json);
+        if text.trim().is_empty() {
+            continue;
+        }
+        let speaker = if m.role == "user" { "You" } else { "Arya" };
+        md.push_str(&format!("**{speaker}:** {}\n\n", text.trim()));
+    }
+    md.trim_end().to_string()
+}
+
+/// Converts an agent chat into a note: the conversation becomes a markdown
+/// transcript, titled from the session (or its first line). The note then joins
+/// the connected brain like any other. Returns the new note id. Translating a
+/// chat is this plus a side-by-side note translation, composed on the frontend.
+#[tauri::command]
+pub async fn convert_session_to_note(
+    pool: State<'_, SqlitePool>,
+    session_id: String,
+) -> Result<String, String> {
+    let title: String = sqlx::query_scalar("SELECT title FROM agent_sessions WHERE id = ?1")
+        .bind(&session_id)
+        .fetch_optional(&*pool)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "chat not found".to_string())?;
+
+    let messages: Vec<AgentMessage> = sqlx::query_as::<_, AgentMessage>(
+        "SELECT id, role, content_json, created_at
+         FROM agent_messages WHERE session_id = ?1 ORDER BY created_at",
+    )
+    .bind(&session_id)
+    .fetch_all(&*pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let body = transcript_markdown(&messages);
+    if body.trim().is_empty() {
+        return Err("this chat has no messages to convert".into());
+    }
+    let note_title = if title.trim().is_empty() || title == "New session" {
+        crate::notes::title_from_text(&body)
+    } else {
+        title
+    };
+
+    let note = crate::notes::insert_note(&pool, &note_title)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query(
+        "UPDATE notes SET body_md = ?2, processing_status = 'ready',
+             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?1",
+    )
+    .bind(&note.id)
+    .bind(&body)
+    .execute(&*pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(note.id)
+}
+
 /// Sends a user message; ensures the sidecar session exists (restores
 /// history after an app restart), persists the user turn, and starts the run.
 #[tauri::command]
@@ -329,6 +405,36 @@ async fn session_mode(pool: &SqlitePool, session_id: &str) -> Result<WriteMode, 
 mod tests {
     use super::*;
     use crate::db::test_pool;
+
+    fn msg(role: &str, text: &str) -> AgentMessage {
+        AgentMessage {
+            id: "x".into(),
+            role: role.into(),
+            content_json: json!({ "text": text, "tools": [] }).to_string(),
+            created_at: "2026-01-01".into(),
+        }
+    }
+
+    #[test]
+    fn transcript_renders_turns_and_skips_empties() {
+        let messages = vec![
+            msg("user", "Plan the migration"),
+            msg("assistant", "Here's a plan."),
+            msg("assistant", "   "), // empty → skipped
+        ];
+        let md = transcript_markdown(&messages);
+        assert_eq!(
+            md,
+            "**You:** Plan the migration\n\n**Arya:** Here's a plan."
+        );
+    }
+
+    #[test]
+    fn message_text_pulls_text_field_only() {
+        let c = json!({ "text": "hi", "reasoning": "secret", "tools": [] }).to_string();
+        assert_eq!(message_text(&c), "hi");
+        assert_eq!(message_text("not json"), "");
+    }
 
     #[tokio::test]
     async fn delete_session_removes_row_and_runtime_state() {

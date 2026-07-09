@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
 
@@ -64,6 +64,27 @@ pub struct Folder {
 
 pub async fn insert_note(pool: &SqlitePool, title: &str) -> Result<Note, sqlx::Error> {
     insert_note_under(pool, title, None).await
+}
+
+/// A short note title derived from body text — the first non-empty line,
+/// whitespace-collapsed and capped. Used when converting a dictation or agent
+/// chat into a note so it lands with a meaningful title instead of "New note".
+pub fn title_from_text(body: &str) -> String {
+    let first = body
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let collapsed = first.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return "New note".to_string();
+    }
+    if collapsed.chars().count() > 60 {
+        let head: String = collapsed.chars().take(60).collect();
+        format!("{head}…")
+    } else {
+        collapsed
+    }
 }
 
 /// Insert a note, optionally as a child of `parent_id` (F3 nesting).
@@ -481,10 +502,46 @@ pub async fn assign_note_to_folder(
         .map_err(|e| e.to_string())
 }
 
+/// One confirmed move from the AI-sort review: a note into an existing folder.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderAssignment {
+    pub note_id: String,
+    pub folder_id: String,
+}
+
+/// Apply several folder moves in one transaction — the confirmed output of AI
+/// sort. All-or-nothing, so a mid-apply failure can't leave notes half-moved.
+#[tauri::command]
+pub async fn assign_notes_to_folders(
+    pool: State<'_, SqlitePool>,
+    assignments: Vec<FolderAssignment>,
+) -> Result<(), String> {
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    for a in &assignments {
+        sqlx::query("UPDATE notes SET folder_id = ?2 WHERE id = ?1")
+            .bind(&a.note_id)
+            .bind(&a.folder_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().await.map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::test_pool;
+
+    #[test]
+    fn title_from_text_uses_first_line_capped() {
+        assert_eq!(title_from_text("  \n Grocery list \n eggs"), "Grocery list");
+        assert_eq!(title_from_text("   "), "New note");
+        let long = "word ".repeat(30);
+        let out = title_from_text(&long);
+        assert!(out.chars().count() <= 61 && out.ends_with('…'));
+    }
 
     #[tokio::test]
     async fn insert_then_fetch_round_trips() {
