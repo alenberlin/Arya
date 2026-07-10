@@ -31,12 +31,21 @@ async fn app_with(anthropic: bool, openai: bool) -> axum::Router {
         http: reqwest::Client::new(),
         verifier,
         wallet: Arc::new(arya_api::billing::LocalWallet::from_env()),
+        rate_limit: Arc::new(arya_api::ratelimit::RateLimit::new(
+            10_000,
+            std::time::Duration::from_secs(60),
+        )),
     })
 }
 
 /// A proxy app whose ollama upstream points at a caller-supplied URL (a fake
 /// upstream server), with no cloud provider keys.
 async fn app_ollama(ollama_url: String) -> axum::Router {
+    let (app, _) = app_ollama_with_pool(ollama_url).await;
+    app
+}
+
+async fn app_ollama_with_pool(ollama_url: String) -> (axum::Router, sqlx::SqlitePool) {
     let config = Arc::new(Config {
         bind: "127.0.0.1:0".into(),
         database_path: ":memory:".into(),
@@ -49,13 +58,18 @@ async fn app_ollama(ollama_url: String) -> axum::Router {
     });
     let pool = arya_api::metering::init_pool(":memory:").await.unwrap();
     let verifier = Arc::new(arya_api::auth::Verifier::new(&config).await);
-    build_app(AppState {
+    let app = build_app(AppState {
         config,
-        pool,
+        pool: pool.clone(),
         http: arya_api::build_http_client(),
         verifier,
         wallet: Arc::new(arya_api::billing::LocalWallet::from_env()),
-    })
+        rate_limit: Arc::new(arya_api::ratelimit::RateLimit::new(
+            10_000,
+            std::time::Duration::from_secs(60),
+        )),
+    });
+    (app, pool)
 }
 
 /// Spawns a fake OpenAI-compatible upstream on a loopback port and returns its
@@ -80,6 +94,29 @@ async fn spawn_fake_upstream(sse: bool) -> String {
                     .body(Body::from(
                         r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":5,"completion_tokens":2}}"#,
                     ))
+                    .unwrap()
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{addr}")
+}
+
+async fn spawn_large_upstream() -> String {
+    use axum::routing::post;
+    let payload = Arc::new("x".repeat(17 * 1024 * 1024));
+    let app = axum::Router::new().route(
+        "/v1/chat/completions",
+        post(move || {
+            let payload = Arc::clone(&payload);
+            async move {
+                axum::response::Response::builder()
+                    .header("content-type", "application/json")
+                    .body(Body::from((*payload).clone()))
                     .unwrap()
             }
         }),
@@ -151,7 +188,6 @@ async fn account_endpoint_returns_snapshot() {
     let json = body_json(response).await;
     assert_eq!(json["success"], true);
     assert!(json["data"]["remainingCredits"].as_i64().unwrap() > 0);
-    assert!(json["data"]["tier"].is_string());
 }
 
 #[tokio::test]
@@ -283,6 +319,49 @@ async fn idempotency_key_replays_cached_response() {
         json["choices"].is_array(),
         "replay should return the cached body: {json}"
     );
+}
+
+#[tokio::test]
+async fn oversized_buffered_response_settles_hold_without_replay_cache() {
+    let upstream = spawn_large_upstream().await;
+    let (app, pool) = app_ollama_with_pool(upstream).await;
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/ollama/chat/completions")
+                .header("authorization", "Bearer test-token")
+                .header("content-type", "application/json")
+                .header("idempotency-key", "too-large")
+                .body(Body::from(
+                    r#"{"model":"llama3.2","messages":[{"role":"user","content":"hi"}],"stream":false}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let json = body_json(response).await;
+    assert_eq!(json["errors"][0]["code"], "upstream_too_large");
+
+    let open_holds: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM holds WHERE settled = 0")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(open_holds, 0);
+    assert_eq!(
+        arya_api::metering::total_charged(&pool, "usr_local_dev")
+            .await
+            .unwrap(),
+        500
+    );
+    let cached: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM response_cache WHERE idempotency_key = ?1")
+            .bind("agent_chat:usr_local_dev:too-large")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(cached, 0);
 }
 
 /// Full metered round trip against a REAL local Ollama model (ignored by

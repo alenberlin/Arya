@@ -13,6 +13,8 @@ export interface NoteSummary {
   processingStatus: string;
   processingError: string | null;
   folderId: string | null;
+  /** Parent page, or null for a top-level note (F3 nesting). */
+  parentNoteId: string | null;
   createdAt: string;
 }
 
@@ -20,6 +22,8 @@ export interface NoteDetail {
   id: string;
   title: string;
   bodyMd: string;
+  /** BlockNote block-JSON (the editor's source of truth); empty for legacy notes. */
+  documentJson: string;
   manualNotes: string;
   processingStatus: string;
   processingError: string | null;
@@ -60,20 +64,25 @@ export interface RecoverableRecording {
   startedAt: string;
 }
 
-export const createNote = (title: string) => invoke<Note>("create_note", { title });
+export const createNote = (title: string, parentId?: string) =>
+  invoke<Note>("create_note", { title, parentId: parentId ?? null });
+/** Re-parent a note, or move it to top level with `parentId = null` (F3). */
+export const setNoteParent = (noteId: string, parentId: string | null) =>
+  invoke<void>("set_note_parent", { noteId, parentId });
 export const listNotes = () => invoke<NoteSummary[]>("list_notes");
 export const searchNotes = (query: string) => invoke<NoteSummary[]>("search_notes", { query });
 export const getNote = (id: string) => invoke<NoteDetail>("get_note", { id });
 export const getNoteTurns = (id: string) => invoke<TranscriptTurn[]>("get_note_turns", { id });
 export const updateNote = (
   id: string,
-  fields: { title?: string; bodyMd?: string; manualNotes?: string },
+  fields: { title?: string; bodyMd?: string; manualNotes?: string; documentJson?: string },
 ) =>
   invoke<void>("update_note", {
     id,
     title: fields.title ?? null,
     bodyMd: fields.bodyMd ?? null,
     manualNotes: fields.manualNotes ?? null,
+    documentJson: fields.documentJson ?? null,
   });
 export const deleteNote = (id: string) => invoke<void>("delete_note", { id });
 /** Permanently deletes every note and its recordings/attachments. */
@@ -95,11 +104,48 @@ export const listAttachments = (noteId: string) =>
 export const removeAttachment = (id: string) => invoke<void>("remove_attachment", { id });
 export const openAttachment = (id: string) => invoke<void>("open_attachment", { id });
 
+/** Result of importing a Notion export folder (F4). */
+export interface ImportReport {
+  pagesCreated: number;
+  linksResolved: number;
+  skipped: number;
+}
+/** Import an unzipped Notion "Markdown & CSV" export folder as a page tree. */
+export const importNotion = (dirPath: string) => invoke<ImportReport>("import_notion", { dirPath });
+
+/** One proposed note from a brain-dump split (also the shape sent back to create). */
+export interface ProposedNote {
+  title: string;
+  body: string;
+}
+/** Ask the local model to split a messy brain dump into coherent, single-topic
+ * notes. Suggestion only — nothing is written until {@link createNotesFromSplit}. */
+export const splitBraindumpIntoNotes = (sourceText: string, model?: string) =>
+  invoke<ProposedNote[]>("split_braindump_into_notes", { sourceText, model: model ?? null });
+/** Create the accepted notes in one transaction, optionally all in a folder. */
+export const createNotesFromSplit = (notes: ProposedNote[], folderId?: string | null) =>
+  invoke<string[]>("create_notes_from_split", { notes, folderId: folderId ?? null });
+/** Read and concatenate the text of several files (for adding files to a dump). */
+export const readTextFiles = (paths: string[]) => invoke<string>("read_text_files", { paths });
+
 export const createFolder = (name: string) => invoke<Folder>("create_folder", { name });
 export const listFolders = () => invoke<Folder[]>("list_folders");
 export const deleteFolder = (id: string) => invoke<void>("delete_folder", { id });
 export const assignNoteToFolder = (noteId: string, folderId: string | null) =>
   invoke<void>("assign_note_to_folder", { noteId, folderId });
+
+/** One AI-proposed move: a note into an existing folder (F-sort review). */
+export interface FolderSuggestion {
+  noteId: string;
+  folderId: string;
+}
+/** Ask the local model which existing folder each note best fits. Returns only
+ * confident matches — notes it's unsure about are simply omitted, never forced. */
+export const classifyNotesIntoFolders = (noteIds: string[], model?: string) =>
+  invoke<FolderSuggestion[]>("classify_notes_into_folders", { noteIds, model: model ?? null });
+/** Apply confirmed folder moves in one transaction. */
+export const assignNotesToFolders = (assignments: FolderSuggestion[]) =>
+  invoke<void>("assign_notes_to_folders", { assignments });
 
 export type SourceMode = "microphone-only" | "microphone-and-system";
 export const startRecording = (noteId?: string, sourceMode?: SourceMode) =>

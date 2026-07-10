@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
 
@@ -20,6 +20,8 @@ pub struct NoteSummary {
     pub processing_status: String,
     pub processing_error: Option<String>,
     pub folder_id: Option<String>,
+    /// Parent page, or `None` for a top-level note (F3 nesting).
+    pub parent_note_id: Option<String>,
     pub created_at: String,
 }
 
@@ -30,6 +32,9 @@ pub struct NoteDetail {
     pub id: String,
     pub title: String,
     pub body_md: String,
+    /// BlockNote block-JSON — the editor's source of truth. Empty for legacy
+    /// notes authored before the block editor (they fall back to `body_md`).
+    pub document_json: String,
     pub manual_notes: String,
     pub processing_status: String,
     pub processing_error: Option<String>,
@@ -58,15 +63,61 @@ pub struct Folder {
 }
 
 pub async fn insert_note(pool: &SqlitePool, title: &str) -> Result<Note, sqlx::Error> {
+    insert_note_under(pool, title, None).await
+}
+
+/// A short note title derived from body text — the first non-empty line,
+/// whitespace-collapsed and capped. Used when converting a dictation or agent
+/// chat into a note so it lands with a meaningful title instead of "New note".
+pub fn title_from_text(body: &str) -> String {
+    let first = body
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let collapsed = first.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return "New note".to_string();
+    }
+    if collapsed.chars().count() > 60 {
+        let head: String = collapsed.chars().take(60).collect();
+        format!("{head}…")
+    } else {
+        collapsed
+    }
+}
+
+/// Insert a note, optionally as a child of `parent_id` (F3 nesting).
+pub async fn insert_note_under(
+    pool: &SqlitePool,
+    title: &str,
+    parent_id: Option<&str>,
+) -> Result<Note, sqlx::Error> {
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query_as::<_, Note>(
-        "INSERT INTO notes (id, title, created_at)
-         VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        "INSERT INTO notes (id, title, parent_note_id, created_at)
+         VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
          RETURNING id, title, created_at",
     )
     .bind(&id)
     .bind(title)
+    .bind(parent_id)
     .fetch_one(pool)
+    .await
+}
+
+/// All descendant note ids of `id` (its subtree, excluding `id` itself).
+async fn descendant_ids(pool: &SqlitePool, id: &str) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE subtree(id) AS (
+             SELECT id FROM notes WHERE parent_note_id = ?1
+             UNION ALL
+             SELECT n.id FROM notes n JOIN subtree s ON n.parent_note_id = s.id
+         )
+         SELECT id FROM subtree",
+    )
+    .bind(id)
+    .fetch_all(pool)
     .await
 }
 
@@ -74,7 +125,8 @@ pub async fn fetch_notes(pool: &SqlitePool) -> Result<Vec<NoteSummary>, sqlx::Er
     // rowid is monotonic with insertion, so it's a stable newest-first tiebreak
     // when two notes share a created_at (unlike the random UUID id).
     sqlx::query_as::<_, NoteSummary>(
-        "SELECT id, title, processing_status, processing_error, folder_id, created_at
+        "SELECT id, title, processing_status, processing_error, folder_id,
+                parent_note_id, created_at
          FROM notes ORDER BY created_at DESC, rowid DESC",
     )
     .fetch_all(pool)
@@ -97,7 +149,7 @@ pub async fn search_notes_query(
     );
     sqlx::query_as::<_, NoteSummary>(
         "SELECT DISTINCT n.id, n.title, n.processing_status, n.processing_error,
-                n.folder_id, n.created_at
+                n.folder_id, n.parent_note_id, n.created_at
          FROM notes n
          LEFT JOIN transcript_turns t ON t.note_id = n.id
          WHERE n.title LIKE ?1 ESCAPE '\\'
@@ -112,8 +164,43 @@ pub async fn search_notes_query(
 }
 
 #[tauri::command]
-pub async fn create_note(pool: State<'_, SqlitePool>, title: String) -> Result<Note, String> {
-    insert_note(&pool, &title).await.map_err(|e| e.to_string())
+pub async fn create_note(
+    pool: State<'_, SqlitePool>,
+    title: String,
+    parent_id: Option<String>,
+) -> Result<Note, String> {
+    insert_note_under(&pool, &title, parent_id.as_deref())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Re-parent a note (or move it to top level with `parentId = null`). Guards
+/// against cycles: a page cannot become its own parent or a child of one of its
+/// own descendants.
+#[tauri::command]
+pub async fn set_note_parent(
+    pool: State<'_, SqlitePool>,
+    note_id: String,
+    parent_id: Option<String>,
+) -> Result<(), String> {
+    if let Some(pid) = &parent_id {
+        if pid == &note_id {
+            return Err("a page cannot be its own parent".into());
+        }
+        let descendants = descendant_ids(&pool, &note_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if descendants.iter().any(|d| d == pid) {
+            return Err("cannot move a page into its own subtree".into());
+        }
+    }
+    sqlx::query("UPDATE notes SET parent_note_id = ?2 WHERE id = ?1")
+        .bind(&note_id)
+        .bind(&parent_id)
+        .execute(&*pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -137,17 +224,23 @@ pub async fn search_notes(
         .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub async fn get_note(pool: State<'_, SqlitePool>, id: String) -> Result<NoteDetail, String> {
+/// Fetch the full note payload for the editor.
+pub async fn fetch_note_detail(pool: &SqlitePool, id: &str) -> Result<NoteDetail, sqlx::Error> {
     sqlx::query_as::<_, NoteDetail>(
-        "SELECT id, title, body_md, manual_notes, processing_status, processing_error,
-                folder_id, calendar_context, created_at
+        "SELECT id, title, body_md, document_json, manual_notes, processing_status,
+                processing_error, folder_id, calendar_context, created_at
          FROM notes WHERE id = ?1",
     )
     .bind(id)
-    .fetch_one(&*pool)
+    .fetch_one(pool)
     .await
-    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_note(pool: State<'_, SqlitePool>, id: String) -> Result<NoteDetail, String> {
+    fetch_note_detail(&pool, &id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -165,19 +258,24 @@ pub async fn get_note_turns(
     .map_err(|e| e.to_string())
 }
 
-#[tauri::command]
-pub async fn update_note(
-    pool: State<'_, SqlitePool>,
-    id: String,
-    title: Option<String>,
-    body_md: Option<String>,
-    manual_notes: Option<String>,
-) -> Result<(), String> {
+/// Persist edited note fields. Any `None` field is left unchanged (COALESCE), so
+/// a caller can patch one field without clobbering the rest. `document_json` is
+/// the block-editor source of truth; `body_md` is its plaintext/markdown
+/// projection (kept in sync by the client so search + RAG stay accurate).
+pub async fn update_note_fields(
+    pool: &SqlitePool,
+    id: &str,
+    title: Option<&str>,
+    body_md: Option<&str>,
+    manual_notes: Option<&str>,
+    document_json: Option<&str>,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE notes SET
              title = COALESCE(?2, title),
              body_md = COALESCE(?3, body_md),
              manual_notes = COALESCE(?4, manual_notes),
+             document_json = COALESCE(?5, document_json),
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
          WHERE id = ?1",
     )
@@ -185,9 +283,30 @@ pub async fn update_note(
     .bind(title)
     .bind(body_md)
     .bind(manual_notes)
-    .execute(&*pool)
+    .bind(document_json)
+    .execute(pool)
     .await
     .map(|_| ())
+}
+
+#[tauri::command]
+pub async fn update_note(
+    pool: State<'_, SqlitePool>,
+    id: String,
+    title: Option<String>,
+    body_md: Option<String>,
+    manual_notes: Option<String>,
+    document_json: Option<String>,
+) -> Result<(), String> {
+    update_note_fields(
+        &pool,
+        &id,
+        title.as_deref(),
+        body_md.as_deref(),
+        manual_notes.as_deref(),
+        document_json.as_deref(),
+    )
+    .await
     .map_err(|e| e.to_string())
 }
 
@@ -204,26 +323,60 @@ pub async fn delete_note(pool: State<'_, SqlitePool>, id: String) -> Result<(), 
 pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String> {
     // Collect every file path BEFORE deleting: the rows that hold the paths
     // cascade away with the note, so afterwards they'd be unqueryable.
-    let audio_paths = sqlx::query_scalar::<_, String>(
-        "SELECT a.path FROM audio_artifacts a
-         JOIN recording_sessions s ON s.id = a.session_id WHERE s.note_id = ?1",
+    // The whole subtree — the note plus every descendant page — collected before
+    // the delete so their files and graph edges can be cleaned even though the
+    // rows cascade away.
+    let subtree_ids = sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE subtree(id) AS (
+             SELECT ?1
+             UNION ALL
+             SELECT n.id FROM notes n JOIN subtree s ON n.parent_note_id = s.id
+         )
+         SELECT id FROM subtree",
     )
     .bind(id)
     .fetch_all(pool)
     .await
     .map_err(|e| e.to_string())?;
-    let attachment_paths =
-        sqlx::query_scalar::<_, String>("SELECT path FROM note_attachments WHERE note_id = ?1")
-            .bind(id)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| e.to_string())?;
 
+    let audio_paths = sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE subtree(id) AS (
+             SELECT ?1 UNION ALL
+             SELECT n.id FROM notes n JOIN subtree s ON n.parent_note_id = s.id
+         )
+         SELECT a.path FROM audio_artifacts a
+         JOIN recording_sessions s ON s.id = a.session_id
+         WHERE s.note_id IN (SELECT id FROM subtree)",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    let attachment_paths = sqlx::query_scalar::<_, String>(
+        "WITH RECURSIVE subtree(id) AS (
+             SELECT ?1 UNION ALL
+             SELECT n.id FROM notes n JOIN subtree s ON n.parent_note_id = s.id
+         )
+         SELECT path FROM note_attachments WHERE note_id IN (SELECT id FROM subtree)",
+    )
+    .bind(id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
+    // Deleting the root cascades the descendant pages (parent_note_id ON DELETE
+    // CASCADE), and each page's sessions/attachments/turns cascade in turn.
     sqlx::query("DELETE FROM notes WHERE id = ?1")
         .bind(id)
         .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
+
+    // Drop graph edges for every page that was in the subtree (best-effort: the
+    // authoritative rows are already gone; a leftover edge resolves as deleted).
+    for node_id in &subtree_ids {
+        let _ = crate::links::delete_for_node(pool, "note", node_id).await;
+    }
 
     remove_files(audio_paths.into_iter().chain(attachment_paths));
     Ok(())
@@ -255,6 +408,9 @@ pub async fn delete_all_notes_inner(pool: &SqlitePool) -> Result<(), String> {
         .execute(pool)
         .await
         .map_err(|e| e.to_string())?;
+
+    // Every note is gone, so drop every edge touching a note (best-effort).
+    let _ = crate::links::delete_for_kind(pool, "note").await;
 
     remove_files(audio_paths.into_iter().chain(attachment_paths));
     Ok(())
@@ -346,10 +502,46 @@ pub async fn assign_note_to_folder(
         .map_err(|e| e.to_string())
 }
 
+/// One confirmed move from the AI-sort review: a note into an existing folder.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderAssignment {
+    pub note_id: String,
+    pub folder_id: String,
+}
+
+/// Apply several folder moves in one transaction — the confirmed output of AI
+/// sort. All-or-nothing, so a mid-apply failure can't leave notes half-moved.
+#[tauri::command]
+pub async fn assign_notes_to_folders(
+    pool: State<'_, SqlitePool>,
+    assignments: Vec<FolderAssignment>,
+) -> Result<(), String> {
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    for a in &assignments {
+        sqlx::query("UPDATE notes SET folder_id = ?2 WHERE id = ?1")
+            .bind(&a.note_id)
+            .bind(&a.folder_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    tx.commit().await.map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::test_pool;
+
+    #[test]
+    fn title_from_text_uses_first_line_capped() {
+        assert_eq!(title_from_text("  \n Grocery list \n eggs"), "Grocery list");
+        assert_eq!(title_from_text("   "), "New note");
+        let long = "word ".repeat(30);
+        let out = title_from_text(&long);
+        assert!(out.chars().count() <= 61 && out.ends_with('…'));
+    }
 
     #[tokio::test]
     async fn insert_then_fetch_round_trips() {
@@ -360,6 +552,105 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].id, created.id);
         assert_eq!(notes[0].processing_status, "idle");
+    }
+
+    #[tokio::test]
+    async fn document_json_defaults_empty_and_round_trips() {
+        let pool = test_pool().await;
+        let n = insert_note(&pool, "doc").await.unwrap();
+        // Legacy default: no rich document yet, empty body.
+        let d = fetch_note_detail(&pool, &n.id).await.unwrap();
+        assert_eq!(d.document_json, "");
+        assert_eq!(d.body_md, "");
+
+        // Save block-JSON + its markdown projection; a None field (manual_notes)
+        // is left untouched.
+        update_note_fields(
+            &pool,
+            &n.id,
+            None,
+            Some("# Title\n\nbody"),
+            None,
+            Some(r#"[{"type":"heading"}]"#),
+        )
+        .await
+        .unwrap();
+        let d2 = fetch_note_detail(&pool, &n.id).await.unwrap();
+        assert_eq!(d2.document_json, r#"[{"type":"heading"}]"#);
+        assert_eq!(d2.body_md, "# Title\n\nbody");
+        assert_eq!(d2.manual_notes, "");
+    }
+
+    #[tokio::test]
+    async fn child_note_nests_under_its_parent() {
+        let pool = test_pool().await;
+        let parent = insert_note(&pool, "Parent").await.unwrap();
+        let child = insert_note_under(&pool, "Child", Some(&parent.id))
+            .await
+            .unwrap();
+        let notes = fetch_notes(&pool).await.unwrap();
+        let child_row = notes.iter().find(|n| n.id == child.id).unwrap();
+        assert_eq!(
+            child_row.parent_note_id.as_deref(),
+            Some(parent.id.as_str())
+        );
+        let parent_row = notes.iter().find(|n| n.id == parent.id).unwrap();
+        assert_eq!(parent_row.parent_note_id, None);
+    }
+
+    #[tokio::test]
+    async fn descendant_ids_walks_the_whole_subtree() {
+        let pool = test_pool().await;
+        let a = insert_note(&pool, "A").await.unwrap();
+        let b = insert_note_under(&pool, "B", Some(&a.id)).await.unwrap();
+        let c = insert_note_under(&pool, "C", Some(&b.id)).await.unwrap();
+        let d = insert_note(&pool, "D").await.unwrap(); // unrelated top-level
+        let mut desc = descendant_ids(&pool, &a.id).await.unwrap();
+        desc.sort();
+        let mut expected = vec![b.id.clone(), c.id.clone()];
+        expected.sort();
+        assert_eq!(desc, expected);
+        assert!(!desc.contains(&d.id));
+    }
+
+    #[tokio::test]
+    async fn deleting_a_parent_removes_its_subtree_and_files() {
+        // Verifies the parent_note_id ON DELETE CASCADE *and* that the subtree's
+        // files are collected + removed even for a deep descendant.
+        let pool = test_pool().await;
+        let dir = std::env::temp_dir().join(format!("arya-nest-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let parent = insert_note(&pool, "Parent").await.unwrap();
+        let child = insert_note_under(&pool, "Child", Some(&parent.id))
+            .await
+            .unwrap();
+        let grandchild = insert_note_under(&pool, "Grandchild", Some(&child.id))
+            .await
+            .unwrap();
+
+        let attach = dir.join("deep.pdf");
+        std::fs::write(&attach, b"pdf").unwrap();
+        sqlx::query(
+            "INSERT INTO note_attachments (id, note_id, name, path, size_bytes, created_at)
+             VALUES ('a1', ?1, 'deep.pdf', ?2, 3, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+        )
+        .bind(&grandchild.id)
+        .bind(attach.to_str().unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        delete_note_inner(&pool, &parent.id)
+            .await
+            .expect("delete subtree");
+
+        assert!(
+            fetch_notes(&pool).await.unwrap().is_empty(),
+            "the whole subtree cascaded away"
+        );
+        assert!(!attach.exists(), "the grandchild's file was removed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

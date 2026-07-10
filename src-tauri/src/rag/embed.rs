@@ -3,8 +3,8 @@
 use serde_json::json;
 
 pub const EMBED_MODEL: &str = "nomic-embed-text";
-/// Dimension of nomic-embed-text output; asserted on the first fetch.
-#[allow(dead_code)]
+/// Dimension of nomic-embed-text output; validated on every embed so a swapped
+/// model can't silently produce wrong-width vectors.
 pub const EMBED_DIM: usize = 768;
 
 pub trait Embedder: Send + Sync {
@@ -57,6 +57,16 @@ impl Embedder for OllamaEmbedder {
             embeddings: Vec<Vec<f32>>,
         }
         let parsed: EmbedResponse = response.json().map_err(|e| e.to_string())?;
+        // Guard against a swapped/misconfigured embedding model quietly returning
+        // wrong-width vectors, which would corrupt cosine similarity in the index.
+        if let Some(row) = parsed.embeddings.first() {
+            if row.len() != EMBED_DIM {
+                return Err(format!(
+                    "embedding model returned {} dims, expected {EMBED_DIM}",
+                    row.len()
+                ));
+            }
+        }
         Ok(parsed.embeddings)
     }
 

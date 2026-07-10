@@ -43,6 +43,19 @@ pub enum Polish {
     Polished,
 }
 
+/// The interpersonal register of the Polished rewrite (F6). Orthogonal to
+/// [`DictationStyle`] (casing/format) — this shapes *voice*, and only the
+/// local-LLM Polished level uses it; Raw/Clean ignore it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PolishedTone {
+    #[default]
+    Neutral,
+    Polite,
+    Friendly,
+    Professional,
+}
+
 /// Where the text is going, so layout can adapt (email greeting/sign-off
 /// spacing, for example). Detected from the frontmost app at paste time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -65,6 +78,8 @@ pub struct DictionaryEntry {
 pub struct CleanupRequest {
     pub raw: String,
     pub style: DictationStyle,
+    /// The Polished rewrite's tone (F6); ignored by Raw/Clean.
+    pub tone: PolishedTone,
     pub context: TargetContext,
     pub dictionary: Vec<DictionaryEntry>,
 }

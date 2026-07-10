@@ -84,23 +84,47 @@ fn reindex_blocking(app: &AppHandle, pool: &SqlitePool) -> Result<i64, String> {
         serde_json::json!({ "stage": "embedding", "total": documents.len() }),
     );
 
+    let total = replace_index(pool, &documents, &embedder)?;
+
+    // Drop the stale cache; the next search repopulates from the new rows.
+    invalidate_cache();
+    let _ = app.emit(
+        "rag:progress",
+        serde_json::json!({ "stage": "done", "total": total }),
+    );
+    Ok(total)
+}
+
+struct Staged {
+    kind: String,
+    id: String,
+    title: String,
+    content: String,
+    blob: Vec<u8>,
+}
+
+fn replace_index(
+    pool: &SqlitePool,
+    documents: &[Document],
+    embedder: &dyn Embedder,
+) -> Result<i64, String> {
     // Embed everything into memory FIRST. Only once all embedding succeeds do we
     // touch the live index, and then in a single transaction — so a mid-run
     // Ollama failure leaves the existing index intact instead of emptying search.
-    struct Staged {
-        kind: String,
-        id: String,
-        title: String,
-        content: String,
-        blob: Vec<u8>,
-    }
     let mut staged: Vec<Staged> = Vec::new();
-    for doc in &documents {
+    for doc in documents {
         let chunks = chunk_text(&doc.content, 180, 40);
         if chunks.is_empty() {
             continue;
         }
         let embeddings = embedder.embed(&chunks)?;
+        if embeddings.len() != chunks.len() {
+            return Err(format!(
+                "embedding model returned {} rows for {} chunks",
+                embeddings.len(),
+                chunks.len()
+            ));
+        }
         for (chunk, embedding) in chunks.iter().zip(&embeddings) {
             staged.push(Staged {
                 kind: doc.kind.clone(),
@@ -139,13 +163,6 @@ fn reindex_blocking(app: &AppHandle, pool: &SqlitePool) -> Result<i64, String> {
         }
         tx.commit().await.map_err(|e| e.to_string())
     })?;
-
-    // Drop the stale cache; the next search repopulates from the new rows.
-    invalidate_cache();
-    let _ = app.emit(
-        "rag:progress",
-        serde_json::json!({ "stage": "done", "total": total }),
-    );
     Ok(total)
 }
 
@@ -303,4 +320,57 @@ async fn collect_documents(pool: &SqlitePool) -> Result<Vec<Document>, String> {
     }
 
     Ok(docs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_pool;
+
+    struct FailingEmbedder;
+
+    impl Embedder for FailingEmbedder {
+        fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+            Err("embedding backend failed".into())
+        }
+
+        fn model(&self) -> &str {
+            "test-failing"
+        }
+    }
+
+    #[test]
+    fn failed_reindex_preserves_existing_chunks() {
+        let pool = tauri::async_runtime::block_on(test_pool());
+        tauri::async_runtime::block_on(async {
+            sqlx::query(
+                "INSERT INTO rag_chunks
+                     (id, source_kind, source_id, title, content, embedding, model, updated_at)
+                 VALUES ('existing', 'note', 'old-note', 'Old', 'keep me', ?1, 'old-model',
+                         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            )
+            .bind(f32_to_blob(&[1.0, 0.0]))
+            .execute(&pool)
+            .await
+            .unwrap();
+            let note = crate::notes::insert_note(&pool, "New note").await.unwrap();
+            sqlx::query("UPDATE notes SET body_md = 'new searchable text' WHERE id = ?1")
+                .bind(&note.id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        });
+        let documents = tauri::async_runtime::block_on(collect_documents(&pool)).unwrap();
+
+        let err = replace_index(&pool, &documents, &FailingEmbedder).unwrap_err();
+        assert!(err.contains("embedding backend failed"));
+
+        let rows: Vec<(String, String)> = tauri::async_runtime::block_on(async {
+            sqlx::query_as("SELECT id, content FROM rag_chunks ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+        });
+        assert_eq!(rows, vec![("existing".into(), "keep me".into())]);
+    }
 }

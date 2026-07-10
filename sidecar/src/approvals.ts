@@ -2,11 +2,9 @@ import type { ApprovalDecision } from "./protocol.js";
 
 /**
  * Approval broker: tools park here until the user decides. "once" approves a
- * single call; "session" (and "always") pre-approve that exact tool scope for
- * the rest of this session; "deny" rejects. There is no cross-session
- * persistence layer, so "always" currently behaves exactly like "session" —
- * a durable shell grant would be unsafe. Callers that need narrow grants
- * (e.g. run_command) pass a per-target scope name like `run_command:<program>`.
+ * single call; "session" pre-approves that exact tool scope for the rest of
+ * this session; "deny" rejects. Callers that need narrow grants (e.g.
+ * run_command) pass a per-target scope name like `run_command:<program>`.
  */
 /** How long a tool approval may sit unanswered before it auto-denies, so a turn
  * can't wedge forever if the UI closes or a resolve message is lost. */
@@ -42,22 +40,20 @@ export class ApprovalBroker {
     });
   }
 
-  resolve(callId: string, decision: ApprovalDecision): boolean {
+  resolve(callId: string, decision: ApprovalDecision | string): boolean {
     const entry = this.pending.get(callId);
     if (!entry) return false;
     clearTimeout(entry.timer);
     this.pending.delete(callId);
-    // "session" and "always" both pre-approve this scope for the session only;
-    // no durable/cross-session grant exists (durable shell grants are unsafe).
-    if (decision === "session" || decision === "always") {
+    if (decision !== "once" && decision !== "session" && decision !== "deny") {
+      entry.resolve(false);
+      return true;
+    }
+    if (decision === "session") {
       this.sessionApproved.add(entry.toolName);
     }
     entry.resolve(decision !== "deny");
     return true;
-  }
-
-  grantSession(toolName: string): void {
-    this.sessionApproved.add(toolName);
   }
 
   /** Deny everything still pending (session cancel/shutdown). */

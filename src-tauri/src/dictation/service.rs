@@ -36,6 +36,13 @@ struct TargetEvent {
     pinned: bool,
 }
 
+/// Locking discipline: every `Mutex` below is acquired independently and
+/// released within the same statement or a short scope — no method ever holds
+/// two of them at once (guards are consumed immediately via `.take()`/`.clone()`
+/// or a plain assignment). There is therefore NO lock-ordering requirement and
+/// no deadlock risk among these fields. Preserve that invariant: if a future
+/// change genuinely needs two of these locks held together, establish a single
+/// fixed acquisition order and document it here.
 pub struct DictationService {
     worker: CaptureWorker,
     settings: Mutex<DictationSettings>,
@@ -416,9 +423,19 @@ impl DictationService {
         settings: &DictationSettings,
         clip: &AudioClip,
     ) -> Result<(String, i64), String> {
-        let engine = self.ensure_engine(app, settings)?;
+        self.transcribe_whisper_with_model(app, &settings.speech_model, &settings.language, clip)
+    }
+
+    fn transcribe_whisper_with_model(
+        &self,
+        app: &AppHandle,
+        model_id: &str,
+        language: &Option<String>,
+        clip: &AudioClip,
+    ) -> Result<(String, i64), String> {
+        let engine = self.ensure_engine_for_model(app, model_id)?;
         let options = TranscribeOptions {
-            language: settings.language.clone(),
+            language: language.clone(),
         };
         let started = Instant::now();
         let transcript = engine
@@ -426,6 +443,39 @@ impl DictationService {
             .map_err(|e| e.to_string())?;
         let asr_ms = started.elapsed().as_millis() as i64;
         Ok((transcript.text.trim().to_string(), asr_ms))
+    }
+
+    fn guard_suspicious_transcript(
+        &self,
+        app: &AppHandle,
+        settings: &DictationSettings,
+        clip: &AudioClip,
+        raw: String,
+        asr_ms: i64,
+    ) -> (String, i64) {
+        if !contains_suspicious_profanity(&raw) {
+            return (raw, asr_ms);
+        }
+        let alternate_model = if settings.speech_model == "whisper-base.en" {
+            super::settings::DEFAULT_SPEECH_MODEL
+        } else {
+            "whisper-base.en"
+        };
+        if alternate_model == settings.speech_model {
+            return (raw, asr_ms);
+        }
+        match self.transcribe_whisper_with_model(app, alternate_model, &settings.language, clip) {
+            Ok((alternate, alternate_ms))
+                if should_replace_suspicious_transcript(&raw, &alternate) =>
+            {
+                eprintln!(
+                    "dictation: replaced suspicious ASR output with alternate decode \
+                     ({alternate_model})"
+                );
+                (alternate, asr_ms + alternate_ms)
+            }
+            Ok(_) | Err(_) => (raw, asr_ms),
+        }
     }
 
     /// The common tail: clean the raw transcript (per-app tone + one-off polish),
@@ -467,6 +517,7 @@ impl DictationService {
         let request = CleanupRequest {
             raw: raw.clone(),
             style: profile.style,
+            tone: settings.tone,
             context,
             dictionary,
         };
@@ -525,7 +576,19 @@ impl DictationService {
         )?;
 
         emit_state(app, DictationState::Pasting, None, None);
-        paste::paste_text(&final_text).map_err(|e| e.to_string())?;
+        // In-app dictation (the target is Arya's own window) cannot go through the
+        // OS clipboard/Accessibility path: the note body is a ProseMirror
+        // contenteditable that reverts DOM mutations it didn't originate, so
+        // AX-inserted text is silently discarded (a plain <input> like the title
+        // keeps it, which is why the title worked but the body didn't). Hand the
+        // text to the focused editor in the main window instead — it inserts
+        // through its own API and integrates with undo. History is already saved
+        // above, so if no field is focused the words are still never lost.
+        if target.bundle_id.as_deref() == Some(app.config().identifier.as_str()) {
+            let _ = app.emit("dictation:insert", &final_text);
+        } else {
+            paste::paste_text(&final_text).map_err(|e| e.to_string())?;
+        }
         Ok(final_text)
     }
 
@@ -541,6 +604,7 @@ impl DictationService {
         if raw.is_empty() {
             return Err("nothing recognized".into());
         }
+        let (raw, asr_ms) = self.guard_suspicious_transcript(app, &settings, &clip, raw, asr_ms);
         self.deliver(app, pool, &clip, raw, asr_ms)
     }
 
@@ -560,6 +624,9 @@ impl DictationService {
         let asr_ms = started.elapsed().as_millis() as i64;
         let raw = raw.trim().to_string();
         if !raw.is_empty() {
+            let settings = self.settings();
+            let (raw, asr_ms) =
+                self.guard_suspicious_transcript(app, &settings, &clip, raw, asr_ms);
             return self.deliver(app, pool, &clip, raw, asr_ms);
         }
         // Streaming produced nothing (silence or a transient) — fall back to the
@@ -569,6 +636,7 @@ impl DictationService {
         if raw.is_empty() {
             return Err("nothing recognized".into());
         }
+        let (raw, asr_ms) = self.guard_suspicious_transcript(app, &settings, &clip, raw, asr_ms);
         self.deliver(app, pool, &clip, raw, asr_ms)
     }
 
@@ -577,8 +645,16 @@ impl DictationService {
         app: &AppHandle,
         settings: &DictationSettings,
     ) -> Result<Arc<WhisperEngine>, String> {
-        let spec = models::find(&settings.speech_model)
-            .ok_or_else(|| format!("unknown speech model {}", settings.speech_model))?;
+        self.ensure_engine_for_model(app, &settings.speech_model)
+    }
+
+    fn ensure_engine_for_model(
+        &self,
+        app: &AppHandle,
+        model_id: &str,
+    ) -> Result<Arc<WhisperEngine>, String> {
+        let spec =
+            models::find(model_id).ok_or_else(|| format!("unknown speech model {model_id}"))?;
         let models_dir = app
             .path()
             .app_data_dir()
@@ -644,7 +720,11 @@ fn spawn_streaming_prepare(app: AppHandle) {
     std::thread::Builder::new()
         .name("arya-streaming-prepare".into())
         .spawn(move || {
-            let _ = load_streaming_blocking(&app);
+            // Best-effort warm: on failure the live preview silently keeps using
+            // the whisper fallback, so log the reason rather than discarding it.
+            if let Err(e) = load_streaming_blocking(&app) {
+                eprintln!("arya: streaming prepare failed: {e}");
+            }
         })
         .expect("spawn streaming prepare");
 }
@@ -739,4 +819,80 @@ fn insert_history_blocking(
         .map(|_| ())
         .map_err(|e| e.to_string())
     })
+}
+
+fn should_replace_suspicious_transcript(primary: &str, alternate: &str) -> bool {
+    if !contains_suspicious_profanity(primary) || contains_suspicious_profanity(alternate) {
+        return false;
+    }
+    let primary_tokens = normalized_tokens(primary);
+    let alternate_tokens = normalized_tokens(alternate);
+    if alternate_tokens.is_empty() || alternate_tokens.len() + 2 < primary_tokens.len() {
+        return false;
+    }
+    let overlap = primary_tokens
+        .iter()
+        .filter(|token| alternate_tokens.contains(token))
+        .count();
+    overlap >= 2
+}
+
+fn contains_suspicious_profanity(text: &str) -> bool {
+    normalized_tokens(text)
+        .iter()
+        .any(|token| matches!(token.as_str(), "fuck" | "fucked" | "fucking"))
+}
+
+fn normalized_tokens(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_lowercase())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn busy_reset_clears_busy_during_unwind() {
+        let service = Arc::new(DictationService::new(
+            DictationSettings::default(),
+            profiles::Overrides::default(),
+        ));
+        service.busy.store(true, Ordering::SeqCst);
+
+        let service_for_panic = Arc::clone(&service);
+        let result = std::panic::catch_unwind(move || {
+            let _reset = BusyReset(service_for_panic);
+            panic!("simulated pipeline panic");
+        });
+
+        assert!(result.is_err());
+        assert!(!service.busy.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn suspicious_guard_replaces_profane_decode_with_overlapping_alternate() {
+        assert!(should_replace_suspicious_transcript(
+            "I want you to be fucked.",
+            "I want you to help me construct.",
+        ));
+    }
+
+    #[test]
+    fn suspicious_guard_rejects_unrelated_alternate() {
+        assert!(!should_replace_suspicious_transcript(
+            "I want you to be fucked.",
+            "The quick brown fox.",
+        ));
+    }
+
+    #[test]
+    fn suspicious_guard_rejects_profane_alternate() {
+        assert!(!should_replace_suspicious_transcript(
+            "I want you to be fucked.",
+            "I want you to be fucking serious.",
+        ));
+    }
 }

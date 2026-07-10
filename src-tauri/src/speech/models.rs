@@ -145,14 +145,6 @@ pub struct StreamingModelPaths {
     pub tokens: PathBuf,
 }
 
-/// True when every streaming artifact is already on disk (so the caller can
-/// skip a "preparing model" state).
-pub fn streaming_model_present(models_dir: &Path) -> bool {
-    STREAMING_FILES
-        .iter()
-        .all(|f| models_dir.join(f.name).exists())
-}
-
 /// Ensure the streaming model bundle is present under `models_dir`, downloading
 /// and verifying any missing artifact, and return the four paths.
 pub async fn ensure_streaming_model(models_dir: &Path) -> Result<StreamingModelPaths, SpeechError> {

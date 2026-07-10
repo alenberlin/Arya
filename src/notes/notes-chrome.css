@@ -1,0 +1,209 @@
+/*
+ * Notes page chrome — a single open document, not a stack of boxed fields:
+ * title + an unboxed, full-height canvas, with housekeeping (folder, delete,
+ * attach) folded into small, out-of-the-way affordances. All in Arya's warm
+ * tokens.
+ */
+
+/* The scrolling column itself is a flex column so the editor below can grow
+ * to fill whatever space the title/meta/banners above it don't use. */
+.note-doc {
+  display: flex;
+  flex-direction: column;
+}
+.note-editor-field {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.note-detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.note-detail-head .note-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.note-more-btn {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.note-savechip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  transition: opacity 0.2s ease;
+}
+.note-savechip::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.note-savechip[data-state="saving"] {
+  color: var(--warning);
+}
+.note-savechip[data-state="saved"] {
+  color: var(--success);
+}
+
+.note-meta {
+  margin-top: 2px;
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+
+.note-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.note-empty .btn-sm {
+  margin-top: var(--sp-4);
+}
+.note-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  margin-bottom: var(--sp-3);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+.note-empty-title {
+  margin-bottom: 4px;
+  font-family: var(--font-serif);
+  font-size: var(--fs-lg);
+  color: var(--text);
+}
+
+/* Attachments: a quiet paperclip, not a labeled panel. The list (when
+ * non-empty) is real content and stays visible; the "add" affordance doesn't
+ * need to announce itself — drag-and-drop onto the note works regardless. */
+.note-attach-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-subtle);
+}
+.note-attach-btn {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.note-attach-btn:hover {
+  color: var(--text);
+}
+
+/* Folder overflow: the folders that don't fit inline fold into a "More"
+ * dropdown — filterable and scrollable so a taxonomy of dozens stays usable. */
+.folder-dd {
+  position: relative;
+}
+.folder-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 901;
+  width: 220px;
+  padding: var(--sp-1);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  animation: ar-fade 0.12s ease;
+}
+.folder-menu-filter {
+  width: 100%;
+  height: auto;
+  margin-bottom: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.folder-menu-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.folder-menu-list button {
+  height: auto;
+  justify-content: flex-start;
+  padding: var(--sp-2) 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-md);
+  color: var(--text);
+  text-align: left;
+}
+.folder-menu-list button:hover {
+  background: var(--surface-2);
+}
+.folder-menu-list button[aria-current="true"] {
+  color: var(--accent);
+  font-weight: var(--fw-semibold);
+}
+.folder-menu-empty {
+  padding: 6px 10px;
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+
+/* AI folder-sort review: one scrollable list of proposed note → folder moves,
+ * each row individually keepable/skippable before anything is applied. */
+.sort-review-list {
+  max-height: 46vh;
+  margin: var(--sp-2) 0;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.sort-review-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.sort-review-row:last-child {
+  border-bottom: none;
+}
+.sort-review-row.skipped {
+  opacity: 0.45;
+}
+.sort-review-text {
+  flex: 1;
+  min-width: 0;
+}
+.sort-review-title {
+  display: block;
+  overflow: hidden;
+  font-size: var(--fs-md);
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sort-review-folder {
+  font-size: var(--fs-sm);
+  color: var(--text-muted);
+}
+.sort-review-toggle {
+  flex-shrink: 0;
+}

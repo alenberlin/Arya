@@ -8,11 +8,8 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
-use serde_json::json;
-
 use super::mechanical::MechanicalCleaner;
-use super::{CleanupRequest, DictationStyle, TargetContext, TextCleaner};
+use super::{CleanupRequest, DictationStyle, PolishedTone, TargetContext, TextCleaner};
 
 pub struct OllamaCleaner {
     pub base_url: String,
@@ -43,29 +40,15 @@ impl OllamaCleaner {
 
     fn try_clean(&self, request: &CleanupRequest) -> Option<String> {
         let system = build_system_prompt(request);
-        let body = json!({
-            "model": self.model,
-            "stream": false,
-            "options": { "temperature": 0.1 },
-            "messages": [
-                { "role": "system", "content": system },
-                { "role": "user", "content": request.raw },
-            ],
-        });
-        let response = self
-            .client
-            .post(format!("{}/api/chat", self.base_url))
-            .timeout(self.timeout)
-            .json(&body)
-            .send()
-            .ok()?
-            .error_for_status()
-            .ok()?;
-        let parsed: ChatResponse = response.json().ok()?;
-        let text = parsed.message.content.trim().to_string();
-        if text.is_empty() {
-            return None;
-        }
+        let text = crate::http::ollama_chat(
+            &self.client,
+            &self.base_url,
+            &self.model,
+            &system,
+            &request.raw,
+            0.1,
+            self.timeout,
+        )?;
         // "Polished" deliberately rewrites for grammar, so word-level divergence
         // is expected and no longer disqualifying. The remaining backstop is
         // length: a grammatical rewrite stays roughly input-sized, so an output
@@ -101,6 +84,18 @@ fn build_system_prompt(request: &CleanupRequest) -> String {
             prompt.push_str(" Style: formal; expand contractions; complete sentences.");
         }
     }
+    match request.tone {
+        PolishedTone::Neutral => {}
+        PolishedTone::Polite => {
+            prompt.push_str(" Tone: warm and polite — courteous, considerate phrasing.");
+        }
+        PolishedTone::Friendly => {
+            prompt.push_str(" Tone: friendly and approachable — relaxed and conversational.");
+        }
+        PolishedTone::Professional => {
+            prompt.push_str(" Tone: professional and businesslike — precise, no slang.");
+        }
+    }
     if request.context == TargetContext::Email {
         prompt.push_str(
             " The text is being dictated into an email: if it contains a \
@@ -115,16 +110,6 @@ fn build_system_prompt(request: &CleanupRequest) -> String {
         }
     }
     prompt
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    message: ChatMessage,
-}
-
-#[derive(Deserialize)]
-struct ChatMessage {
-    content: String,
 }
 
 impl TextCleaner for OllamaCleaner {
@@ -145,6 +130,7 @@ mod tests {
         let base = CleanupRequest {
             raw: "hi".into(),
             style: DictationStyle::Standard,
+            tone: PolishedTone::Neutral,
             context: TargetContext::Generic,
             dictionary: vec![],
         };
@@ -161,6 +147,7 @@ mod tests {
         let req = CleanupRequest {
             raw: "x".into(),
             style: DictationStyle::Standard,
+            tone: PolishedTone::Neutral,
             context: TargetContext::Generic,
             dictionary: vec![],
         };
@@ -180,6 +167,27 @@ mod tests {
     }
 
     #[test]
+    fn polished_prompt_includes_the_selected_tone() {
+        let tone_of = |tone: PolishedTone| {
+            build_system_prompt(&CleanupRequest {
+                raw: "x".into(),
+                style: DictationStyle::Standard,
+                tone,
+                context: TargetContext::Generic,
+                dictionary: vec![],
+            })
+            .to_lowercase()
+        };
+        assert!(
+            !tone_of(PolishedTone::Neutral).contains("tone:"),
+            "neutral adds no tone line"
+        );
+        assert!(tone_of(PolishedTone::Polite).contains("polite"));
+        assert!(tone_of(PolishedTone::Friendly).contains("friendly"));
+        assert!(tone_of(PolishedTone::Professional).contains("professional"));
+    }
+
+    #[test]
     fn unavailable_server_falls_back_to_mechanical() {
         // Port 1 is never an Ollama server.
         let cleaner = OllamaCleaner::new(
@@ -190,6 +198,7 @@ mod tests {
         let request = CleanupRequest {
             raw: "um send it tomorrow".into(),
             style: DictationStyle::Standard,
+            tone: PolishedTone::Neutral,
             context: TargetContext::Generic,
             dictionary: vec![],
         };

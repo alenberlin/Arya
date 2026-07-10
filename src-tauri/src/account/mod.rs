@@ -1,11 +1,12 @@
-//! Accounts and billing (client side).
+//! Accounts (client side). Arya is free, open source, with no paid tiers.
 //!
 //! Sign-in uses a browser handoff: the app opens the hosted sign-in page with
 //! a loopback redirect, receives the session token on a one-shot local HTTP
 //! listener, and stores it in the macOS Keychain. In local/open-source mode
 //! (no Clerk configured) a built-in dev token is used so the whole product
-//! works offline. The account snapshot (tier, credits, usage) comes from
-//! Arya API's `/v1/account`.
+//! works offline. The account snapshot (credits, usage) comes from Arya
+//! API's `/v1/account` — credits meter the optional hosted cloud proxy only,
+//! never a paywall.
 
 pub mod commands;
 pub mod signin_flow;
@@ -17,12 +18,10 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct AccountSnapshot {
     pub user_id: String,
-    pub tier: String,
     pub included_credits: i64,
     pub used_credits: i64,
     pub topup_credits: i64,
     pub remaining_credits: i64,
-    pub subscribed: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -43,8 +43,11 @@ impl CaptureWorker {
                 let mut active: Option<crate::audio::CaptureHandle> = None;
                 loop {
                     // Poll with a timeout so the live level updates while
-                    // recording even without commands arriving.
-                    match receiver.recv_timeout(std::time::Duration::from_millis(50)) {
+                    // recording even without commands arriving. While active
+                    // this also drains queued audio blocks so the realtime
+                    // callback pool cannot fill between snapshot/stop calls.
+                    let poll_ms = if active.is_some() { 20 } else { 50 };
+                    match receiver.recv_timeout(std::time::Duration::from_millis(poll_ms)) {
                         Ok(Command::Start { device, reply }) => {
                             if active.is_some() {
                                 let _ = reply.send(Err("already recording".into()));

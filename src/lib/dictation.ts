@@ -4,6 +4,8 @@ export type ActivationMode = "push-to-talk" | "toggle";
 export type DictationStyle = "standard" | "casual-lowercase" | "formal";
 /** How much cleanup a dictation gets: verbatim / mechanical / local-LLM. */
 export type Polish = "raw" | "clean" | "polished";
+/** Interpersonal register for the Polished rewrite (F6); ignored by Raw/Clean. */
+export type PolishedTone = "neutral" | "polite" | "friendly" | "professional";
 /** Which engine translates: local Ollama or cloud (Arya API). */
 export type TranslateProvider = "local" | "cloud";
 
@@ -12,6 +14,8 @@ export interface DictationSettings {
   mode: ActivationMode;
   style: DictationStyle;
   polish: Polish;
+  /** Tone applied to the Polished rewrite (F6). */
+  tone: PolishedTone;
   language: string | null;
   microphone: string | null;
   speechModel: string;
@@ -58,6 +62,25 @@ export const listOllamaModels = () => invoke<string[]>("list_ollama_models");
 export const getDictationStatus = () => invoke<DictationStatus>("dictation_status");
 export const openAccessibilitySettings = () => invoke<void>("open_accessibility_settings");
 export const listDictationHistory = () => invoke<HistoryItem[]>("list_dictation_history");
+
+/** An on-demand translation of a saved dictation (F8), stored non-destructively. */
+export interface DictationTranslation {
+  id: string;
+  dictationId: string;
+  lang: string;
+  text: string;
+  model: string;
+  createdAt: string;
+}
+/** Translate a saved dictation into `targetLang` and store it below the original. */
+export const translateDictation = (id: string, targetLang: string) =>
+  invoke<DictationTranslation>("translate_dictation", { id, targetLang });
+/** A dictation's on-demand translations, oldest first. */
+export const listDictationTranslations = (id: string) =>
+  invoke<DictationTranslation[]>("list_dictation_translations", { id });
+/** All on-demand dictation translations (for rendering history in one load). */
+export const listAllDictationTranslations = () =>
+  invoke<DictationTranslation[]>("list_all_dictation_translations");
 export const deleteDictationHistoryItem = (id: string) =>
   invoke<void>("delete_dictation_history_item", { id });
 export const clearDictationHistory = () => invoke<void>("clear_dictation_history");
@@ -79,6 +102,9 @@ export const copyToClipboard = (text: string) => invoke<void>("copy_to_clipboard
 /** Generates a meeting-minutes note from a dictation; returns the new note id. */
 export const convertDictationToNote = (id: string) =>
   invoke<string>("convert_dictation_to_note", { id });
+/** Converts a dictation into a plain note (its text as the body); returns the note id. */
+export const convertDictationToPlainNote = (id: string) =>
+  invoke<string>("convert_dictation_to_plain_note", { id });
 export const listDictionaryEntries = () => invoke<DictionaryItem[]>("list_dictionary_entries");
 export const createDictionaryEntry = (pattern: string, replacement: string) =>
   invoke<DictionaryItem>("create_dictionary_entry", { pattern, replacement });

@@ -36,6 +36,32 @@ export const SearchIcon = (p: IconProps) => (
     <line x1="16" y1="16" x2="20.5" y2="20.5" />
   </svg>
 );
+export const GalaxyIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.6} {...p} aria-hidden="true">
+    <circle cx="12" cy="12" r="2.4" />
+    <circle cx="5" cy="6" r="1.5" />
+    <circle cx="19" cy="7" r="1.5" />
+    <circle cx="18" cy="18" r="1.5" />
+    <circle cx="6" cy="17.5" r="1.5" />
+    <path d="M10.1 10.5 6.3 7.2M13.9 10.7 17.6 8M13.7 13.6 16.8 16.6M10.1 13.8 7.1 16.3" />
+  </svg>
+);
+export const MindMapIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.6} {...p} aria-hidden="true">
+    <rect x="9.3" y="10" width="5.4" height="4" rx="1" />
+    <rect x="3" y="3.6" width="4.6" height="3.2" rx="1" />
+    <rect x="16.4" y="4" width="4.6" height="3.2" rx="1" />
+    <rect x="16.4" y="17" width="4.6" height="3.2" rx="1" />
+    <path d="M9.3 11.4 7.6 5.6M14.7 11.4 16.6 6M14.7 13 16.6 18" />
+  </svg>
+);
+export const KnowledgeIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.6} {...p} aria-hidden="true">
+    <ellipse cx="12" cy="5.6" rx="7" ry="2.6" />
+    <path d="M5 5.6v12.8c0 1.44 3.13 2.6 7 2.6s7-1.16 7-2.6V5.6" />
+    <path d="M5 12c0 1.44 3.13 2.6 7 2.6s7-1.16 7-2.6" />
+  </svg>
+);
 export const RoutinesIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
     <path d="M4.5 11a7.5 7.5 0 0 1 12.8-4.3L20 9" />
@@ -90,6 +116,12 @@ export const LockIcon = (p: IconProps) => (
     <path d="M8 11V8a4 4 0 0 1 8 0v3" />
   </svg>
 );
+export const ShieldIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
+    <path d="M12 3.5l7 2.5v5c0 4.4-3 7.6-7 9-4-1.4-7-4.6-7-9v-5z" />
+    <path d="M9 12l2 2 4-4.5" />
+  </svg>
+);
 export const ThemeIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
     <circle cx="12" cy="12" r="4.2" />
@@ -116,6 +148,24 @@ export const PlusIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={2} {...p} aria-hidden="true">
     <line x1="12" y1="6" x2="12" y2="18" />
     <line x1="6" y1="12" x2="18" y2="12" />
+  </svg>
+);
+export const PaperclipIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
+    <path d="M17.5 8.5 9.9 16.1a3 3 0 0 1-4.24-4.24l8.14-8.14a2 2 0 0 1 2.83 2.83l-8.14 8.14a1 1 0 0 1-1.41-1.41l7.07-7.07" />
+  </svg>
+);
+export const StickyNoteIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
+    <path d="M4 4h16v10.5L14.5 20H4z" />
+    <path d="M14.5 20v-5.5H20" />
+  </svg>
+);
+export const MoreIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={2.2} {...p} aria-hidden="true">
+    <circle cx="12" cy="5" r="0.5" fill="currentColor" />
+    <circle cx="12" cy="12" r="0.5" fill="currentColor" />
+    <circle cx="12" cy="19" r="0.5" fill="currentColor" />
   </svg>
 );
 export const ChevronDownIcon = (p: IconProps) => (

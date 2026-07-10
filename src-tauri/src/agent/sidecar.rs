@@ -117,12 +117,21 @@ impl Sidecar {
             .arg(script)
             .current_dir(workspace)
             .env("ARYA_MODE", mode.as_str())
+            .env("ARYA_API_URL", crate::account::tokens::api_url())
             .env("TMPDIR", &tmp_dir)
             .env("TMP", &tmp_dir)
             .env("TEMP", &tmp_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        match crate::account::tokens::current_token() {
+            Some(token) => {
+                command.env("ARYA_API_TOKEN", token);
+            }
+            None => {
+                command.env_remove("ARYA_API_TOKEN");
+            }
+        }
 
         let mut child = command
             .spawn()

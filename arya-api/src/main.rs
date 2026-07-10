@@ -22,7 +22,11 @@ async fn main() {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                let _ = arya_api::metering::reap_expired_holds(&pool).await;
+                // A persistently failing reaper leaves expired holds around; log
+                // it rather than swallowing so the failure is diagnosable.
+                if let Err(e) = arya_api::metering::reap_expired_holds(&pool).await {
+                    tracing::warn!("reaper: failed to release expired holds: {e}");
+                }
             }
         });
     }

@@ -34,3 +34,30 @@ jobs:
       # Full gate: brand + key scan, lint, typecheck, TS tests, Rust shell,
       # sidecar, and arya-api. Mirrors `make verify`.
       - run: make verify
+
+  # `verify` compiles in debug only, so release-only code — anything behind
+  # cfg(not(debug_assertions)) and the non-debug arm of generate_handler! — is
+  # never checked there. The signed release-macos workflow is manual-dispatch
+  # and needs Apple secrets, so it never runs on PRs. This job is the only
+  # PR-time guard that a release build still compiles.
+  release-build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            arya-api
+      - run: pnpm install --frozen-lockfile
+      # Compiles the frontend (../dist for generate_context!) then release-builds
+      # both Rust workspaces. Mirrors `make verify-release`.
+      - run: make verify-release

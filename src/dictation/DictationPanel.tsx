@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearDictationHistory,
   convertDictationToNote,
+  convertDictationToPlainNote,
   copyToClipboard,
   createDictionaryEntry,
   type DictationSettings,
   type DictationStatus,
+  type DictationTranslation,
   type DictionaryItem,
   deleteDictationHistoryItem,
   deleteDictionaryEntry,
@@ -15,6 +17,7 @@ import {
   getDictationSettings,
   getDictationStatus,
   type HistoryItem,
+  listAllDictationTranslations,
   listDictationHistory,
   listDictionaryEntries,
   listOllamaModels,
@@ -22,9 +25,11 @@ import {
   openAccessibilitySettings,
   type SpeakerProfile,
   setDictationSettings,
+  translateDictation,
 } from "../lib/dictation";
+import { TRANSLATE_LANGUAGES } from "../lib/languages";
 import { TypeToConfirmDialog } from "../ui/dialogs";
-import { CheckIcon, CopyIcon } from "../ui/icons";
+import { RecentDictations } from "./RecentDictations";
 
 const STYLES: { value: DictationSettings["style"]; label: string }[] = [
   { value: "standard", label: "Standard" },
@@ -32,22 +37,47 @@ const STYLES: { value: DictationSettings["style"]; label: string }[] = [
   { value: "formal", label: "Formal" },
 ];
 
-// Curated target languages; the value is the language name passed to the model.
-const LANGUAGES = [
-  "German",
-  "Spanish",
-  "French",
-  "Italian",
-  "Portuguese",
-  "Dutch",
-  "Polish",
-  "Russian",
-  "Turkish",
-  "Japanese",
-  "Korean",
-  "Chinese",
-  "Arabic",
-  "Hindi",
+// Polished-rewrite tone (F6). Applied only when polish = Polished.
+const TONES: { value: DictationSettings["tone"]; label: string }[] = [
+  { value: "neutral", label: "Neutral" },
+  { value: "polite", label: "Polite" },
+  { value: "friendly", label: "Friendly" },
+  { value: "professional", label: "Professional" },
+];
+
+// Default cleanup level (F6). "Direct" is verbatim; the pill can still override
+// this per dictation.
+const POLISH_LEVELS: { value: DictationSettings["polish"]; label: string }[] = [
+  { value: "raw", label: "Direct" },
+  { value: "clean", label: "Clean" },
+  { value: "polished", label: "Polished" },
+];
+
+const SPEECH_MODELS: { value: string; label: string; englishOnly?: boolean }[] = [
+  { value: "whisper-large-v3-turbo-q5_0", label: "High accuracy · multilingual" },
+  { value: "whisper-base.en", label: "Fast · English only", englishOnly: true },
+  { value: "whisper-tiny.en", label: "Tiny · English only", englishOnly: true },
+];
+
+// ISO 639-1 codes for the ASR "speech language" hint. "" = auto-detect (the
+// default) — the model detects the spoken language. Pinning one improves
+// accuracy when you dictate mostly in a single language.
+const SPEECH_LANGUAGES: { code: string; label: string }[] = [
+  { code: "", label: "Auto-detect" },
+  { code: "en", label: "English" },
+  { code: "es", label: "Spanish" },
+  { code: "de", label: "German" },
+  { code: "fr", label: "French" },
+  { code: "it", label: "Italian" },
+  { code: "pt", label: "Portuguese" },
+  { code: "nl", label: "Dutch" },
+  { code: "pl", label: "Polish" },
+  { code: "ru", label: "Russian" },
+  { code: "ja", label: "Japanese" },
+  { code: "ko", label: "Korean" },
+  { code: "zh", label: "Chinese" },
+  { code: "ar", label: "Arabic" },
+  { code: "hi", label: "Hindi" },
 ];
 
 /** Dictation settings (hotkey, style, mic, voice profiles, dictionary) beside a
@@ -56,6 +86,7 @@ export function DictationPanel() {
   const [settings, setSettings] = useState<DictationSettings | null>(null);
   const [status, setStatus] = useState<DictationStatus | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [translations, setTranslations] = useState<Record<string, DictationTranslation[]>>({});
   const [dictionary, setDictionary] = useState<DictionaryItem[]>([]);
   const [profiles, setProfiles] = useState<SpeakerProfile[]>([]);
   const [profileName, setProfileName] = useState("");
@@ -74,7 +105,7 @@ export function DictationPanel() {
   // Open the ⋯ menu, clamped so it never spills off the bottom/right edge.
   const openMenu = (id: string, clientX: number, clientY: number) => {
     const MENU_W = 240;
-    const MENU_H = 104;
+    const MENU_H = 290;
     const x = Math.max(8, Math.min(clientX, window.innerWidth - MENU_W - 8));
     const y = Math.max(8, Math.min(clientY, window.innerHeight - MENU_H - 8));
     setMenuFor({ id, x, y });
@@ -119,24 +150,58 @@ export function DictationPanel() {
       });
   };
 
+  const convertToNote = (id: string) => {
+    setMenuFor(null);
+    setNotice("Creating note…");
+    void convertDictationToPlainNote(id)
+      .then(() => setNotice("Note created — see the Notes tab."))
+      .catch((e) => {
+        setNotice(null);
+        setError(String(e));
+      });
+  };
+
   const refresh = useCallback(async () => {
     try {
-      const [s, st, h, d, sp] = await Promise.all([
+      const [s, st, h, d, sp, tr] = await Promise.all([
         getDictationSettings(),
         getDictationStatus(),
         listDictationHistory(),
         listDictionaryEntries(),
         listSpeakerProfiles(),
+        listAllDictationTranslations(),
       ]);
       setSettings(s);
       setStatus(st);
       setHistory(h);
       setDictionary(d);
       setProfiles(sp);
+      const byDictation: Record<string, DictationTranslation[]> = {};
+      for (const t of tr) {
+        const list = byDictation[t.dictationId];
+        if (list) list.push(t);
+        else byDictation[t.dictationId] = [t];
+      }
+      setTranslations(byDictation);
     } catch (e) {
       setError(String(e));
     }
   }, []);
+
+  /** Translate a saved dictation into `lang` and show it below the original. */
+  const translateTo = (id: string, lang: string) => {
+    setMenuFor(null);
+    setNotice(`Translating to ${lang}…`);
+    void translateDictation(id, lang)
+      .then(() => {
+        setNotice(`Translated to ${lang}.`);
+        return refresh();
+      })
+      .catch((e) => {
+        setNotice(null);
+        setError(String(e));
+      });
+  };
 
   useEffect(() => {
     void refresh();
@@ -245,7 +310,22 @@ export function DictationPanel() {
             </div>
 
             <div className="card-sunken">
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Style</div>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>Cleanup</div>
+              <div className="seg" style={{ width: "100%", gap: 8 }}>
+                {POLISH_LEVELS.map((p) => (
+                  <button
+                    key={p.value}
+                    type="button"
+                    className="seg-btn"
+                    aria-pressed={settings.polish === p.value}
+                    style={{ flex: 1 }}
+                    onClick={() => void save({ ...settings, polish: p.value })}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ fontSize: 14, fontWeight: 600, margin: "14px 0 10px" }}>Style</div>
               <div className="seg" style={{ width: "100%", gap: 8 }}>
                 {STYLES.map((s) => (
                   <button
@@ -260,6 +340,71 @@ export function DictationPanel() {
                   </button>
                 ))}
               </div>
+              <div style={{ fontSize: 14, fontWeight: 600, margin: "14px 0 10px" }}>
+                Polished tone
+                <span className="muted" style={{ fontWeight: 400, fontSize: 12.5, marginLeft: 6 }}>
+                  applied when Polished
+                </span>
+              </div>
+              <div className="seg" style={{ width: "100%", gap: 8 }}>
+                {TONES.map((t) => (
+                  <button
+                    key={t.value}
+                    type="button"
+                    className="seg-btn"
+                    aria-pressed={settings.tone === t.value}
+                    style={{ flex: 1 }}
+                    onClick={() => void save({ ...settings, tone: t.value })}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="card-sunken">
+              <div className="spread hstack">
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>Recognition model</div>
+                  <div className="muted" style={{ fontSize: 12.5 }}>
+                    Higher accuracy for dictated wording
+                  </div>
+                </div>
+                <select
+                  aria-label="recognition model"
+                  style={{ width: "auto" }}
+                  value={settings.speechModel}
+                  onChange={(e) => void save({ ...settings, speechModel: e.target.value })}
+                >
+                  {SPEECH_MODELS.map((model) => (
+                    <option key={model.value} value={model.value}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="spread hstack" style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Speech language</div>
+                <select
+                  aria-label="speech language"
+                  style={{ width: "auto" }}
+                  value={settings.language ?? ""}
+                  onChange={(e) => void save({ ...settings, language: e.target.value || null })}
+                >
+                  {SPEECH_LANGUAGES.map((l) => (
+                    <option key={l.code} value={l.code}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {SPEECH_MODELS.find((m) => m.value === settings.speechModel)?.englishOnly &&
+              settings.language !== "en" ? (
+                <p className="muted" style={{ marginTop: 10, marginBottom: 0, fontSize: 12.5 }}>
+                  This recognition model only understands English — choose “High accuracy ·
+                  multilingual” to dictate in other languages.
+                </p>
+              ) : null}
             </div>
 
             <div className="card-sunken">
@@ -272,7 +417,7 @@ export function DictationPanel() {
                   onChange={(e) => void save({ ...settings, translate: e.target.value || null })}
                 >
                   <option value="">Off</option>
-                  {LANGUAGES.map((l) => (
+                  {TRANSLATE_LANGUAGES.map((l) => (
                     <option key={l} value={l}>
                       {l}
                     </option>
@@ -484,91 +629,15 @@ export function DictationPanel() {
       </div>
 
       {/* RECENT DICTATIONS PANEL */}
-      <div className="panel" style={{ width: 300, flex: "0 0 300px" }}>
-        <div className="panel-head hstack spread">
-          <span className="section-label">Recent dictations</span>
-          {history.length > 0 ? (
-            <button type="button" className="btn-sm btn-danger" onClick={() => setClearOpen(true)}>
-              Clear all
-            </button>
-          ) : null}
-        </div>
-        <div className="panel-body">
-          {notice ? (
-            <p role="status" className="muted" style={{ fontSize: 12, padding: "0 4px 8px" }}>
-              {notice}
-            </p>
-          ) : null}
-          <ul aria-label="dictation history" className="plain">
-            {history.map((item) => (
-              <li
-                key={item.id}
-                className="card-sunken"
-                style={{ margin: "4px 0", padding: 12 }}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  openMenu(item.id, e.clientX, e.clientY);
-                }}
-              >
-                {item.translatedText ? (
-                  <>
-                    <div style={{ fontSize: 13, lineHeight: 1.55, marginBottom: 3 }}>
-                      {item.translatedText}
-                    </div>
-                    <div
-                      className="muted"
-                      style={{ fontSize: 12, lineHeight: 1.5, marginBottom: 6 }}
-                    >
-                      <span className="mono" style={{ fontSize: 9.5 }}>
-                        {item.targetLang ? `${item.targetLang} ← EN` : "EN"}
-                      </span>{" "}
-                      {item.cleanText}
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ fontSize: 13, lineHeight: 1.55, marginBottom: 6 }}>
-                    {item.cleanText}
-                  </div>
-                )}
-                <div className="spread hstack">
-                  <span className="mono muted" style={{ fontSize: 10.5 }}>
-                    {(item.durationMs / 1000).toFixed(1)}s · ASR {item.asrMs}ms
-                    {item.appBundleId ? ` · ${item.appBundleId}` : ""}
-                  </span>
-                  <span className="hstack" style={{ gap: 2 }}>
-                    <button
-                      type="button"
-                      className="tab-close bare"
-                      aria-label={copiedId === item.id ? "copied" : "copy text"}
-                      title={copiedId === item.id ? "Copied!" : "Copy text"}
-                      onClick={() => void copyText(item.id, item.translatedText ?? item.cleanText)}
-                    >
-                      {copiedId === item.id ? (
-                        <CheckIcon className="hist-action-icon copied" />
-                      ) : (
-                        <CopyIcon className="hist-action-icon" />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className="tab-close bare"
-                      aria-label="dictation actions"
-                      onClick={(e) => openMenu(item.id, e.clientX, e.clientY)}
-                    >
-                      ⋯
-                    </button>
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-          {history.length === 0 ? (
-            <p className="muted" style={{ fontSize: 13, padding: 12 }}>
-              No dictations yet. Hold <span className="kbd">Right Shift</span> anywhere and speak.
-            </p>
-          ) : null}
-        </div>
-      </div>
+      <RecentDictations
+        history={history}
+        translations={translations}
+        notice={notice}
+        copiedId={copiedId}
+        onClearAll={() => setClearOpen(true)}
+        onOpenMenu={openMenu}
+        onCopy={copyText}
+      />
 
       {menuFor ? (
         <div
@@ -577,9 +646,27 @@ export function DictationPanel() {
           style={{ top: menuFor.y, left: menuFor.x }}
           role="menu"
         >
+          <button type="button" role="menuitem" onClick={() => convertToNote(menuFor.id)}>
+            Convert to note
+          </button>
           <button type="button" role="menuitem" onClick={() => convertToMinutes(menuFor.id)}>
             Convert to meeting minutes
           </button>
+          <div className="context-menu-sep" />
+          <div className="context-menu-label">Translate to</div>
+          <div className="context-menu-scroll">
+            {TRANSLATE_LANGUAGES.map((l) => (
+              <button
+                key={l}
+                type="button"
+                role="menuitem"
+                onClick={() => translateTo(menuFor.id, l)}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+          <div className="context-menu-sep" />
           <button
             type="button"
             role="menuitem"

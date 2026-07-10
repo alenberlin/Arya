@@ -6,7 +6,7 @@
  *   session.message { sessionId, text }
  *   session.steer   { sessionId, text }
  *   session.cancel  { sessionId }
- *   approval.resolve{ sessionId, callId, decision: "once"|"session"|"always"|"deny" }
+ *   approval.resolve{ sessionId, callId, decision: "once"|"session"|"deny" }
  *   models.list     {}
  *   runtime.ping    {}
  *
@@ -36,7 +36,7 @@ export interface RpcResponse {
   error?: { code: number; message: string };
 }
 
-export type ApprovalDecision = "once" | "session" | "always" | "deny";
+export type ApprovalDecision = "once" | "session" | "deny";
 
 export type AgentEvent =
   | { kind: "turn-started" }

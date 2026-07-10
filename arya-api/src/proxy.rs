@@ -27,6 +27,13 @@ use crate::{billing, catalog, metering, AppState};
 /// warns if a response exceeds it (cost-recovery leak) so the cap can be tuned.
 const HOLD_CAP_CREDITS: u64 = 500;
 
+/// Hold TTL. MUST exceed `crate::UPSTREAM_TOTAL_TIMEOUT_SECS` so a hold cannot
+/// expire while its request is still in flight — otherwise the in-flight spend
+/// would stop counting against the balance and a concurrent request could
+/// overspend (the C1 billing TOCTOU). The reaper only removes holds after they
+/// expire, so with this margin a live request's hold is always counted.
+const HOLD_TTL_SECONDS: i64 = 360;
+
 /// Bytes we buffer (non-streaming) or accumulate for usage parsing (streaming).
 /// The streamed bytes forwarded to the client are NOT capped by this — only the
 /// server-side copy kept for metering/caching is.
@@ -77,6 +84,16 @@ pub async fn forward(
         .verifier
         .verify(&headers)
         .map_err(|e| error(StatusCode::UNAUTHORIZED, "unauthorized", &e))?;
+
+    // Throttle per authenticated user before touching the provider or the
+    // wallet, so a leaked token can't spend as fast as the upstream allows.
+    if !state.rate_limit.check(&user_id) {
+        return Err(error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "rate_limited",
+            "too many requests; slow down and retry shortly",
+        ));
+    }
 
     if path != "chat/completions" {
         return Err(error(
@@ -144,7 +161,7 @@ pub async fn forward(
         &user_id,
         action,
         HOLD_CAP_CREDITS,
-        60,
+        HOLD_TTL_SECONDS,
         budget,
     )
     .await
@@ -196,8 +213,14 @@ async fn buffered_upstream(
     body: Value,
     ctx: SettleCtx,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
-    let response = send_upstream(state, &url, &key, &body).await?;
-    let text = read_capped(response, MAX_UPSTREAM_BYTES).await?;
+    let response = send_upstream_or_release(state, &url, &key, &body, &ctx).await?;
+    let text = match read_capped(response, MAX_UPSTREAM_BYTES).await {
+        Ok(text) => text,
+        Err(e) => {
+            settle_without_cache(&ctx, ctx.hold.cap_credits).await;
+            return Err(e);
+        }
+    };
     let (input, output) = serde_json::from_str::<Value>(&text)
         .ok()
         .and_then(|j| extract_usage(&j))
@@ -218,13 +241,14 @@ async fn stream_upstream(
     ctx: SettleCtx,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
     ensure_stream_usage(&mut body);
-    let response = send_upstream(state, &url, &key, &body).await?;
+    let response = send_upstream_or_release(state, &url, &key, &body, &ctx).await?;
 
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(16);
     tokio::spawn(async move {
         let mut upstream = response.bytes_stream();
         let mut accumulated = String::new();
         let mut capped = false;
+        let mut upstream_error = false;
         while let Some(chunk) = upstream.next().await {
             match chunk {
                 Ok(bytes) => {
@@ -240,13 +264,32 @@ async fn stream_upstream(
                     let _ = tx.send(Ok(bytes)).await;
                 }
                 Err(e) => {
+                    upstream_error = true;
                     let _ = tx.send(Err(std::io::Error::other(e.to_string()))).await;
                     break;
                 }
             }
         }
         let (input, output) = usage_from_sse(&accumulated);
-        meter_response(&ctx, input, output, &accumulated, "text/event-stream").await;
+        if capped && input == 0 && output == 0 {
+            tracing::warn!(
+                hold = %ctx.hold.id,
+                "streamed response hit the usage-accumulation cap before its usage chunk; charging the reserved hold cap instead of the token floor"
+            );
+        }
+        let credits = stream_settle_credits(
+            input,
+            output,
+            capped,
+            ctx.hold.cap_credits,
+            ctx.entry.input_credits_per_mtok,
+            ctx.entry.output_credits_per_mtok,
+        );
+        if should_cache_stream_response(capped, upstream_error) {
+            settle_and_cache(&ctx, credits, &accumulated, "text/event-stream").await;
+        } else {
+            settle_without_cache(&ctx, credits).await;
+        }
     });
 
     let stream = futures_util::stream::unfold(rx, |mut rx| async move {
@@ -281,6 +324,38 @@ async fn meter_response(
         ctx.entry.input_credits_per_mtok,
         ctx.entry.output_credits_per_mtok,
     );
+    settle_and_cache(ctx, credits, body, content_type).await;
+    credits
+}
+
+async fn send_upstream_or_release(
+    state: &AppState,
+    url: &str,
+    key: &str,
+    body: &Value,
+    ctx: &SettleCtx,
+) -> Result<reqwest::Response, (StatusCode, Json<Value>)> {
+    match send_upstream(state, url, key, body).await {
+        Ok(response) => Ok(response),
+        Err(e) => {
+            release_hold(ctx).await;
+            Err(e)
+        }
+    }
+}
+
+/// Settles `credits` exactly once and caches the body for idempotent replay.
+async fn settle_and_cache(ctx: &SettleCtx, credits: u64, body: &str, content_type: &str) {
+    settle_without_cache(ctx, credits).await;
+    if let Err(e) =
+        metering::cache_response(&ctx.pool, &ctx.idempotency_key, body, content_type).await
+    {
+        tracing::warn!("cache_response failed: {e}");
+    }
+}
+
+/// Settles `credits` exactly once without caching a replay body.
+async fn settle_without_cache(ctx: &SettleCtx, credits: u64) {
     if let Err(e) = metering::settle(
         &ctx.pool,
         &ctx.hold,
@@ -293,12 +368,36 @@ async fn meter_response(
     {
         tracing::error!("settle failed: {e}");
     }
-    if let Err(e) =
-        metering::cache_response(&ctx.pool, &ctx.idempotency_key, body, content_type).await
-    {
-        tracing::warn!("cache_response failed: {e}");
+}
+
+async fn release_hold(ctx: &SettleCtx) {
+    if let Err(e) = metering::release_hold(&ctx.pool, &ctx.hold).await {
+        tracing::warn!("release_hold failed: {e}");
     }
-    credits
+}
+
+/// Credits to settle for a streamed response. Normally token-priced, but when
+/// the stream was truncated at the accumulation cap before its trailing usage
+/// chunk (`capped` with no parsed usage), pricing by tokens is impossible —
+/// charge the reserved hold cap instead of the 1-credit floor, so an oversized
+/// stream is billed for the work it did rather than nearly free.
+fn stream_settle_credits(
+    input: u64,
+    output: u64,
+    capped: bool,
+    hold_cap: u64,
+    in_per_mtok: u64,
+    out_per_mtok: u64,
+) -> u64 {
+    if capped && input == 0 && output == 0 {
+        hold_cap.max(1)
+    } else {
+        metering::credits_for_tokens(input, output, in_per_mtok, out_per_mtok)
+    }
+}
+
+fn should_cache_stream_response(capped: bool, upstream_error: bool) -> bool {
+    !capped && !upstream_error
 }
 
 /// Resolves the upstream URL and server-held key for a provider.
@@ -562,5 +661,31 @@ mod tests {
     fn scrub_handles_bare_prefix_without_hanging() {
         let out = scrub_secrets("stray Bearer  and sk-", "");
         assert!(out.contains("Bearer"));
+    }
+
+    #[test]
+    fn hold_ttl_exceeds_upstream_timeout_so_a_hold_cant_expire_in_flight() {
+        // The C1 invariant: a request is capped below its hold's lifetime, so
+        // the hold is always still counted while the request is in flight.
+        assert!(HOLD_TTL_SECONDS as u64 > crate::UPSTREAM_TOTAL_TIMEOUT_SECS);
+    }
+
+    #[test]
+    fn capped_stream_charges_hold_cap_not_floor() {
+        // Token-priced normally: 1000 in-tokens at 3000 credits/Mtok = 3.
+        assert_eq!(stream_settle_credits(1000, 0, false, 500, 3000, 15000), 3);
+        // Truncated before the usage chunk (capped, no usage): charge the
+        // reserved cap, not the 1-credit floor.
+        assert_eq!(stream_settle_credits(0, 0, true, 500, 3000, 15000), 500);
+        // Genuinely zero usage without capping keeps the existing 1-credit floor.
+        assert_eq!(stream_settle_credits(0, 0, false, 500, 3000, 15000), 1);
+    }
+
+    #[test]
+    fn stream_cache_requires_complete_uncapped_response() {
+        assert!(should_cache_stream_response(false, false));
+        assert!(!should_cache_stream_response(true, false));
+        assert!(!should_cache_stream_response(false, true));
+        assert!(!should_cache_stream_response(true, true));
     }
 }

@@ -56,6 +56,15 @@ pub async fn init_pool(path: &str) -> Result<SqlitePool, sqlx::Error> {
     )
     .execute(&pool)
     .await?;
+    // authorize() runs on the hot path and aggregates by user_id / expires_at;
+    // without these the reaper and every hold reservation full-scan the ledger.
+    for stmt in [
+        "CREATE INDEX IF NOT EXISTS idx_charges_user ON charges(user_id)",
+        "CREATE INDEX IF NOT EXISTS idx_holds_user_open ON holds(user_id, settled, expires_at)",
+        "CREATE INDEX IF NOT EXISTS idx_holds_expires ON holds(expires_at)",
+    ] {
+        sqlx::query(stmt).execute(&pool).await?;
+    }
     Ok(pool)
 }
 
@@ -141,21 +150,6 @@ pub async fn authorize(
     })
 }
 
-/// Looks up an already-settled charge by idempotency key, if any. Used to
-/// short-circuit a duplicate request BEFORE calling the upstream provider, so
-/// a retry never pays the provider twice.
-pub async fn existing_charge(
-    pool: &SqlitePool,
-    idempotency_key: &str,
-) -> Result<Option<u64>, sqlx::Error> {
-    let found =
-        sqlx::query_scalar::<_, i64>("SELECT credits FROM charges WHERE idempotency_key = ?1")
-            .bind(idempotency_key)
-            .fetch_optional(pool)
-            .await?;
-    Ok(found.map(|c| c as u64))
-}
-
 /// Stores the response body for an idempotency key so a later opt-in retry can
 /// replay it without re-invoking the provider.
 pub async fn cache_response(
@@ -198,6 +192,16 @@ pub async fn reap_expired_holds(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
+}
+
+/// Releases an open hold without writing a charge. Use this when a request
+/// fails before the provider has produced a billable response.
+pub async fn release_hold(pool: &SqlitePool, hold: &Hold) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE holds SET settled = 1 WHERE id = ?1")
+        .bind(&hold.id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// Settles actual usage exactly once. A repeated idempotency key returns the
@@ -361,6 +365,23 @@ mod tests {
             second,
             Err(AuthorizeError::InsufficientCredits { .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn release_hold_marks_hold_settled_without_charge() {
+        let pool = pool().await;
+        let hold = authorize(&pool, "u1", "agent_chat", 500, 60, None)
+            .await
+            .unwrap();
+
+        release_hold(&pool, &hold).await.unwrap();
+
+        let open: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM holds WHERE settled = 0")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(open, 0);
+        assert_eq!(total_charged(&pool, "u1").await.unwrap(), 0);
     }
 
     #[test]

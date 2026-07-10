@@ -2,13 +2,39 @@
 
 const SERVICE: &str = "dev.arya.app.account";
 const ACCOUNT: &str = "session-token";
+const DEFAULT_API_URL: &str = "http://127.0.0.1:8477";
+
+fn non_empty(value: impl Into<String>) -> Option<String> {
+    let value = value.into();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+/// Arya API base URL. Release builds can bake the public URL at compile time
+/// via `ARYA_API_URL`; runtime env still wins for dev and QA overrides.
+pub fn api_url() -> String {
+    std::env::var("ARYA_API_URL")
+        .ok()
+        .and_then(non_empty)
+        .or_else(|| option_env!("ARYA_API_URL").and_then(non_empty))
+        .unwrap_or_else(|| DEFAULT_API_URL.into())
+}
+
+/// Hosted Clerk sign-in URL, if this build is account-gated.
+pub fn clerk_sign_in_url() -> Option<String> {
+    std::env::var("ARYA_CLERK_SIGN_IN_URL")
+        .ok()
+        .and_then(non_empty)
+        .or_else(|| option_env!("ARYA_CLERK_SIGN_IN_URL").and_then(non_empty))
+}
 
 /// Whether hosted auth (Clerk) is configured. When not, the app runs in
 /// local mode with a built-in token and no sign-in wall.
 pub fn hosted_auth_configured() -> bool {
-    std::env::var("ARYA_CLERK_SIGN_IN_URL")
-        .map(|v| !v.is_empty())
-        .unwrap_or(false)
+    clerk_sign_in_url().is_some()
 }
 
 /// The bearer token the app sends to Arya API. In local mode this is the
@@ -28,9 +54,7 @@ pub fn current_token() -> Option<String> {
 }
 
 fn api_url_is_loopback() -> bool {
-    url_is_loopback(
-        &std::env::var("ARYA_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8477".into()),
-    )
+    url_is_loopback(&api_url())
 }
 
 /// True when `url`'s host is genuine loopback. Parsing the host as an IP makes

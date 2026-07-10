@@ -29,7 +29,7 @@ pub enum TranslateProvider {
 
 /// Default local model when none is otherwise configured. The user must have it
 /// pulled in Ollama; if not, translation falls back to the source text.
-pub const DEFAULT_LOCAL_MODEL: &str = "llama3.2";
+pub const DEFAULT_LOCAL_MODEL: &str = "iaprofesseur/SuperGemma4-26b-uncensored-Q4:latest";
 /// Default cloud model id (Arya API catalog).
 const DEFAULT_CLOUD_MODEL: &str = "anthropic:claude-sonnet-5";
 const CLOUD_PROVIDER: &str = "anthropic";
@@ -86,37 +86,18 @@ impl OllamaTranslator {
     }
 }
 
-#[derive(Deserialize)]
-struct OllamaResponse {
-    message: OllamaMessage,
-}
-#[derive(Deserialize)]
-struct OllamaMessage {
-    content: String,
-}
-
 impl Translator for OllamaTranslator {
     fn translate(&self, text: &str, target: &str) -> Option<String> {
-        let body = json!({
-            "model": self.model,
-            "stream": false,
-            "options": { "temperature": 0.2 },
-            "messages": [
-                { "role": "system", "content": system_prompt(target) },
-                { "role": "user", "content": text },
-            ],
-        });
-        let response = self
-            .client
-            .post(format!("{}/api/chat", self.base_url))
-            .timeout(self.timeout)
-            .json(&body)
-            .send()
-            .ok()?
-            .error_for_status()
-            .ok()?;
-        let parsed: OllamaResponse = response.json().ok()?;
-        non_empty(parsed.message.content)
+        // ollama_chat already trims + drops empty, matching non_empty().
+        crate::http::ollama_chat(
+            &self.client,
+            &self.base_url,
+            &self.model,
+            &system_prompt(target),
+            text,
+            0.2,
+            self.timeout,
+        )
     }
 }
 

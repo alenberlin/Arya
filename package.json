@@ -1,6 +1,6 @@
 {
   "name": "arya",
-  "version": "0.1.4",
+  "version": "0.1.24",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -19,12 +19,17 @@
     "brand:check": "node scripts/sync-brand.mjs --check"
   },
   "dependencies": {
+    "@blocknote/ariakit": "0.51.4",
+    "@blocknote/core": "0.51.4",
+    "@blocknote/react": "0.51.4",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/newsreader": "^5.2.10",
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-dialog": "^2.7.1",
+    "@xyflow/react": "^12.11.2",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-force-graph-2d": "^1.29.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",

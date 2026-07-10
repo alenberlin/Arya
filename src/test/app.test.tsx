@@ -28,6 +28,10 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => () => {}),
 }));
 
+// Stub the heavy block editor (its own logic is covered separately); these
+// tests exercise app-shell wiring, not the editor.
+vi.mock("../notes/BlockEditor", () => ({ BlockEditor: () => null }));
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     switch (cmd) {
@@ -68,6 +72,7 @@ vi.mock("@tauri-apps/api/core", () => ({
           id: String(args?.id),
           title: "New recording",
           bodyMd: "",
+          documentJson: "",
           manualNotes: "",
           processingStatus: "recording",
           processingError: null,
@@ -77,6 +82,8 @@ vi.mock("@tauri-apps/api/core", () => ({
       case "get_note_turns":
         return [];
       case "list_attachments":
+        return [];
+      case "list_links_to":
         return [];
       case "recover_recording":
         backend.recovered.push(String(args?.sessionId));

@@ -7,7 +7,10 @@ import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-function Modal({
+/** The shared modal shell: backdrop, focus trap, Escape-to-close, and focus
+ * restore on close. Exported so richer one-off dialogs (e.g. the AI-sort
+ * review) get the same behaviour without duplicating it. */
+export function Modal({
   open,
   onClose,
   labelledBy,

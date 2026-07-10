@@ -2,18 +2,27 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DictationPanel } from "../dictation/DictationPanel";
+import type { DictationSettings } from "../lib/dictation";
 
 const state = {
+  // `satisfies` pins this to the real shape, so a future field added to
+  // DictationSettings fails the build here instead of testing against undefined.
   settings: {
     shortcut: "ctrl+alt+d",
     mode: "push-to-talk",
     style: "standard",
-    language: null,
+    polish: "clean",
+    language: "en",
     microphone: null,
-    speechModel: "whisper-base.en",
+    speechModel: "whisper-large-v3-turbo-q5_0",
+    tone: "neutral",
+    streaming: false,
     cleanupModel: null,
     ollamaUrl: "http://127.0.0.1:11434",
-  },
+    translate: null,
+    translateProvider: "local",
+    translateModel: null,
+  } satisfies DictationSettings,
   saved: [] as unknown[],
 };
 
@@ -47,6 +56,8 @@ vi.mock("@tauri-apps/api/core", () => ({
         return [{ id: "d1", pattern: "k8s", replacement: "Kubernetes" }];
       case "list_speaker_profiles":
         return [{ id: "p1", name: "Alen", createdAt: "2026-07-03T00:00:00Z" }];
+      case "list_all_dictation_translations":
+        return [];
       default:
         throw new Error(`unexpected command ${cmd}`);
     }
@@ -70,10 +81,26 @@ describe("dictation panel", () => {
     const user = userEvent.setup();
     render(<DictationPanel />);
     await screen.findByLabelText("dictation hotkey");
-    await user.selectOptions(screen.getByRole("combobox", { name: /mode/i }), "toggle");
+    await user.selectOptions(screen.getByRole("combobox", { name: /^mode$/i }), "toggle");
     await waitFor(() => {
       expect(state.saved).toHaveLength(1);
       expect((state.saved[0] as { mode: string }).mode).toBe("toggle");
+    });
+  });
+
+  it("persists a recognition model change", async () => {
+    const user = userEvent.setup();
+    render(<DictationPanel />);
+    await screen.findByLabelText("dictation hotkey");
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /recognition model/i }),
+      "whisper-base.en",
+    );
+
+    await waitFor(() => {
+      expect(state.saved).toHaveLength(1);
+      expect((state.saved[0] as { speechModel: string }).speechModel).toBe("whisper-base.en");
     });
   });
 });

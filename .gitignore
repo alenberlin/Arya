@@ -13,3 +13,10 @@ arya-api/target/
 # Handoff / upload artifacts — not source, keep out of history
 Arya Mac AI Workspace-handoff.zip
 arya-mac-ai-workspace/
+
+# Only user-facing docs are public. Everything else (planning docs,
+# blueprints, progress ledgers, internal notes) stays out of the repo
+# entirely so an `add -A` can never push them.
+*.md
+!README.md
+!docs/user-guide.md

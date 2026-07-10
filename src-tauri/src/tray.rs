@@ -2,7 +2,9 @@
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
+
+use crate::show_main;
 
 /// Builds the tray icon and menu. Clicking "Show Arya" focuses the main
 /// window; the menu also offers quit.
@@ -19,9 +21,9 @@ pub fn setup(app: &AppHandle) -> Result<(), tauri::Error> {
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => focus_main(app),
+            "show" => show_main(app),
             "new_session" => {
-                focus_main(app);
+                show_main(app);
                 let _ = app.emit_to("main", "tray:new-session", ());
             }
             "quit" => app.exit(0),
@@ -29,11 +31,4 @@ pub fn setup(app: &AppHandle) -> Result<(), tauri::Error> {
         })
         .build(app)?;
     Ok(())
-}
-
-fn focus_main(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
 }

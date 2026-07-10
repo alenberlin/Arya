@@ -2,19 +2,29 @@ mod account;
 pub mod agent;
 mod attachments;
 pub mod audio;
+mod braindump;
 mod calendar;
+mod classify;
 pub mod cleanup;
 mod db;
 mod dictation;
+mod galaxy;
 mod http;
+mod kb;
+mod links;
 mod meeting_detect;
+mod mindmaps;
 mod notes;
+mod notion_import;
 mod paste;
 mod rag;
 mod recording;
+mod search;
 pub mod speech;
+mod transform;
 mod translate;
 mod tray;
+mod vecmath;
 
 /// Re-export for diagnostic integration tests.
 pub use recording::diarize as recording_diarize;
@@ -40,6 +50,15 @@ pub fn run() {
     std::env::set_var("GGML_METAL_NO_RESIDENCY", "1");
 
     tauri::Builder::default()
+        // Must be the first plugin registered (per its own docs): a second
+        // launch (autostart-at-login racing a manual open, a stray dock
+        // double-click, `open -a Arya` while it's already running, …) is
+        // detected here and killed immediately, instead of silently running
+        // as a second full process with its own tray icon, global hotkey
+        // registration, and calendar/agent pollers duplicating the first.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main(app);
+        }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -50,6 +69,18 @@ pub fn run() {
             Some(vec!["--minimized"]),
         ))
         .plugin(tauri_plugin_dialog::init())
+        // Arya keeps running in the tray/dock after the window closes (dictation
+        // and the agent scheduler must survive it), so the red-X close is a hide,
+        // not a destroy — otherwise neither the dock icon nor "Show Arya" in the
+        // tray has a window left to reveal (`get_webview_window` returns `None`).
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             let pool = tauri::async_runtime::block_on(db::init_pool(&data_dir.join("arya.db")))?;
@@ -90,11 +121,17 @@ pub fn run() {
             app.manage(account::commands::AccountState::default());
             spawn_agent_scheduler(app.handle().clone());
             #[cfg(target_os = "macos")]
-            meeting_detect::macos::spawn_poller(
-                app.handle().clone(),
-                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            );
+            meeting_detect::macos::spawn_poller(app.handle().clone());
             spawn_calendar_poller(app.handle().clone());
+            // Finish (or cleanly fail) any Knowledge Base documents left
+            // mid-ingest by a previous crash or quit.
+            {
+                let app_handle = app.handle().clone();
+                let pool = app.state::<sqlx::SqlitePool>().inner().clone();
+                tauri::async_runtime::spawn(async move {
+                    kb::ingest::recover_unfinished(app_handle, pool).await;
+                });
+            }
             if let Err(e) = tray::setup(app.handle()) {
                 eprintln!("tray setup failed: {e}");
             }
@@ -117,6 +154,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             notes::create_note,
+            notes::set_note_parent,
             notes::list_notes,
             notes::search_notes,
             notes::get_note,
@@ -133,20 +171,32 @@ pub fn run() {
             notes::rename_folder,
             notes::delete_folder,
             notes::assign_note_to_folder,
+            notes::assign_notes_to_folders,
+            classify::classify_notes_into_folders,
+            braindump::split_braindump_into_notes,
+            braindump::create_notes_from_split,
+            braindump::read_text_files,
+            notion_import::import_notion,
+            links::create_link,
+            links::list_links_from,
+            links::list_links_to,
+            links::delete_link,
+            links::reconcile_links,
+            transform::ai_transform,
             recording::commands::start_recording,
             recording::commands::pause_recording,
             recording::commands::resume_recording,
             recording::commands::finish_recording,
             recording::commands::recording_status,
             recording::commands::retry_processing,
-            recording::commands::scan_recoverable_recordings,
-            recording::commands::recover_recording,
-            recording::commands::discard_recording,
+            recording::recovery::scan_recoverable_recordings,
+            recording::recovery::recover_recording,
+            recording::recovery::discard_recording,
             recording::commands::get_generation_settings,
             recording::commands::set_generation_settings,
-            recording::commands::enroll_speaker_profile,
-            recording::commands::list_speaker_profiles,
-            recording::commands::delete_speaker_profile,
+            recording::enroll::enroll_speaker_profile,
+            recording::enroll::list_speaker_profiles,
+            recording::enroll::delete_speaker_profile,
             recording::commands::calendar_access_status,
             recording::commands::request_calendar_access,
             agent::commands::agent_list_models,
@@ -158,8 +208,7 @@ pub fn run() {
             agent::commands::agent_cancel,
             agent::commands::agent_resolve_approval,
             agent::commands::agent_delete_session,
-            agent::agent_workspace_list,
-            agent::agent_workspace_read,
+            agent::commands::convert_session_to_note,
             agent::agent_workspace_read_b64,
             agent::agent_generate_image,
             agent::ecosystem::mcp_list_servers,
@@ -174,6 +223,28 @@ pub fn run() {
             rag::commands::rag_status,
             rag::commands::rag_reindex,
             rag::commands::rag_search,
+            kb::commands::kb_status,
+            kb::commands::kb_list_collections,
+            kb::commands::kb_create_collection,
+            kb::commands::kb_rename_collection,
+            kb::commands::kb_delete_collection,
+            kb::commands::kb_list_documents,
+            kb::commands::kb_add_documents,
+            kb::commands::kb_delete_document,
+            kb::commands::kb_reindex_document,
+            kb::commands::kb_search,
+            kb::chat::kb_list_sessions,
+            kb::chat::kb_create_session,
+            kb::chat::kb_delete_session,
+            kb::chat::kb_get_messages,
+            kb::chat::kb_ask,
+            search::search_all,
+            galaxy::galaxy_graph,
+            mindmaps::create_mindmap,
+            mindmaps::list_mindmaps,
+            mindmaps::get_mindmap,
+            mindmaps::update_mindmap,
+            mindmaps::delete_mindmap,
             account::commands::account_signin_state,
             account::commands::account_begin_signin,
             // Dev-only token backdoor; compiled out of release builds (must be
@@ -183,16 +254,19 @@ pub fn run() {
             account::commands::account_set_token,
             account::commands::account_sign_out,
             account::commands::account_snapshot,
-            account::commands::account_open_billing,
             dictation::commands::get_dictation_settings,
             dictation::commands::list_ollama_models,
             dictation::commands::set_dictation_settings,
             dictation::commands::dictation_status,
             dictation::commands::open_accessibility_settings,
             dictation::commands::list_dictation_history,
+            dictation::commands::translate_dictation,
+            dictation::commands::list_dictation_translations,
+            dictation::commands::list_all_dictation_translations,
             dictation::commands::delete_dictation_history_item,
             dictation::commands::clear_dictation_history,
             dictation::commands::convert_dictation_to_note,
+            dictation::commands::convert_dictation_to_plain_note,
             dictation::commands::dictation_stop,
             dictation::commands::dictation_cancel,
             dictation::commands::dictation_set_session_polish,
@@ -205,8 +279,25 @@ pub fn run() {
             dictation::commands::create_dictionary_entry,
             dictation::commands::delete_dictionary_entry,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Clicking the dock icon with the (hidden, not destroyed) main window
+            // closed sends Reopen rather than recreating anything on its own.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_main(app_handle);
+            }
+        });
+}
+
+/// Shows and focuses the main window — shared by the tray's "Show Arya" and the
+/// dock icon's reopen handling.
+pub(crate) fn show_main(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 /// Ticks the routine scheduler every 30s and reconnects MCP servers once at
@@ -330,231 +421,4 @@ fn copy_to_clipboard(text: String) -> Result<(), String> {
 /// Debug-only runtime hooks for automated E2E checks. Each is env-gated and
 /// compiled out of release builds entirely.
 #[cfg(debug_assertions)]
-mod dev_hooks {
-    use std::sync::Arc;
-
-    use tauri::Manager;
-
-    use crate::dictation::service::DictationService;
-    use crate::recording::recorder::Recorder;
-
-    pub fn install(handle: tauri::AppHandle) {
-        // ARYA_DEV_DICTATE_MS=<hold ms>: one dictation cycle after launch.
-        if let Some(hold_ms) = env_ms("ARYA_DEV_DICTATE_MS") {
-            let handle = handle.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(3));
-                let service = handle.state::<Arc<DictationService>>().inner().clone();
-                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
-                service.begin(&handle);
-                std::thread::sleep(std::time::Duration::from_millis(hold_ms));
-                service.finish(&handle, pool);
-            });
-        }
-
-        // ARYA_DEV_HUD_HOLD=1: show the dictation HUD and leave it up (visual debug
-        // of the overlay — never finishes, so it stays on screen for inspection).
-        if std::env::var("ARYA_DEV_HUD_HOLD").as_deref() == Ok("1") {
-            let handle = handle.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(3));
-                let service = handle.state::<Arc<DictationService>>().inner().clone();
-                service.begin(&handle);
-            });
-        }
-
-        // ARYA_DEV_RECORD_MS=<ms>: start a recording, stop after <ms>, process.
-        if let Some(record_ms) = env_ms("ARYA_DEV_RECORD_MS") {
-            let handle = handle.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(3));
-                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
-                let recorder = handle.state::<Recorder>().inner().clone();
-                let mode = std::env::var("ARYA_DEV_RECORD_MODE").ok();
-                let started = tauri::async_runtime::block_on(
-                    crate::recording::commands::start_recording_inner(
-                        &handle, &pool, &recorder, None, mode,
-                    ),
-                );
-                eprintln!("dev record: started {started:?}");
-                std::thread::sleep(std::time::Duration::from_millis(record_ms));
-                let finished = tauri::async_runtime::block_on(
-                    crate::recording::commands::finish_recording_inner(&handle, &pool, &recorder),
-                );
-                eprintln!("dev record: finished {finished:?}");
-            });
-        }
-
-        // ARYA_DEV_RECORD_FOREVER=1: start recording and never stop (crash test).
-        if std::env::var("ARYA_DEV_RECORD_FOREVER").as_deref() == Ok("1") {
-            let handle = handle.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(3));
-                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
-                let recorder = handle.state::<Recorder>().inner().clone();
-                let mode = std::env::var("ARYA_DEV_RECORD_MODE").ok();
-                let started = tauri::async_runtime::block_on(
-                    crate::recording::commands::start_recording_inner(
-                        &handle, &pool, &recorder, None, mode,
-                    ),
-                );
-                eprintln!("dev record forever: started {started:?}");
-            });
-        }
-
-        // ARYA_DEV_AGENT=<prompt>: run one agent turn on a local model,
-        // auto-approving tool requests, for automated E2E checks.
-        if let Ok(prompt) = std::env::var("ARYA_DEV_AGENT") {
-            let handle = handle.clone();
-            let model = std::env::var("ARYA_DEV_AGENT_MODEL")
-                .unwrap_or_else(|_| "ollama:qwen3.6:35b".into());
-            std::thread::spawn(move || {
-                use tauri::Listener;
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                // Auto-approve any tool approval so the run is unattended.
-                let approver = handle.clone();
-                handle.listen("agent:event", move |event| {
-                    let Ok(value) = serde_json::from_str::<serde_json::Value>(event.payload())
-                    else {
-                        return;
-                    };
-                    let ev = &value["event"];
-                    if ev["kind"] == "tool-approval-required" {
-                        eprintln!("dev agent: auto-approving {}", ev["description"]);
-                        let session_id = value["sessionId"].as_str().unwrap_or("").to_string();
-                        let call_id = ev["callId"].as_str().unwrap_or("").to_string();
-                        let runtime = approver.state::<crate::agent::AgentRuntime>();
-                        let _ = runtime.request(
-                            &approver,
-                            crate::agent::sidecar::WriteMode::Sandboxed,
-                            "approval.resolve",
-                            serde_json::json!({
-                                "sessionId": session_id,
-                                "callId": call_id,
-                                "decision": "once",
-                            }),
-                        );
-                    }
-                    if ev["kind"] == "turn-finished" {
-                        eprintln!("dev agent: turn finished");
-                    }
-                });
-                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
-                let runtime_handle = handle.clone();
-                let result = tauri::async_runtime::block_on(async move {
-                    let runtime = runtime_handle.state::<crate::agent::AgentRuntime>();
-                    let session = crate::agent::commands::agent_create_session_inner(
-                        &runtime_handle,
-                        &pool,
-                        &runtime,
-                        model,
-                        None,
-                    )
-                    .await?;
-                    eprintln!("dev agent: session {}", session.id);
-                    crate::agent::commands::agent_send_inner(
-                        &runtime_handle,
-                        &pool,
-                        &runtime,
-                        session.id.clone(),
-                        prompt,
-                    )
-                    .await
-                    .map(|_| session.id)
-                });
-                eprintln!("dev agent: send result {result:?}");
-            });
-        }
-
-        // ARYA_DEV_RAG=<query>: reindex the workspace, then run a timed search.
-        if let Ok(query) = std::env::var("ARYA_DEV_RAG") {
-            let handle = handle.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
-                let start = std::time::Instant::now();
-                let indexed = crate::rag::commands::reindex_blocking_public(&handle, &pool);
-                eprintln!("dev rag: indexed {indexed:?} in {:?}", start.elapsed());
-                let start = std::time::Instant::now();
-                let hits = crate::rag::commands::search_blocking(&pool, &query, 5);
-                let elapsed = start.elapsed();
-                match hits {
-                    Ok(hits) => {
-                        eprintln!("dev rag: search took {elapsed:?}, {} hits", hits.len());
-                        for hit in hits.iter().take(3) {
-                            eprintln!(
-                                "dev rag: [{}:{}] {:.2} {}",
-                                hit.source_kind,
-                                hit.title,
-                                hit.score,
-                                hit.content.chars().take(80).collect::<String>()
-                            );
-                        }
-                    }
-                    Err(e) => eprintln!("dev rag: search failed {e}"),
-                }
-            });
-        }
-
-        // ARYA_DEV_ENROLL=<name>:<seconds>: enroll a voice profile from the mic.
-        if let Ok(spec) = std::env::var("ARYA_DEV_ENROLL") {
-            let handle = handle.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(3));
-                let (name, secs) = spec.split_once(':').unwrap_or((spec.as_str(), "6"));
-                let seconds = secs.parse::<u32>().unwrap_or(6);
-                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
-                let result =
-                    crate::recording::commands::enroll_blocking(&handle, &pool, name, seconds);
-                eprintln!("dev enroll: {result:?}");
-            });
-        }
-
-        // ARYA_DEV_CALENDAR=1: print calendar access + current event.
-        if std::env::var("ARYA_DEV_CALENDAR").as_deref() == Ok("1") {
-            std::thread::spawn(|| {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                eprintln!(
-                    "dev calendar: access={:?}",
-                    crate::calendar::access_status()
-                );
-                eprintln!(
-                    "dev calendar: event={:?}",
-                    crate::calendar::current_or_upcoming_event(10)
-                );
-            });
-        }
-
-        // ARYA_DEV_RECOVER=1: scan for recoverable sessions and recover them.
-        if std::env::var("ARYA_DEV_RECOVER").as_deref() == Ok("1") {
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-                let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
-                let found = tauri::async_runtime::block_on(
-                    crate::recording::commands::scan_recoverable_inner(&pool),
-                );
-                eprintln!("dev recover: scan {found:?}");
-                if let Ok(list) = found {
-                    for item in list {
-                        let result = tauri::async_runtime::block_on(
-                            crate::recording::commands::recover_recording_inner(
-                                &handle,
-                                &pool,
-                                &item.session_id,
-                            ),
-                        );
-                        eprintln!("dev recover: recovered {result:?}");
-                    }
-                }
-            });
-        }
-    }
-
-    fn env_ms(name: &str) -> Option<u64> {
-        std::env::var(name)
-            .ok()?
-            .parse::<u64>()
-            .ok()
-            .filter(|v| *v > 0)
-    }
-}
+mod dev_hooks;

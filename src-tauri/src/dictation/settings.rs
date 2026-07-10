@@ -4,8 +4,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cleanup::{DictationStyle, Polish};
+use crate::cleanup::{DictationStyle, Polish, PolishedTone};
 use crate::translate::TranslateProvider;
+
+pub const DEFAULT_SPEECH_MODEL: &str = "whisper-large-v3-turbo-q5_0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -24,6 +26,8 @@ pub struct DictationSettings {
     pub style: DictationStyle,
     /// How much cleanup to apply (verbatim / mechanical / local-LLM).
     pub polish: Polish,
+    /// Interpersonal register for the Polished rewrite (F6); ignored by Raw/Clean.
+    pub tone: PolishedTone,
     /// ISO 639-1 hint for ASR; None lets the model detect.
     pub language: Option<String>,
     /// Input device name; None uses the system default.
@@ -67,9 +71,13 @@ impl Default for DictationSettings {
             mode: ActivationMode::PushToTalk,
             style: DictationStyle::Standard,
             polish: Polish::Clean,
+            tone: PolishedTone::Neutral,
+            // Auto-detect. Forcing "en" made non-English speech transcribe as
+            // approximate English (the observed bug); None lets Whisper detect
+            // the spoken language, and the user can pin one in settings.
             language: None,
             microphone: None,
-            speech_model: "whisper-base.en".into(),
+            speech_model: DEFAULT_SPEECH_MODEL.into(),
             streaming: false,
             cleanup_model: None,
             ollama_url: "http://127.0.0.1:11434".into(),
@@ -126,7 +134,7 @@ mod tests {
         .unwrap();
         let loaded = load(&dir);
         assert_eq!(loaded.shortcut, "f19");
-        assert_eq!(loaded.speech_model, "whisper-base.en");
+        assert_eq!(loaded.speech_model, DEFAULT_SPEECH_MODEL);
         // A settings file predating `polish` loads as the default (Clean).
         assert_eq!(loaded.polish, Polish::Clean);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -139,6 +147,13 @@ mod tests {
         std::fs::write(settings_path(&dir), "{not json").unwrap();
         assert_eq!(load(&dir).shortcut, RIGHT_SHIFT_TRIGGER);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn default_language_is_auto_detect_not_forced_english() {
+        // Regression: forcing "en" made non-English speech transcribe as
+        // approximate English. The default must be auto-detect (None).
+        assert_eq!(DictationSettings::default().language, None);
     }
 
     #[test]

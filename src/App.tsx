@@ -1,15 +1,17 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import brand from "../brand.json";
 import { AccountGate } from "./account/AccountGate";
 import { AccountPanel } from "./account/AccountPanel";
-import { AgentPanel } from "./agent/AgentPanel";
-import { McpPanel } from "./agent/McpPanel";
-import { RoutinesPanel } from "./agent/RoutinesPanel";
+import { AgentSection } from "./agent/AgentSection";
 import { DictationPanel } from "./dictation/DictationPanel";
+import { GalaxyPanel } from "./galaxy/GalaxyPanel";
+import { KnowledgeBasePanel } from "./knowledge/KnowledgeBasePanel";
 import { type AccountSnapshot, accountSnapshot } from "./lib/account";
 import { disableAutostart, enableAutostart, isAutostartEnabled } from "./lib/autostart";
+import { useFormFieldDictation } from "./lib/dictationInsert";
 import { loadTheme, saveTheme, type Theme } from "./lib/theme";
+import { MindMapPanel } from "./mindmap/MindMapPanel";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
 import { Onboarding, onboardingComplete } from "./onboarding/Onboarding";
 import { SearchPanel } from "./search/SearchPanel";
@@ -18,26 +20,34 @@ import {
   AccountIcon,
   AgentIcon,
   DictationIcon,
+  GalaxyIcon,
+  KnowledgeIcon,
   LockIcon,
-  McpIcon,
+  MindMapIcon,
   NotesIcon,
-  RoutinesIcon,
   SearchIcon,
   ThemeIcon,
 } from "./ui/icons";
 
-type Tab = "notes" | "agent" | "search" | "routines" | "mcp" | "dictation" | "account";
+type Tab =
+  | "notes"
+  | "agent"
+  | "search"
+  | "galaxy"
+  | "knowledge"
+  | "mindmap"
+  | "dictation"
+  | "account";
 
 const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.JSX.Element }[] = [
   { id: "notes", label: "Notes", icon: NotesIcon },
   { id: "agent", label: "Agent", icon: AgentIcon },
   { id: "dictation", label: "Dictation", icon: DictationIcon },
   { id: "search", label: "Search", icon: SearchIcon },
-  { id: "routines", label: "Routines", icon: RoutinesIcon },
-  { id: "mcp", label: "MCP servers", icon: McpIcon },
+  { id: "galaxy", label: "Galaxy", icon: GalaxyIcon },
+  { id: "knowledge", label: "Knowledge", icon: KnowledgeIcon },
+  { id: "mindmap", label: "Mind Map", icon: MindMapIcon },
 ];
-
-const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
 /**
  * Main-window shell: a tinted sidebar of pillars over a warm ground, with each
@@ -50,6 +60,13 @@ export function App() {
   const [account, setAccount] = useState<AccountSnapshot | null>(null);
   const [autostart, setAutostart] = useState(false);
   const [autostartPrompt, setAutostartPrompt] = useState(false);
+  const [pendingNote, setPendingNote] = useState<string | null>(null);
+
+  const clearPendingNote = useCallback(() => setPendingNote(null), []);
+
+  // In-app dictation lands in whatever form field is focused (title, composer,
+  // search); the note body is handled by BlockEditor itself.
+  useFormFieldDictation();
 
   const setTheme = (next: Theme) => {
     saveTheme(next);
@@ -69,6 +86,27 @@ export function App() {
     localStorage.setItem("arya-autostart-decided", "true");
   };
 
+  // Cross-surface deep-links (e.g. Galaxy's "Open"): switch to the owning tab,
+  // and hand a note request to the workspace so it opens even on fresh mount.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ kind: string; id: string }>).detail;
+      if (!detail) return;
+      if (detail.kind === "note") {
+        setPendingNote(detail.id);
+        setTab("notes");
+      } else if (detail.kind === "dictation") {
+        setTab("dictation");
+      } else if (detail.kind === "mindmap") {
+        setTab("mindmap");
+      } else if (detail.kind === "agent") {
+        setTab("agent");
+      }
+    };
+    window.addEventListener("arya:open-node", handler);
+    return () => window.removeEventListener("arya:open-node", handler);
+  }, []);
+
   useEffect(() => {
     const unlisten = listen("tray:new-session", () => setTab("agent"));
     return () => {
@@ -80,7 +118,7 @@ export function App() {
     // Best-effort: the sidebar shows plan + credits when a backend answers;
     // in local mode it stays quiet rather than erroring. Re-fetch whenever auth
     // changes anywhere (sign-in via the loopback callback, sign-out from the
-    // account panel) so the sidebar never shows a stale tier until reload.
+    // account panel) so the sidebar never shows a stale balance until reload.
     const refresh = () => {
       void accountSnapshot()
         .then(setAccount)
@@ -112,11 +150,12 @@ export function App() {
   }
 
   const panel = {
-    notes: <NotesWorkspace />,
-    agent: <AgentPanel />,
+    notes: <NotesWorkspace openNoteId={pendingNote} onOpenConsumed={clearPendingNote} />,
+    agent: <AgentSection />,
     search: <SearchPanel />,
-    routines: <RoutinesPanel />,
-    mcp: <McpPanel />,
+    galaxy: <GalaxyPanel />,
+    knowledge: <KnowledgeBasePanel />,
+    mindmap: <MindMapPanel />,
     dictation: <DictationPanel />,
     account: <AccountPanel />,
   }[tab];
@@ -166,9 +205,7 @@ export function App() {
               <AccountIcon />
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>
-              <span className="account-name">
-                {account ? `${cap(account.tier)} plan` : "Account"}
-              </span>
+              <span className="account-name">Account</span>
               <span className="account-sub">
                 {account ? `${account.remainingCredits.toLocaleString()} credits` : "Local mode"}
               </span>

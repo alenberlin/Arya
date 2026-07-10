@@ -16,10 +16,21 @@ const mcp = new McpManager();
 let reverseId = 0;
 const reverseCalls = new Map<string, (result: unknown, error?: string) => void>();
 
+/** How long to wait for the shell to answer a reverse-RPC before giving up. A
+ * lost or never-sent response would otherwise hang the agent turn forever and
+ * leak the pending entry; this mirrors the ApprovalBroker's TTL. */
+const REVERSE_RPC_TIMEOUT_MS = 30_000;
+
 function searchWorkspace(query: string, limit: number): Promise<string> {
   return new Promise((resolvePromise) => {
     const id = `rev-${++reverseId}`;
+    const timer = setTimeout(() => {
+      reverseCalls.delete(id);
+      resolvePromise("workspace search timed out");
+    }, REVERSE_RPC_TIMEOUT_MS);
+    timer.unref?.();
     reverseCalls.set(id, (result, error) => {
+      clearTimeout(timer);
       if (error) {
         resolvePromise(`workspace search failed: ${error}`);
         return;

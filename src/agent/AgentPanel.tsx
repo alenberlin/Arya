@@ -1,6 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   type AgentEvent,
   type AgentMessage,
@@ -8,17 +7,32 @@ import {
   agentCancel,
   agentCreateSession,
   agentDeleteSession,
+  agentGenerateImage,
   agentGetMessages,
   agentListModels,
   agentListSessions,
   agentResolveApproval,
   agentSend,
   agentSteer,
+  agentWorkspaceReadB64,
+  convertSessionToNote,
   modelPrivacy,
   type ToolInfo,
 } from "../lib/agent";
 import { agentBranchSession } from "../lib/ecosystem";
-import { AgentIcon, CheckIcon, FileWriteIcon, LockIcon, PlusIcon, SendIcon } from "../ui/icons";
+import { TRANSLATE_LANGUAGES, translateInstruction } from "../lib/languages";
+import { getNote, updateNote } from "../lib/notes";
+import { aiTransform } from "../lib/transform";
+import {
+  AgentIcon,
+  CheckIcon,
+  FileWriteIcon,
+  LockIcon,
+  MoreIcon,
+  PlusIcon,
+  SendIcon,
+} from "../ui/icons";
+import { MessageView, toolSummary } from "./MessageView";
 
 interface PendingApproval {
   callId: string;
@@ -31,116 +45,6 @@ interface LiveTurn {
   reasoning: string;
   tools: ToolInfo[];
 }
-
-interface MessageViewProps {
-  message: AgentMessage;
-  branchable: boolean;
-  images: Record<string, string>;
-  onBranch: (messageId: string) => void;
-  onNeedImage: (path: string) => void;
-}
-
-function toolSummary(tool: ToolInfo): string {
-  if (tool.result) return tool.result.replace(/\s+/g, " ").slice(0, 80);
-  const args = JSON.stringify(tool.args ?? {});
-  return args === "{}" ? "" : args.slice(0, 80);
-}
-
-/**
- * A single settled message. Memoized so streaming token deltas (which only
- * change the separate live block) never re-render the whole history.
- * contentJson is parsed once here, not on every parent render.
- */
-const MessageView = memo(function MessageView({
-  message,
-  branchable,
-  images,
-  onBranch,
-  onNeedImage,
-}: MessageViewProps) {
-  const content = useMemo<{ text?: string; reasoning?: string | null; tools?: ToolInfo[] }>(() => {
-    try {
-      return JSON.parse(message.contentJson);
-    } catch {
-      return { text: message.contentJson };
-    }
-  }, [message.contentJson]);
-
-  const imagePaths = useMemo(
-    () =>
-      (content.tools ?? [])
-        .map((tool) => tool.result?.match(/images\/[\w.-]+\.png/)?.[0])
-        .filter((p): p is string => Boolean(p)),
-    [content.tools],
-  );
-  useEffect(() => {
-    for (const path of imagePaths) onNeedImage(path);
-  }, [imagePaths, onNeedImage]);
-
-  if (message.role === "user") {
-    return (
-      <div style={{ marginBottom: 22 }}>
-        <div className="msg-user">{content.text}</div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="msg-assistant" style={{ marginBottom: 22 }}>
-      <div className="agent-avatar">
-        <AgentIcon />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        {content.reasoning ? (
-          <details className="reason">
-            <summary>Reasoning</summary>
-            <div className="reason-body" style={{ whiteSpace: "pre-wrap" }}>
-              {content.reasoning}
-            </div>
-          </details>
-        ) : null}
-        {(content.tools ?? []).length > 0 ? (
-          <div className="stack" style={{ gap: 8, marginBottom: 14 }}>
-            {(content.tools ?? []).map((tool) => {
-              const match = tool.result?.match(/images\/[\w.-]+\.png/)?.[0];
-              return (
-                <div key={tool.callId}>
-                  <div className="tool-chip">
-                    <CheckIcon className="tool-check" />
-                    <span className="tool-name">{tool.name}</span>
-                    <span className="tool-args">{toolSummary(tool)}</span>
-                  </div>
-                  {match && images[match] ? (
-                    <img
-                      src={images[match]}
-                      alt={`generated ${match}`}
-                      style={{ display: "block", maxWidth: 360, marginTop: 6, borderRadius: 10 }}
-                    />
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
-        ) : null}
-        {content.text ? (
-          <div style={{ whiteSpace: "pre-wrap", fontSize: 14, lineHeight: 1.65 }}>
-            {content.text}
-          </div>
-        ) : null}
-        {branchable ? (
-          <button
-            type="button"
-            className="btn-ghost btn-sm"
-            style={{ marginTop: 6, color: "var(--text-muted)" }}
-            onClick={() => onBranch(message.id)}
-          >
-            Branch here
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-});
 
 /** Agent chat: sessions, streaming turns, tool approvals, steering. */
 export function AgentPanel() {
@@ -156,8 +60,25 @@ export function AgentPanel() {
   const [steerText, setSteerText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<Record<string, string>>({});
+  const [notice, setNotice] = useState<string | null>(null);
+  const [sessionMenu, setSessionMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const sessionMenuRef = useRef<HTMLDivElement | null>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = active?.id ?? null;
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+
+  // Grow the composer with its content — from a five-row floor (CSS min-height)
+  // up to a cap, past which it scrolls — so pasting or writing several lines
+  // stays readable without a manual drag-resize. `input` drives it: it's the
+  // signal to re-measure after each commit (typing *and* the clear on send),
+  // even though the measurement reads the DOM rather than the value itself.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: input is the intended re-measure trigger
+  useLayoutEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -177,6 +98,74 @@ export function AgentPanel() {
       setError(String(e));
     }
   }, []);
+
+  // Auto-dismiss transient notices.
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
+  const openSessionMenu = (id: string, clientX: number, clientY: number) => {
+    const x = Math.max(8, Math.min(clientX, window.innerWidth - 232));
+    const y = Math.max(8, Math.min(clientY, window.innerHeight - 300));
+    setSessionMenu({ id, x, y });
+  };
+
+  // Close the session ⋯ menu on any outside click or Escape.
+  useEffect(() => {
+    if (!sessionMenu) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        sessionMenuRef.current &&
+        e.target instanceof Node &&
+        sessionMenuRef.current.contains(e.target)
+      ) {
+        return;
+      }
+      setSessionMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSessionMenu(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [sessionMenu]);
+
+  /** Convert a chat to a note (markdown transcript). */
+  const convertChatToNote = (id: string) => {
+    setSessionMenu(null);
+    setNotice("Creating note…");
+    void convertSessionToNote(id)
+      .then(() => setNotice("Note created — see the Notes tab."))
+      .catch((e) => {
+        setNotice(null);
+        setError(String(e));
+      });
+  };
+
+  /** Convert a chat to a note, then append its translation side-by-side. The
+   * note is fresh markdown (no rich blocks), so appending is lossless. */
+  const translateChatToNote = (id: string, lang: string) => {
+    setSessionMenu(null);
+    setNotice(`Translating chat to ${lang}…`);
+    void convertSessionToNote(id)
+      .then(async (noteId) => {
+        const note = await getNote(noteId);
+        const translated = await aiTransform(note.bodyMd, translateInstruction(lang));
+        const combined = `${note.bodyMd}\n\n---\n\n## ${lang}\n\n${translated}`;
+        await updateNote(noteId, { bodyMd: combined });
+        setNotice(`Translated chat to ${lang} — see the Notes tab.`);
+      })
+      .catch((e) => {
+        setNotice(null);
+        setError(String(e));
+      });
+  };
 
   useEffect(() => {
     void refreshSessions();
@@ -269,10 +258,7 @@ export function AgentPanel() {
     if (text.startsWith("/image ")) {
       const prompt = text.slice(7).trim();
       try {
-        const result = await invoke<{ path: string }>("agent_generate_image", {
-          prompt,
-          size: null,
-        });
+        const result = await agentGenerateImage(prompt);
         setImages((m) => ({ ...m, [result.path]: "" }));
         void loadImage(result.path);
         setMessages((mm) => [
@@ -307,7 +293,7 @@ export function AgentPanel() {
 
   const loadImage = async (path: string) => {
     try {
-      const b64 = await invoke<string>("agent_workspace_read_b64", { path });
+      const b64 = await agentWorkspaceReadB64(path);
       setImages((m) => ({ ...m, [path]: `data:image/png;base64,${b64}` }));
     } catch {
       // leave placeholder
@@ -393,18 +379,14 @@ export function AgentPanel() {
                   type="button"
                   className="btn-icon bare"
                   style={{ color: "var(--text-muted)" }}
-                  aria-label={`delete ${session.title}`}
-                  onClick={() =>
-                    void agentDeleteSession(session.id).then(() => {
-                      if (active?.id === session.id) {
-                        setActive(null);
-                        setMessages([]);
-                      }
-                      return refreshSessions();
-                    })
-                  }
+                  aria-label={`actions for ${session.title}`}
+                  title="Chat actions"
+                  onClick={(e) => {
+                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                    openSessionMenu(session.id, r.right - 210, r.bottom + 4);
+                  }}
                 >
-                  ×
+                  <MoreIcon />
                 </button>
               </li>
             ))}
@@ -578,14 +560,22 @@ export function AgentPanel() {
                 className="composer"
               >
                 <textarea
+                  ref={composerRef}
                   aria-label="agent composer"
-                  placeholder="Ask, or tell Arya to do something…"
+                  placeholder="Ask, paste, or tell Arya to do something…"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  rows={1}
+                  rows={5}
                   style={{ flex: 1 }}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
+                    // Enter submits; Shift+Enter inserts a newline; Cmd/Ctrl+Enter
+                    // also submits, for hands-on-keyboard sending from anywhere in
+                    // a multi-line draft.
+                    if (e.key !== "Enter") return;
+                    if (e.metaKey || e.ctrlKey) {
+                      e.preventDefault();
+                      void onSend();
+                    } else if (!e.shiftKey) {
                       e.preventDefault();
                       void onSend();
                     }
@@ -610,6 +600,73 @@ export function AgentPanel() {
           </>
         )}
       </div>
+
+      {notice ? (
+        <div
+          role="status"
+          style={{
+            position: "fixed",
+            bottom: 16,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 950,
+            padding: "8px 14px",
+            background: "var(--surface-raise)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-md)",
+            boxShadow: "var(--shadow-lg)",
+            fontSize: "var(--fs-sm)",
+            color: "var(--text)",
+          }}
+        >
+          {notice}
+        </div>
+      ) : null}
+
+      {sessionMenu ? (
+        <div
+          ref={sessionMenuRef}
+          className="context-menu"
+          style={{ top: sessionMenu.y, left: sessionMenu.x }}
+          role="menu"
+        >
+          <button type="button" role="menuitem" onClick={() => convertChatToNote(sessionMenu.id)}>
+            Convert to note
+          </button>
+          <div className="context-menu-label">Translate to</div>
+          <div className="context-menu-scroll">
+            {TRANSLATE_LANGUAGES.map((l) => (
+              <button
+                key={l}
+                type="button"
+                role="menuitem"
+                onClick={() => translateChatToNote(sessionMenu.id, l)}
+              >
+                {l}
+              </button>
+            ))}
+          </div>
+          <div className="context-menu-sep" />
+          <button
+            type="button"
+            role="menuitem"
+            className="danger"
+            onClick={() => {
+              const id = sessionMenu.id;
+              setSessionMenu(null);
+              void agentDeleteSession(id).then(() => {
+                if (active?.id === id) {
+                  setActive(null);
+                  setMessages([]);
+                }
+                return refreshSessions();
+              });
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -6,9 +6,6 @@
 
 use std::time::Duration;
 
-use serde::Deserialize;
-use serde_json::json;
-
 #[derive(Debug, Clone)]
 pub struct GeneratedNote {
     pub title: String,
@@ -57,13 +54,10 @@ impl NoteGenerator for FallbackGenerator {
             .any(|t| t.source == "system" || t.speaker.is_some());
         for turn in turns {
             if labeled {
-                let speaker = turn.speaker.clone().unwrap_or_else(|| {
-                    if turn.source == "system" {
-                        "Them".to_string()
-                    } else {
-                        "Me".to_string()
-                    }
-                });
+                let speaker = turn
+                    .speaker
+                    .clone()
+                    .unwrap_or_else(|| fallback_speaker_for_source(&turn.source));
                 body.push_str(&format!(
                     "**[{}] {speaker}:** {}\n\n",
                     format_ms(turn.start_ms),
@@ -113,13 +107,10 @@ impl OllamaGenerator {
             .iter()
             .map(|t| {
                 if labeled {
-                    let speaker = t.speaker.clone().unwrap_or_else(|| {
-                        if t.source == "system" {
-                            "Them".to_string()
-                        } else {
-                            "Me".to_string()
-                        }
-                    });
+                    let speaker = t
+                        .speaker
+                        .clone()
+                        .unwrap_or_else(|| fallback_speaker_for_source(&t.source));
                     format!("[{}] {speaker}: {}", format_ms(t.start_ms), t.text)
                 } else {
                     format!("[{}] {}", format_ms(t.start_ms), t.text)
@@ -138,38 +129,16 @@ impl OllamaGenerator {
         } else {
             format!("Manual notes:\n{manual_notes}\n\nTranscript:\n{transcript}")
         };
-        let body = json!({
-            "model": self.model,
-            "stream": false,
-            "options": { "temperature": 0.2 },
-            "messages": [
-                { "role": "system", "content": system },
-                { "role": "user", "content": user },
-            ],
-        });
-        let response = self
-            .client
-            .post(format!("{}/api/chat", self.base_url))
-            .timeout(Duration::from_secs(120))
-            .json(&body)
-            .send()
-            .ok()?
-            .error_for_status()
-            .ok()?;
-        #[derive(Deserialize)]
-        struct ChatResponse {
-            message: Message,
-        }
-        #[derive(Deserialize)]
-        struct Message {
-            content: String,
-        }
-        let parsed: ChatResponse = response.json().ok()?;
-        let content = parsed.message.content.trim();
-        if content.is_empty() {
-            return None;
-        }
-        let (title, rest) = content.split_once('\n').unwrap_or((content, ""));
+        let content = crate::http::ollama_chat(
+            &self.client,
+            &self.base_url,
+            &self.model,
+            system,
+            &user,
+            0.2,
+            Duration::from_secs(120),
+        )?;
+        let (title, rest) = content.split_once('\n').unwrap_or((content.as_str(), ""));
         Some(GeneratedNote {
             title: title.trim_start_matches('#').trim().to_string(),
             body_md: rest.trim().to_string(),
@@ -181,6 +150,14 @@ impl NoteGenerator for OllamaGenerator {
     fn generate(&self, turns: &[TurnText], manual_notes: &str) -> GeneratedNote {
         self.try_generate(turns, manual_notes)
             .unwrap_or_else(|| FallbackGenerator.generate(turns, manual_notes))
+    }
+}
+
+fn fallback_speaker_for_source(source: &str) -> String {
+    if source == "system" {
+        "Speaker 2".to_string()
+    } else {
+        "Speaker 1".to_string()
     }
 }
 
@@ -234,5 +211,16 @@ mod tests {
         let generator = OllamaGenerator::new("http://127.0.0.1:1", "any");
         let note = generator.generate(&turns(), "");
         assert!(note.body_md.contains("## Transcript"));
+    }
+
+    #[test]
+    fn labeled_fallback_does_not_invent_me_for_unknown_microphone_speaker() {
+        let mut turns = turns();
+        turns[0].speaker = Some("Speaker 1".to_string());
+
+        let note = FallbackGenerator.generate(&turns, "");
+
+        assert!(note.body_md.contains("Speaker 1:"));
+        assert!(!note.body_md.contains("Me:"));
     }
 }

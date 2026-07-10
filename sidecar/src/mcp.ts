@@ -23,7 +23,8 @@ interface ConnectedServer {
  * carries the user's Arya bearer token (ARYA_API_TOKEN) and, in direct-key dev
  * setups, provider keys. An MCP binary — which the user, or a prompt-injected
  * agent that convinces them to add one, controls — must never inherit those.
- * Pass only locale/PATH/HOME essentials plus the server's own declared env.
+ * Pass only locale/PATH/HOME essentials plus the server's own non-reserved
+ * declared env.
  */
 export function safeMcpEnv(specEnv?: Record<string, string>): Record<string, string> {
   const passthrough = [
@@ -43,7 +44,16 @@ export function safeMcpEnv(specEnv?: Record<string, string>): Record<string, str
     const value = process.env[key];
     if (value !== undefined) env[key] = value;
   }
-  return { ...env, ...(specEnv ?? {}) };
+  for (const [key, value] of Object.entries(specEnv ?? {})) {
+    if (!isReservedSecretEnvKey(key)) env[key] = value;
+  }
+  return env;
+}
+
+function isReservedSecretEnvKey(key: string): boolean {
+  const normalized = key.toUpperCase();
+  if (normalized.startsWith("ARYA_")) return true;
+  return /^(ANTHROPIC|OPENAI|CLAUDE|STRIPE|CLERK)_.+(KEY|TOKEN|SECRET|PASSWORD)$/.test(normalized);
 }
 
 /**

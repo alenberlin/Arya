@@ -59,7 +59,7 @@ struct Active {
     sink: WavSink,
     stream: Option<cpal::Stream>,
     sample_rx: mpsc::Receiver<Vec<f32>>,
-    sample_tx: mpsc::Sender<Vec<f32>>,
+    sample_free_tx: mpsc::SyncSender<Vec<f32>>,
     sample_rate: u32,
     channels: u16,
     written_frames: u64,
@@ -67,6 +67,14 @@ struct Active {
     /// Rolling buffer of recent raw samples for the ephemeral live preview.
     preview: Vec<f32>,
 }
+
+type RecorderStream = (
+    cpal::Stream,
+    mpsc::Receiver<Vec<f32>>,
+    mpsc::SyncSender<Vec<f32>>,
+    u32,
+    u16,
+);
 
 impl Recorder {
     pub fn spawn() -> Self {
@@ -166,7 +174,7 @@ fn run_loop(
                     let _ = reply.send(Err("already recording".into()));
                     continue;
                 }
-                match begin(spec) {
+                match begin(spec, Arc::clone(&level_out)) {
                     Ok(state) => {
                         let _ = reply.send(Ok((state.sample_rate, state.channels)));
                         active = Some(state);
@@ -191,10 +199,16 @@ fn run_loop(
             Ok(Command::Resume(reply)) => {
                 let result = match active.as_mut() {
                     Some(state) if state.paused => {
-                        build_stream(state.spec.device.as_deref(), state.sample_tx.clone()).map(
-                            |(stream, _, _)| {
+                        build_stream(state.spec.device.as_deref(), Arc::clone(&level_out)).and_then(
+                            |(stream, sample_rx, sample_free_tx, sample_rate, channels)| {
+                                if sample_rate != state.sample_rate || channels != state.channels {
+                                    return Err("input format changed while paused".into());
+                                }
+                                state.sample_rx = sample_rx;
+                                state.sample_free_tx = sample_free_tx;
                                 state.stream = Some(stream);
                                 state.paused = false;
+                                Ok(())
                             },
                         )
                     }
@@ -259,9 +273,9 @@ fn run_loop(
     }
 }
 
-fn begin(spec: StartSpec) -> Result<Active, String> {
-    let (sample_tx, sample_rx) = mpsc::channel::<Vec<f32>>();
-    let (stream, sample_rate, channels) = build_stream(spec.device.as_deref(), sample_tx.clone())?;
+fn begin(spec: StartSpec, level_out: Arc<AtomicU32>) -> Result<Active, String> {
+    let (stream, sample_rx, sample_free_tx, sample_rate, channels) =
+        build_stream(spec.device.as_deref(), level_out)?;
     let sink =
         WavSink::create(&spec.final_path, sample_rate, channels).map_err(|e| e.to_string())?;
     Ok(Active {
@@ -269,7 +283,7 @@ fn begin(spec: StartSpec) -> Result<Active, String> {
         sink,
         stream: Some(stream),
         sample_rx,
-        sample_tx,
+        sample_free_tx,
         sample_rate,
         channels,
         written_frames: 0,
@@ -280,8 +294,8 @@ fn begin(spec: StartSpec) -> Result<Active, String> {
 
 fn build_stream(
     device_name: Option<&str>,
-    sample_tx: mpsc::Sender<Vec<f32>>,
-) -> Result<(cpal::Stream, u32, u16), String> {
+    level_out: Arc<AtomicU32>,
+) -> Result<RecorderStream, String> {
     let host = cpal::default_host();
     let device = match device_name {
         Some(name) => host
@@ -302,40 +316,47 @@ fn build_stream(
     let channels = config.channels();
     let sample_format = config.sample_format();
     let stream_config: cpal::StreamConfig = config.into();
-    let err_fn = |e| eprintln!("recording stream error: {e}");
-    let stream = match sample_format {
-        cpal::SampleFormat::F32 => device
-            .build_input_stream(
-                stream_config,
-                move |data: &[f32], _| {
-                    let _ = sample_tx.send(data.to_vec());
-                },
-                err_fn,
-                None,
-            )
-            .map_err(|e| e.to_string())?,
-        cpal::SampleFormat::I16 => device
-            .build_input_stream(
-                stream_config,
-                move |data: &[i16], _| {
-                    // /32768 so i16::MIN maps to exactly -1.0 (not -1.00003).
-                    let floats: Vec<f32> = data.iter().map(|s| *s as f32 / 32768.0).collect();
-                    let _ = sample_tx.send(floats);
-                },
-                err_fn,
-                None,
-            )
-            .map_err(|e| e.to_string())?,
+    let (stream, sample_rx, sample_free_tx) = match sample_format {
+        cpal::SampleFormat::F32 => {
+            let (callback, sample_rx, sample_free_tx) =
+                crate::audio::sample_block_channel(sample_rate, channels, Arc::clone(&level_out));
+            let stream = device
+                .build_input_stream(
+                    stream_config,
+                    move |data: &[f32], _| {
+                        callback.send_f32(data);
+                    },
+                    |e| eprintln!("recording stream error: {e}"),
+                    None,
+                )
+                .map_err(|e| e.to_string())?;
+            (stream, sample_rx, sample_free_tx)
+        }
+        cpal::SampleFormat::I16 => {
+            let (callback, sample_rx, sample_free_tx) =
+                crate::audio::sample_block_channel(sample_rate, channels, Arc::clone(&level_out));
+            let stream = device
+                .build_input_stream(
+                    stream_config,
+                    move |data: &[i16], _| {
+                        callback.send_i16(data);
+                    },
+                    |e| eprintln!("recording stream error: {e}"),
+                    None,
+                )
+                .map_err(|e| e.to_string())?;
+            (stream, sample_rx, sample_free_tx)
+        }
         other => return Err(format!("unsupported sample format {other:?}")),
     };
     stream.play().map_err(|e| e.to_string())?;
-    Ok((stream, sample_rate, channels))
+    Ok((stream, sample_rx, sample_free_tx, sample_rate, channels))
 }
 
 fn drain_samples(state: &mut Active, level_out: &AtomicU32, elapsed_out: &AtomicU64) {
     let mut latest_level = None;
     while let Ok(chunk) = state.sample_rx.try_recv() {
-        let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len().max(1) as f32).sqrt();
+        let rms = crate::audio::sample_rms(&chunk);
         latest_level = Some(rms);
         if state.sink.write_f32(&chunk).is_err() {
             eprintln!("recording: failed to write samples");
@@ -347,6 +368,7 @@ fn drain_samples(state: &mut Active, level_out: &AtomicU32, elapsed_out: &Atomic
             state.preview.drain(..excess);
         }
         state.written_frames += chunk.len() as u64 / state.channels as u64;
+        crate::audio::recycle_sample_block(&state.sample_free_tx, chunk);
     }
     let _ = state.sink.flush();
     if let Some(rms) = latest_level {
