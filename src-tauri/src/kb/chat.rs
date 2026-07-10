@@ -32,8 +32,12 @@ const SYSTEM_PROMPT: &str = "You are Arya's knowledge-base assistant. Using ONLY
 /// rather than starved of context — and so a recipe/section split across several
 /// chunks arrives whole rather than half-retrieved.
 const RETRIEVE_K: usize = 10;
-/// Longest a cited quote is shown/stored.
+/// Longest a cited quote is shown/stored (citation card only).
 const QUOTE_CHARS: usize = 280;
+/// Longest passage text handed to the model per source. Chunks are already
+/// bounded (~180 words), so this only guards a pathologically long one; it must
+/// be well above QUOTE_CHARS so the model sees the whole passage, not a snippet.
+const PASSAGE_CHARS: usize = 2000;
 
 /// A source backing an assistant answer, keyed by its inline `[D#]` tag.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -269,8 +273,13 @@ fn build_context(hits: &[KbHit]) -> (String, Vec<Citation>) {
             Some(p) => format!("{}, p.{p}", hit.filename),
             None => hit.filename.clone(),
         };
+        // The model gets the FULL passage; the short quote is only for the
+        // citation card the user sees. (Sending the clipped quote to the model
+        // was a bug that hid everything past the first ~280 chars of a chunk,
+        // making it answer "not in the documents" when the answer was there.)
+        let passage = cap(hit.content.trim(), PASSAGE_CHARS);
         let quote = clip(&hit.content, QUOTE_CHARS);
-        context.push_str(&format!("[{key}] ({location})\n{quote}\n\n"));
+        context.push_str(&format!("[{key}] ({location})\n{passage}\n\n"));
         citations.push(Citation {
             key,
             document_id: hit.document_id.clone(),
@@ -283,13 +292,24 @@ fn build_context(hits: &[KbHit]) -> (String, Vec<Citation>) {
 }
 
 /// Collapse whitespace and cap at `max` characters (char-safe), adding an
-/// ellipsis when truncated.
+/// ellipsis when truncated. Used for the short citation quote.
 fn clip(text: &str, max: usize) -> String {
     let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() <= max {
         collapsed
     } else {
         let head: String = collapsed.chars().take(max).collect();
+        format!("{head}…")
+    }
+}
+
+/// Cap at `max` characters (char-safe) WITHOUT collapsing whitespace, so the
+/// model receives the passage with its line structure intact.
+fn cap(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        let head: String = text.chars().take(max).collect();
         format!("{head}…")
     }
 }
@@ -375,6 +395,26 @@ mod tests {
         assert_eq!(citations[0].key, "D1");
         assert_eq!(citations[0].document_id, "doc-c1");
         assert_eq!(citations[1].page, None);
+    }
+
+    #[test]
+    fn build_context_sends_full_passage_but_short_citation_quote() {
+        // A passage longer than the citation-quote cap. The model must receive
+        // the whole passage (the truncation regression), while the citation card
+        // stays short.
+        let tail = "PARENTAL_LEAVE_16_WEEKS_MARKER";
+        let long = format!("{}{tail}", "word ".repeat(120)); // ~600 chars; tail well past 280
+        let hits = vec![hit("c1", "handbook.md", None, &long)];
+        let (context, citations) = build_context(&hits);
+        assert!(
+            context.contains(tail),
+            "the model context must include text beyond the first {QUOTE_CHARS} chars"
+        );
+        assert!(
+            !citations[0].quote.contains(tail),
+            "the citation quote stays short (does not reach the tail)"
+        );
+        assert!(citations[0].quote.chars().count() <= QUOTE_CHARS + 1);
     }
 
     #[test]
