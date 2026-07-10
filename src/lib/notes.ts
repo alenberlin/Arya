@@ -113,6 +113,21 @@ export interface ImportReport {
 /** Import an unzipped Notion "Markdown & CSV" export folder as a page tree. */
 export const importNotion = (dirPath: string) => invoke<ImportReport>("import_notion", { dirPath });
 
+/** One proposed note from a brain-dump split (also the shape sent back to create). */
+export interface ProposedNote {
+  title: string;
+  body: string;
+}
+/** Ask the local model to split a messy brain dump into coherent, single-topic
+ * notes. Suggestion only — nothing is written until {@link createNotesFromSplit}. */
+export const splitBraindumpIntoNotes = (sourceText: string, model?: string) =>
+  invoke<ProposedNote[]>("split_braindump_into_notes", { sourceText, model: model ?? null });
+/** Create the accepted notes in one transaction, optionally all in a folder. */
+export const createNotesFromSplit = (notes: ProposedNote[], folderId?: string | null) =>
+  invoke<string[]>("create_notes_from_split", { notes, folderId: folderId ?? null });
+/** Read and concatenate the text of several files (for adding files to a dump). */
+export const readTextFiles = (paths: string[]) => invoke<string>("read_text_files", { paths });
+
 export const createFolder = (name: string) => invoke<Folder>("create_folder", { name });
 export const listFolders = () => invoke<Folder[]>("list_folders");
 export const deleteFolder = (id: string) => invoke<void>("delete_folder", { id });

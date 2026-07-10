@@ -2,6 +2,7 @@ mod account;
 pub mod agent;
 mod attachments;
 pub mod audio;
+mod braindump;
 mod calendar;
 mod classify;
 pub mod cleanup;
@@ -9,6 +10,7 @@ mod db;
 mod dictation;
 mod galaxy;
 mod http;
+mod kb;
 mod links;
 mod meeting_detect;
 mod mindmaps;
@@ -121,6 +123,15 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             meeting_detect::macos::spawn_poller(app.handle().clone());
             spawn_calendar_poller(app.handle().clone());
+            // Finish (or cleanly fail) any Knowledge Base documents left
+            // mid-ingest by a previous crash or quit.
+            {
+                let app_handle = app.handle().clone();
+                let pool = app.state::<sqlx::SqlitePool>().inner().clone();
+                tauri::async_runtime::spawn(async move {
+                    kb::ingest::recover_unfinished(app_handle, pool).await;
+                });
+            }
             if let Err(e) = tray::setup(app.handle()) {
                 eprintln!("tray setup failed: {e}");
             }
@@ -162,6 +173,9 @@ pub fn run() {
             notes::assign_note_to_folder,
             notes::assign_notes_to_folders,
             classify::classify_notes_into_folders,
+            braindump::split_braindump_into_notes,
+            braindump::create_notes_from_split,
+            braindump::read_text_files,
             notion_import::import_notion,
             links::create_link,
             links::list_links_from,
@@ -209,6 +223,21 @@ pub fn run() {
             rag::commands::rag_status,
             rag::commands::rag_reindex,
             rag::commands::rag_search,
+            kb::commands::kb_status,
+            kb::commands::kb_list_collections,
+            kb::commands::kb_create_collection,
+            kb::commands::kb_rename_collection,
+            kb::commands::kb_delete_collection,
+            kb::commands::kb_list_documents,
+            kb::commands::kb_add_documents,
+            kb::commands::kb_delete_document,
+            kb::commands::kb_reindex_document,
+            kb::commands::kb_search,
+            kb::chat::kb_list_sessions,
+            kb::chat::kb_create_session,
+            kb::chat::kb_delete_session,
+            kb::chat::kb_get_messages,
+            kb::chat::kb_ask,
             search::search_all,
             galaxy::galaxy_graph,
             mindmaps::create_mindmap,

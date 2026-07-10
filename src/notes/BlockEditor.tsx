@@ -3,7 +3,9 @@ import "@blocknote/ariakit/style.css";
 import { BlockNoteView } from "@blocknote/ariakit";
 import { filterSuggestionItems } from "@blocknote/core";
 import { SuggestionMenuController, useCreateBlockNote } from "@blocknote/react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DICTATION_INSERT_EVENT } from "../lib/dictationInsert";
 import {
   extractInlineCommand,
   extractMentionTargets,
@@ -164,6 +166,30 @@ export function BlockEditor({
     editor.insertBlocks(blocks, doc[doc.length - 1], "after");
     emit();
   }, [appendRequest, editor, emit]);
+
+  // In-app dictation: when this editor holds focus, insert the completed text at
+  // the caret through BlockNote's own API. The OS clipboard/AX path can't be used
+  // here — ProseMirror reverts the foreign DOM mutation — so the Rust side routes
+  // in-app dictation to this event instead. Focus-gated so exactly one target
+  // acts (a focused form field is handled by `useFormFieldDictation`).
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    void listen<string>(DICTATION_INSERT_EVENT, (event) => {
+      const text = event.payload;
+      const active = document.activeElement;
+      const container = containerRef.current;
+      // Require the caret to be in the editor's own contenteditable — not a
+      // transient input inside it (a slash/mention menu field), which the
+      // form-field path owns. This keeps the two insert targets exclusive.
+      if (!text || !container?.contains(active)) return;
+      if (!(active instanceof HTMLElement) || !active.isContentEditable) return;
+      editor.insertInlineContent([text]);
+      emit();
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, [editor, emit]);
 
   const getMentionItems = useCallback(
     (query: string) =>

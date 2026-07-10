@@ -6,8 +6,10 @@ import { AccountPanel } from "./account/AccountPanel";
 import { AgentSection } from "./agent/AgentSection";
 import { DictationPanel } from "./dictation/DictationPanel";
 import { GalaxyPanel } from "./galaxy/GalaxyPanel";
+import { KnowledgeBasePanel } from "./knowledge/KnowledgeBasePanel";
 import { type AccountSnapshot, accountSnapshot } from "./lib/account";
 import { disableAutostart, enableAutostart, isAutostartEnabled } from "./lib/autostart";
+import { useFormFieldDictation } from "./lib/dictationInsert";
 import { loadTheme, saveTheme, type Theme } from "./lib/theme";
 import { MindMapPanel } from "./mindmap/MindMapPanel";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
@@ -19,6 +21,7 @@ import {
   AgentIcon,
   DictationIcon,
   GalaxyIcon,
+  KnowledgeIcon,
   LockIcon,
   MindMapIcon,
   NotesIcon,
@@ -26,7 +29,15 @@ import {
   ThemeIcon,
 } from "./ui/icons";
 
-type Tab = "notes" | "agent" | "search" | "galaxy" | "mindmap" | "dictation" | "account";
+type Tab =
+  | "notes"
+  | "agent"
+  | "search"
+  | "galaxy"
+  | "knowledge"
+  | "mindmap"
+  | "dictation"
+  | "account";
 
 const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.JSX.Element }[] = [
   { id: "notes", label: "Notes", icon: NotesIcon },
@@ -34,6 +45,7 @@ const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.
   { id: "dictation", label: "Dictation", icon: DictationIcon },
   { id: "search", label: "Search", icon: SearchIcon },
   { id: "galaxy", label: "Galaxy", icon: GalaxyIcon },
+  { id: "knowledge", label: "Knowledge", icon: KnowledgeIcon },
   { id: "mindmap", label: "Mind Map", icon: MindMapIcon },
 ];
 
@@ -51,6 +63,10 @@ export function App() {
   const [pendingNote, setPendingNote] = useState<string | null>(null);
 
   const clearPendingNote = useCallback(() => setPendingNote(null), []);
+
+  // In-app dictation lands in whatever form field is focused (title, composer,
+  // search); the note body is handled by BlockEditor itself.
+  useFormFieldDictation();
 
   const setTheme = (next: Theme) => {
     saveTheme(next);
@@ -138,6 +154,7 @@ export function App() {
     agent: <AgentSection />,
     search: <SearchPanel />,
     galaxy: <GalaxyPanel />,
+    knowledge: <KnowledgeBasePanel />,
     mindmap: <MindMapPanel />,
     dictation: <DictationPanel />,
     account: <AccountPanel />,

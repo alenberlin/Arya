@@ -57,6 +57,7 @@ import {
 } from "../ui/icons";
 import { BacklinksPanel } from "./BacklinksPanel";
 import { BlockEditor, type MentionItem } from "./BlockEditor";
+import { BrainDumpDialog } from "./BrainDumpDialog";
 import type { MentionTarget } from "./blockDocument";
 import { NoteBanners } from "./NoteBanners";
 import "./notes-chrome.css";
@@ -232,6 +233,12 @@ export function NotesWorkspace({
   const [searchResults, setSearchResults] = useState<NoteSummary[]>([]);
   const [sortPreview, setSortPreview] = useState<string | null>(null);
   const [sorting, setSorting] = useState(false);
+  // Brain-dump → coherent notes. Open with an optional seed (a note's body) and
+  // source note id (offer to delete the original after splitting).
+  const [brainDump, setBrainDump] = useState<{
+    seedText?: string;
+    sourceNoteId?: string | null;
+  } | null>(null);
   const [editorEpoch, setEditorEpoch] = useState(0);
   const [appendRequest, setAppendRequest] = useState<
     { token: number; markdown: string } | undefined
@@ -1132,6 +1139,14 @@ export function NotesWorkspace({
               <button
                 type="button"
                 className="btn-sm btn-ghost"
+                title="Turn a messy brain dump into coherent, separate notes"
+                onClick={() => setBrainDump({})}
+              >
+                Brain dump
+              </button>
+              <button
+                type="button"
+                className="btn-sm btn-ghost"
                 title="Sort unfoldered notes into folders with AI"
                 disabled={sortingFolders}
                 onClick={() => void runFolderSort()}
@@ -1336,7 +1351,20 @@ export function NotesWorkspace({
             ) : null}
             <div className="note-editor-field" style={{ marginTop: 14 }}>
               {detail.bodyMd.trim() ? (
-                <div className="hstack" style={{ justifyContent: "flex-end", marginBottom: 6 }}>
+                <div
+                  className="hstack"
+                  style={{ justifyContent: "flex-end", marginBottom: 6, gap: 4 }}
+                >
+                  <button
+                    type="button"
+                    className="btn-sm btn-ghost"
+                    title="Split this dump into separate, single-topic notes"
+                    onClick={() =>
+                      setBrainDump({ seedText: detail.bodyMd, sourceNoteId: detail.id })
+                    }
+                  >
+                    Split into notes
+                  </button>
                   <button
                     type="button"
                     className="btn-sm btn-ghost"
@@ -1647,6 +1675,18 @@ export function NotesWorkspace({
           </div>
         </div>
       ) : null}
+
+      <BrainDumpDialog
+        open={brainDump !== null}
+        onClose={() => setBrainDump(null)}
+        folders={folders}
+        seedText={brainDump?.seedText}
+        sourceNoteId={brainDump?.sourceNoteId}
+        onCreated={(count) => {
+          void refreshNotes();
+          setNotice(`Created ${count} note${count === 1 ? "" : "s"} from your brain dump.`);
+        }}
+      />
 
       {noteMenu ? (
         <div

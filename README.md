@@ -1,8 +1,9 @@
 # Arya
 
 **A private AI workspace for the Mac.** Arya combines an AI chat assistant, a
-system-wide voice dictation tool, and a bot-free meeting notetaker into one
-native desktop app — with a local AI agent that can work across all of it.
+system-wide voice dictation tool, a bot-free meeting notetaker, and a private
+document knowledge base into one native desktop app — with a local AI agent that
+can work across all of it.
 
 **Website:** [alen-ai.com/arya](https://alen-ai.com/arya/)
 
@@ -22,6 +23,9 @@ local models cover most of it.
 - **Notes** — record a meeting (mic and/or system audio) with no bot joining,
   and get a clean, structured note with a timestamped, speaker-labeled
   transcript. Crash-safe recording with interrupted-session recovery.
+- **Brain-dump → notes** — paste, dictate, or drop a jumble of unrelated ideas
+  and Arya splits it into clean, single-topic notes, which you review before any
+  are saved.
 - **Dictation** — hands-free voice typing into any app, with on-device
   streaming transcription and an optional AI "polish" pass (Raw / Clean /
   Polished), surfaced through a floating command pill.
@@ -30,6 +34,12 @@ local models cover most of it.
   approval prompts for anything risky. Runs in a sandboxed sidecar.
 - **Search** — semantic search across everything you've captured (notes,
   transcripts, dictations), backed by a local index.
+- **Knowledge Base** — upload your own documents (PDF, Word, Excel, CSV, and
+  images via on-device OCR) into collections and chat with them, grounded in
+  citations. Text extraction, embeddings, and hybrid retrieval all run locally —
+  nothing leaves your Mac.
+- **Galaxy & Mind Map** — see your notes, dictations, mind maps, and agent chats
+  as a connected knowledge graph, or arrange them on a spatial canvas.
 - **Routines** — scheduled agent tasks that run on an interval.
 - **MCP servers** — connect external tools via the Model Context Protocol.
 - **Local-first, cloud-optional** — free local models (via Ollama) are

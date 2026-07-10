@@ -35,7 +35,47 @@ pub fn ollama_chat(
     temperature: f32,
     timeout: Duration,
 ) -> Option<String> {
-    let body = serde_json::json!({
+    ollama_chat_ex(
+        client,
+        base_url,
+        model,
+        system,
+        user,
+        temperature,
+        timeout,
+        None,
+        None,
+    )
+}
+
+/// Like [`ollama_chat`], with two extras for structured, large-input tasks:
+///
+/// - `num_ctx`: the context window in tokens. Ollama's default is small, and
+///   when a prompt overflows it llama-server drops the middle (keeping only a
+///   few leading tokens), which can silently discard the instruction. Setting it
+///   generously keeps a big brain dump intact.
+/// - `format`: a JSON Schema value that grammar-constrains the model to emit
+///   valid, correctly-shaped JSON. Local models routinely produce *almost*-valid
+///   JSON on longer outputs (trailing commas, unquoted keys, unescaped control
+///   chars); constraining the decoder eliminates the parse failures entirely and
+///   is typically faster than free-form generation.
+#[allow(clippy::too_many_arguments)]
+pub fn ollama_chat_ex(
+    client: &reqwest::blocking::Client,
+    base_url: &str,
+    model: &str,
+    system: &str,
+    user: &str,
+    temperature: f32,
+    timeout: Duration,
+    num_ctx: Option<u32>,
+    format: Option<serde_json::Value>,
+) -> Option<String> {
+    let mut options = serde_json::json!({ "temperature": temperature });
+    if let Some(n) = num_ctx {
+        options["num_ctx"] = serde_json::Value::from(n);
+    }
+    let mut body = serde_json::json!({
         "model": model,
         "stream": false,
         // Hybrid-reasoning models (Qwen3, this app's Gemma default, etc.) burn
@@ -44,12 +84,15 @@ pub fn ollama_chat(
         // this app's tasks are short deterministic rewrites, not problems that
         // benefit from chain-of-thought, so thinking is off unconditionally.
         "think": false,
-        "options": { "temperature": temperature },
+        "options": options,
         "messages": [
             { "role": "system", "content": system },
             { "role": "user", "content": user },
         ],
     });
+    if let Some(fmt) = format {
+        body["format"] = fmt;
+    }
     let response = client
         .post(format!("{base_url}/api/chat"))
         .timeout(timeout)

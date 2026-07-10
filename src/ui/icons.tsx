@@ -55,6 +55,13 @@ export const MindMapIcon = (p: IconProps) => (
     <path d="M9.3 11.4 7.6 5.6M14.7 11.4 16.6 6M14.7 13 16.6 18" />
   </svg>
 );
+export const KnowledgeIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.6} {...p} aria-hidden="true">
+    <ellipse cx="12" cy="5.6" rx="7" ry="2.6" />
+    <path d="M5 5.6v12.8c0 1.44 3.13 2.6 7 2.6s7-1.16 7-2.6V5.6" />
+    <path d="M5 12c0 1.44 3.13 2.6 7 2.6s7-1.16 7-2.6" />
+  </svg>
+);
 export const RoutinesIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
     <path d="M4.5 11a7.5 7.5 0 0 1 12.8-4.3L20 9" />

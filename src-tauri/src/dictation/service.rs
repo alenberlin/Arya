@@ -576,7 +576,19 @@ impl DictationService {
         )?;
 
         emit_state(app, DictationState::Pasting, None, None);
-        paste::paste_text(&final_text).map_err(|e| e.to_string())?;
+        // In-app dictation (the target is Arya's own window) cannot go through the
+        // OS clipboard/Accessibility path: the note body is a ProseMirror
+        // contenteditable that reverts DOM mutations it didn't originate, so
+        // AX-inserted text is silently discarded (a plain <input> like the title
+        // keeps it, which is why the title worked but the body didn't). Hand the
+        // text to the focused editor in the main window instead — it inserts
+        // through its own API and integrates with undo. History is already saved
+        // above, so if no field is focused the words are still never lost.
+        if target.bundle_id.as_deref() == Some(app.config().identifier.as_str()) {
+            let _ = app.emit("dictation:insert", &final_text);
+        } else {
+            paste::paste_text(&final_text).map_err(|e| e.to_string())?;
+        }
         Ok(final_text)
     }
 
