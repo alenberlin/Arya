@@ -28,6 +28,7 @@ import {
   SearchIcon,
   ThemeIcon,
 } from "./ui/icons";
+import { Logo } from "./ui/Logo";
 
 type Tab =
   | "notes"
@@ -166,11 +167,7 @@ export function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <span className="brand-logo" aria-hidden="true">
-              <span className="core" />
-              <span className="pt n" />
-              <span className="pt s" />
-              <span className="pt w" />
-              <span className="pt e" />
+              <Logo size={24} />
             </span>
             <span className="brand-name">{brand.name}</span>
           </div>

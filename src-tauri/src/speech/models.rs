@@ -76,20 +76,38 @@ pub async fn download_verified(
     expected_sha256: &str,
     name: &str,
 ) -> Result<(), SpeechError> {
+    download_verified_with_progress(url, target, expected_sha256, name, |_, _| {}).await
+}
+
+/// As [`download_verified`], but calls `on_progress(received, total)` as bytes
+/// arrive so the UI can render a progress bar. `total` is 0 when the server
+/// doesn't send Content-Length. Used by the explicit "download model" button;
+/// the lazy first-use path passes a no-op via [`download_verified`].
+pub async fn download_verified_with_progress<F: Fn(u64, u64)>(
+    url: &str,
+    target: &Path,
+    expected_sha256: &str,
+    name: &str,
+    on_progress: F,
+) -> Result<(), SpeechError> {
     let partial = target.with_extension("partial");
     let response = reqwest::get(url)
         .await
         .map_err(|e| SpeechError::Download(e.to_string()))?
         .error_for_status()
         .map_err(|e| SpeechError::Download(e.to_string()))?;
+    let total = response.content_length().unwrap_or(0);
 
     let mut file = tokio::fs::File::create(&partial).await?;
     let mut hasher = Sha256::new();
+    let mut received: u64 = 0;
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| SpeechError::Download(e.to_string()))?;
         hasher.update(&chunk);
         file.write_all(&chunk).await?;
+        received += chunk.len() as u64;
+        on_progress(received, total);
     }
     file.flush().await?;
     drop(file);

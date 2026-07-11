@@ -90,6 +90,22 @@ fn run_cloud(
     model: Option<String>,
     user: &str,
 ) -> Result<String, String> {
+    // Open-source / local build: no proxy, so call the provider directly with
+    // the user's own key. A provider-qualified model from the UI wins; otherwise
+    // pick the default for whichever key is set.
+    if !crate::account::tokens::proxy_configured() {
+        let qualified = model
+            .filter(|m| m.contains(':'))
+            .or_else(crate::cloud::default_model)
+            .ok_or_else(|| "no cloud API key set — add one in Account.".to_string())?;
+        return crate::cloud::chat(
+            &qualified,
+            SYSTEM_PROMPT,
+            user,
+            0.3,
+            Duration::from_secs(45),
+        );
+    }
     let token = crate::account::tokens::current_token()
         .ok_or_else(|| "cloud transform needs you to be signed in".to_string())?;
     let base_url = std::env::var("ARYA_API_URL").unwrap_or_else(|_| "http://127.0.0.1:8477".into());

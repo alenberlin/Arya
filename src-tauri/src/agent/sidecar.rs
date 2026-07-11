@@ -117,19 +117,34 @@ impl Sidecar {
             .arg(script)
             .current_dir(workspace)
             .env("ARYA_MODE", mode.as_str())
-            .env("ARYA_API_URL", crate::account::tokens::api_url())
             .env("TMPDIR", &tmp_dir)
             .env("TMP", &tmp_dir)
             .env("TEMP", &tmp_dir)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        match crate::account::tokens::current_token() {
-            Some(token) => {
-                command.env("ARYA_API_TOKEN", token);
-            }
-            None => {
-                command.env_remove("ARYA_API_TOKEN");
+        if crate::account::tokens::proxy_configured() {
+            // Hosted / self-hosted proxy: it holds the provider keys and meters
+            // usage, so the sidecar talks to it (never directly to a provider).
+            command.env("ARYA_API_URL", crate::account::tokens::api_url());
+            match crate::account::tokens::current_token() {
+                Some(token) => command.env("ARYA_API_TOKEN", token),
+                None => command.env_remove("ARYA_API_TOKEN"),
+            };
+        } else {
+            // Open-source / local build: no proxy. The agent reaches cloud
+            // providers directly with the user's own keys. With none set, the
+            // agent simply offers only local Ollama models.
+            command.env_remove("ARYA_API_URL");
+            command.env_remove("ARYA_API_TOKEN");
+            for (provider, var) in [
+                (crate::keys::Provider::Anthropic, "ANTHROPIC_API_KEY"),
+                (crate::keys::Provider::OpenAi, "OPENAI_API_KEY"),
+            ] {
+                match crate::keys::get(provider) {
+                    Some(key) => command.env(var, key),
+                    None => command.env_remove(var),
+                };
             }
         }
 

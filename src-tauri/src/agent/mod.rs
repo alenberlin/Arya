@@ -74,6 +74,14 @@ impl AgentRuntime {
         self.get_or_spawn(app, mode).map(|_| ())
     }
 
+    /// Drop every running sidecar so the next agent call respawns it with a
+    /// fresh environment. Called when the user changes their cloud API keys so
+    /// the agent gains (or loses) direct-provider models without an app restart.
+    /// Each dropped `Sidecar` kills its child process via `Drop`.
+    pub fn reset_sidecars(&self) {
+        self.sidecars.lock().expect("sidecars lock").clear();
+    }
+
     pub fn request(
         &self,
         app: &AppHandle,
