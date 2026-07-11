@@ -309,38 +309,10 @@ legend {
   position: relative;
   flex-shrink: 0;
 }
-.brand-logo .core {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-}
-.brand-logo .pt {
-  position: absolute;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
-.brand-logo .pt.n {
-  top: 4px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-.brand-logo .pt.s {
-  bottom: 4px;
-  left: 50%;
-  transform: translateX(-50%);
-}
-.brand-logo .pt.w {
-  left: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-.brand-logo .pt.e {
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
+.brand-logo svg {
+  width: 24px;
+  height: 24px;
+  display: block;
 }
 .brand-name {
   font-family: var(--font-serif);
