@@ -156,6 +156,13 @@ impl Translator for AryaTranslator {
 
 impl AryaTranslator {
     fn try_translate(&self, text: &str, target: &str) -> Result<String, String> {
+        // Open-source / local build: no proxy — translate directly with the
+        // user's own key. `translate` keeps the source text on any failure.
+        if !crate::account::tokens::proxy_configured() {
+            let qualified = crate::cloud::default_model()
+                .ok_or_else(|| "no cloud API key set — add one in Account.".to_string())?;
+            return crate::cloud::chat(&qualified, &system_prompt(target), text, 0.2, self.timeout);
+        }
         // Send the BARE model id; the proxy qualifies it from the URL provider,
         // so this never double-prefixes into a 404.
         let bare_model = self

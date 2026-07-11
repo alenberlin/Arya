@@ -6,11 +6,13 @@ mod braindump;
 mod calendar;
 mod classify;
 pub mod cleanup;
+mod cloud;
 mod db;
 mod dictation;
 mod galaxy;
 mod http;
 mod kb;
+mod keys;
 mod links;
 mod meeting_detect;
 mod mindmaps;
@@ -254,8 +256,15 @@ pub fn run() {
             account::commands::account_set_token,
             account::commands::account_sign_out,
             account::commands::account_snapshot,
+            keys::keys_status,
+            keys::keys_set,
+            keys::keys_clear,
+            speech::commands::speech_models_status,
+            speech::commands::download_speech_model,
+            speech::commands::delete_speech_model,
             dictation::commands::get_dictation_settings,
             dictation::commands::list_ollama_models,
+            dictation::commands::ollama_status,
             dictation::commands::set_dictation_settings,
             dictation::commands::dictation_status,
             dictation::commands::open_accessibility_settings,

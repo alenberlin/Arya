@@ -37,6 +37,20 @@ pub fn hosted_auth_configured() -> bool {
     clerk_sign_in_url().is_some()
 }
 
+/// Whether an Arya API proxy is actually configured for this build/run. When
+/// false — the default for the open-source app — cloud features talk to the
+/// provider directly with the user's own key ([`crate::keys`]) instead of
+/// routing through the metering proxy. A runtime or baked `ARYA_API_URL`, or
+/// hosted auth, all count as "a proxy is in play".
+pub fn proxy_configured() -> bool {
+    std::env::var("ARYA_API_URL")
+        .ok()
+        .and_then(non_empty)
+        .is_some()
+        || option_env!("ARYA_API_URL").and_then(non_empty).is_some()
+        || hosted_auth_configured()
+}
+
 /// The bearer token the app sends to Arya API. In local mode this is the
 /// shared dev token; with hosted auth it's the stored Clerk session token.
 pub fn current_token() -> Option<String> {

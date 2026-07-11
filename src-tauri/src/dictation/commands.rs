@@ -75,6 +75,57 @@ pub async fn list_ollama_models(
     Ok(tags.models.into_iter().map(|m| m.name).collect())
 }
 
+/// Reachability of the user's Ollama, for the setup UI's "Local models" card.
+/// A fresh install with no Ollama gets `reachable: false` so the UI can show
+/// install guidance instead of a silently empty model list.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OllamaStatus {
+    pub reachable: bool,
+    pub model_count: usize,
+    pub url: String,
+}
+
+/// Ping Ollama's `/api/tags`. Never errors — an unreachable Ollama is a normal
+/// state (the user just hasn't installed it yet), reported as `reachable:false`.
+#[tauri::command]
+pub async fn ollama_status(
+    service: State<'_, Arc<DictationService>>,
+) -> Result<OllamaStatus, String> {
+    #[derive(serde::Deserialize)]
+    struct Tags {
+        models: Vec<serde_json::Value>,
+    }
+    let url = service.settings().ollama_url;
+    let endpoint = format!("{url}/api/tags");
+    let reachable = reqwest::Client::new()
+        .get(&endpoint)
+        .timeout(std::time::Duration::from_secs(2))
+        .send()
+        .await
+        .ok()
+        .filter(|r| r.status().is_success());
+    match reachable {
+        Some(resp) => {
+            let model_count = resp
+                .json::<Tags>()
+                .await
+                .map(|t| t.models.len())
+                .unwrap_or(0);
+            Ok(OllamaStatus {
+                reachable: true,
+                model_count,
+                url,
+            })
+        }
+        None => Ok(OllamaStatus {
+            reachable: false,
+            model_count: 0,
+            url,
+        }),
+    }
+}
+
 #[tauri::command]
 pub fn set_dictation_settings(
     app: AppHandle,

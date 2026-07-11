@@ -7,6 +7,7 @@ import {
   type SignInState,
 } from "../lib/account";
 import { AccountIcon, LockIcon } from "../ui/icons";
+import { ModelSettings } from "./ModelSettings";
 
 /** On-device model privacy tiers — shown in both local and cloud modes. */
 function PrivacyTiers() {
@@ -38,7 +39,7 @@ function PrivacyTiers() {
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 13.5, fontWeight: 500 }}>Cloud models</div>
           <div className="muted" style={{ fontSize: 12 }}>
-            Optional. Sends your prompt to the provider through the open-source proxy.
+            Optional. Uses your own API key, sent directly to the provider you choose.
           </div>
         </div>
         <span className="badge badge-warning">Cloud</span>
@@ -92,9 +93,10 @@ export function AccountPanel() {
             </div>
           </div>
           <PrivacyTiers />
+          <ModelSettings />
           <p className="muted" style={{ fontSize: 12 }}>
-            Sign-in and cloud credit usage appear here when the app is built with the hosted proxy
-            configured. Arya is free — there's nothing to buy either way.
+            Arya is free — local models and on-device speech never cost anything. Cloud models are
+            optional and billed by your provider against your own key.
           </p>
         </div>
       </div>
