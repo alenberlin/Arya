@@ -31,10 +31,13 @@ export function KbDocuments({
   collectionId,
   embedderAvailable,
   onChanged,
+  onFilesDropped,
 }: {
   collectionId: string;
   embedderAvailable: boolean | null;
   onChanged: () => void;
+  /** Fired when files are dropped, so a collapsed panel can reveal itself. */
+  onFilesDropped?: () => void;
 }) {
   const [documents, setDocuments] = useState<KbDocument[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +106,9 @@ export function KbDocuments({
 
   const addFiles = useCallback(
     async (files: File[]) => {
+      // Surface the list before ingesting, or a drop onto a collapsed panel
+      // looks like nothing happened.
+      onFilesDropped?.();
       setBusy(true);
       const skipped = files.filter((f) => !kbAccepts(f.name)).map((f) => f.name);
       const failed: string[] = [];
@@ -129,7 +135,7 @@ export function KbDocuments({
       ].filter(Boolean);
       if (problems.length > 0) setError(problems.join(". "));
     },
-    [load, onChanged],
+    [load, onChanged, onFilesDropped],
   );
 
   // Accept files dropped anywhere in the window while this collection is open.

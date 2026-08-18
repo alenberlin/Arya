@@ -195,9 +195,22 @@ export const SendIcon = (p: IconProps) => (
     <polyline points="6 11 12 5 18 11" />
   </svg>
 );
+/** A side panel, for the toggle that collapses the documents column. */
+export const PanelLeftIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <path d="M10 4v16" />
+  </svg>
+);
+
+/** A document. The folded corner and text lines keep it from reading as a
+ * checkbox when it sits to the left of a filename. */
 export const FileIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
-    <rect x="5" y="3" width="14" height="18" rx="2.5" />
+    <path d="M14 3v4a1 1 0 0 0 1 1h4" />
+    <path d="M5 21V5a2 2 0 0 1 2-2h8l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z" />
+    <path d="M9 13h6" />
+    <path d="M9 17h4" />
   </svg>
 );
 export const FileWriteIcon = (p: IconProps) => (

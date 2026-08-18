@@ -8,9 +8,12 @@ import {
   kbStatus,
 } from "../lib/kb";
 import { ConfirmDialog, PromptDialog } from "../ui/dialogs";
-import { KnowledgeIcon, MoreIcon, PlusIcon } from "../ui/icons";
+import { KnowledgeIcon, MoreIcon, PanelLeftIcon, PlusIcon } from "../ui/icons";
 import { KbChat } from "./KbChat";
 import { KbDocuments } from "./KbDocuments";
+
+/** Remembers the documents panel's collapsed state across sessions. */
+const DOCS_COLLAPSED_KEY = "arya-kb-docs-collapsed";
 
 /**
  * Knowledge Base surface (top-level, between Galaxy and Mind Map): a left rail
@@ -275,9 +278,17 @@ function CollectionDetail({
   onChanged: () => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const [docsCollapsed, setDocsCollapsed] = useState(
+    () => localStorage.getItem(DOCS_COLLAPSED_KEY) === "true",
+  );
   // Refocus the heading when the selection changes, for screen-reader context.
   useEffect(() => {
     headingRef.current?.focus?.();
+  }, []);
+
+  const collapseDocs = useCallback((next: boolean) => {
+    localStorage.setItem(DOCS_COLLAPSED_KEY, String(next));
+    setDocsCollapsed(next);
   }, []);
 
   return (
@@ -289,14 +300,28 @@ function CollectionDetail({
           </h2>
           {collection.description ? <p className="muted">{collection.description}</p> : null}
         </div>
+        <button
+          type="button"
+          className="btn-sm btn-ghost kb-docs-toggle"
+          aria-expanded={!docsCollapsed}
+          aria-controls="kb-docs-panel"
+          title={docsCollapsed ? "Show the documents panel" : "Hide the documents panel"}
+          onClick={() => collapseDocs(!docsCollapsed)}
+        >
+          <PanelLeftIcon />
+          {docsCollapsed ? "Show documents" : "Hide documents"}
+        </button>
       </header>
       <div className="kb-detail-body kb-split">
-        <div className="kb-docs-col">
+        {/* Hidden rather than unmounted: KbDocuments owns the window-wide file
+            drop listener, which has to keep working while the panel is away. */}
+        <div id="kb-docs-panel" className={`kb-docs-col${docsCollapsed ? " collapsed" : ""}`}>
           <KbDocuments
             key={collection.id}
             collectionId={collection.id}
             embedderAvailable={embedderAvailable}
             onChanged={onChanged}
+            onFilesDropped={() => collapseDocs(false)}
           />
         </div>
         <div className="kb-chat-col">

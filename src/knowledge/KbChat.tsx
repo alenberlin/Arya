@@ -31,8 +31,44 @@ export function KbChat({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   const activeRef = useRef<string | null>(null);
   activeRef.current = activeId;
+
+  /**
+   * Size the composer to its content, capped by the CSS max-height. Without
+   * this the box stays one line tall: even the placeholder is clipped when it
+   * wraps in a narrow column, and typed text scrolls inside a 40px slot.
+   */
+  const fitComposer = useCallback(() => {
+    const box = composerRef.current;
+    if (!box) return;
+    box.style.height = "auto";
+    // scrollHeight excludes the border under border-box sizing, and it accounts
+    // for the placeholder when the field is empty.
+    box.style.height = `${box.scrollHeight + box.offsetHeight - box.clientHeight}px`;
+  }, []);
+
+  // input is a trigger, not a read: the height comes from the DOM, not the value.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refit whenever the text changes
+  useEffect(fitComposer, [fitComposer, input]);
+
+  // Wrapping changes with the column width — collapsing the documents panel or
+  // resizing the window has to re-fit the box. Only width is acted on, or
+  // fitting would retrigger the observer through its own height change.
+  useEffect(() => {
+    const box = composerRef.current;
+    if (!box) return;
+    let lastWidth = box.clientWidth;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? lastWidth;
+      if (width === lastWidth) return;
+      lastWidth = width;
+      fitComposer();
+    });
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [fitComposer]);
 
   const refreshSessions = useCallback(async () => {
     const list = await kbListSessions(collectionId);
@@ -219,6 +255,7 @@ export function KbChat({
 
       <div className="kb-chat-composer">
         <textarea
+          ref={composerRef}
           aria-label="Ask a question"
           placeholder={disabledReason ?? "Ask a question about this collection…"}
           value={input}

@@ -2228,6 +2228,15 @@ mark {
   min-height: 0;
   border-right: 1px solid var(--border);
 }
+/* Hidden, not unmounted — KbDocuments keeps listening for window file drops
+ * while the panel is away, and reveals itself when one lands. */
+.kb-docs-col.collapsed {
+  display: none;
+}
+.kb-docs-toggle {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .kb-docs-col .kb-docs {
   padding: var(--sp-3) var(--sp-3) var(--sp-4);
 }
