@@ -85,6 +85,28 @@ export const KB_ACCEPT_EXTENSIONS = [
   "gif",
 ];
 
+/** Whether the ingestion pipeline can read this file, judged by extension. */
+export function kbAccepts(filename: string): boolean {
+  const ext = filename.includes(".") ? (filename.split(".").pop() ?? "") : "";
+  return KB_ACCEPT_EXTENSIONS.includes(ext.toLowerCase());
+}
+
+/**
+ * Add one file dropped onto the window. A dropped file exposes its contents but
+ * never its path, so the bytes travel as the raw IPC body with the metadata in
+ * headers — percent-encoded, since header values must be ASCII and filenames
+ * are not.
+ */
+export async function kbAddDroppedDocument(collectionId: string, file: File): Promise<KbDocument> {
+  const bytes = await file.arrayBuffer();
+  return invoke<KbDocument>("kb_add_dropped_document", bytes, {
+    headers: {
+      "x-collection-id": encodeURIComponent(collectionId),
+      "x-filename": encodeURIComponent(file.name),
+    },
+  });
+}
+
 export const kbListDocuments = (collectionId: string) =>
   invoke<KbDocument[]>("kb_list_documents", { collectionId });
 

@@ -1,13 +1,14 @@
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useWindowFileDrop } from "../lib/fileDrop";
 import { TRANSLATE_LANGUAGES, translateInstruction } from "../lib/languages";
 import { type NodeKind, reconcileLinks } from "../lib/links";
 import {
   type Attachment,
   assignNotesToFolders,
   assignNoteToFolder,
+  attachDroppedFile,
   attachFile,
   classifyNotesIntoFolders,
   createFolder,
@@ -204,7 +205,6 @@ export function NotesWorkspace({
   const [detail, setDetail] = useState<NoteDetail | null>(null);
   const [turns, setTurns] = useState<TranscriptTurn[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [dragActive, setDragActive] = useState(false);
   const [recorder, setRecorder] = useState<{ state: string; elapsedMs: number }>({
     state: "idle",
     elapsedMs: 0,
@@ -572,23 +572,20 @@ export function NotesWorkspace({
   }, [attachFiles]);
 
   // Attach files dropped anywhere on the window to the open note.
-  useEffect(() => {
-    const promise = getCurrentWebview().onDragDropEvent((event) => {
-      const payload = event.payload as { type: string; paths?: string[] };
-      if (payload.type === "enter" || payload.type === "over") {
-        if (activeNoteRef.current) setDragActive(true);
-      } else if (payload.type === "leave") {
-        setDragActive(false);
-      } else if (payload.type === "drop") {
-        setDragActive(false);
-        const noteId = activeNoteRef.current;
-        if (noteId && payload.paths?.length) void attachFiles(noteId, payload.paths);
+  const dragActive = useWindowFileDrop((files) => {
+    const noteId = activeNoteRef.current;
+    if (!noteId) return;
+    void (async () => {
+      for (const file of files) {
+        try {
+          await attachDroppedFile(noteId, file);
+        } catch (e) {
+          setError(String(e));
+        }
       }
-    });
-    return () => {
-      void promise.then((unlisten) => unlisten());
-    };
-  }, [attachFiles]);
+      if (activeNoteRef.current === noteId) await refreshAttachments(noteId);
+    })();
+  }, activeNoteId !== null);
 
   useEffect(() => {
     void refreshNotes();

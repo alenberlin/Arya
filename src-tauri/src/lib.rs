@@ -9,6 +9,7 @@ pub mod cleanup;
 mod cloud;
 mod db;
 mod dictation;
+mod filestage;
 mod galaxy;
 mod http;
 mod kb;
@@ -165,6 +166,7 @@ pub fn run() {
             notes::delete_note,
             notes::delete_all_notes,
             attachments::attach_file,
+            attachments::attach_dropped_file,
             attachments::list_attachments,
             attachments::remove_attachment,
             attachments::open_attachment,
@@ -232,6 +234,7 @@ pub fn run() {
             kb::commands::kb_delete_collection,
             kb::commands::kb_list_documents,
             kb::commands::kb_add_documents,
+            kb::commands::kb_add_dropped_document,
             kb::commands::kb_delete_document,
             kb::commands::kb_reindex_document,
             kb::commands::kb_search,

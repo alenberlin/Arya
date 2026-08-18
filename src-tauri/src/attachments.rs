@@ -10,7 +10,12 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use sqlx::SqlitePool;
-use tauri::{AppHandle, Manager, State};
+use tauri::{
+    ipc::{InvokeBody, Request},
+    AppHandle, Manager, State,
+};
+
+use crate::filestage::{header, safe_file_name, stage, FileSource};
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -23,38 +28,20 @@ pub struct Attachment {
     pub created_at: String,
 }
 
-/// Copy `source` into `<attachments_root>/<note_id>/<uuid>-<name>`, record it,
-/// and return the row. The testable core of [`attach_file`].
+/// Stage `source` into `<attachments_root>/<note_id>/<uuid>-<name>`, record it,
+/// and return the row. The testable core of [`attach_file`] and
+/// [`attach_dropped_file`].
 pub async fn insert_attachment(
     pool: &SqlitePool,
     attachments_root: &Path,
     note_id: &str,
-    source: &Path,
+    name: &str,
+    source: FileSource,
 ) -> Result<Attachment, String> {
-    let name = source
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| "attachment has no file name".to_string())?
-        .to_string();
+    let name = safe_file_name(name);
     let dir = attachments_root.join(note_id);
     let id = uuid::Uuid::new_v4().to_string();
-    // The uuid prefix keeps the workspace name unique even if two attachments
-    // share an original filename.
-    let dest = dir.join(format!("{id}-{name}"));
-    let path = dest.to_string_lossy().to_string();
-    // Copying a (possibly large) file must not block the async runtime thread.
-    let size_bytes = {
-        let source = source.to_path_buf();
-        tauri::async_runtime::spawn_blocking(move || -> Result<i64, String> {
-            std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-            std::fs::copy(&source, &dest).map_err(|e| format!("copy failed: {e}"))?;
-            Ok(std::fs::metadata(&dest)
-                .map(|m| m.len() as i64)
-                .unwrap_or(0))
-        })
-        .await
-        .map_err(|e| e.to_string())??
-    };
+    let (path, size_bytes) = stage(dir, &id, &name, source).await?;
 
     sqlx::query_as::<_, Attachment>(
         "INSERT INTO note_attachments (id, note_id, name, path, size_bytes, created_at)
@@ -135,7 +122,44 @@ pub async fn attach_file(
     source_path: String,
 ) -> Result<Attachment, String> {
     let root = attachments_root(&app)?;
-    insert_attachment(&pool, &root, &note_id, Path::new(&source_path)).await
+    insert_attachment(
+        &pool,
+        &root,
+        &note_id,
+        &source_path,
+        FileSource::Path(PathBuf::from(&source_path)),
+    )
+    .await
+}
+
+/// Attach a file dropped onto the window.
+///
+/// The window keeps the OS drag handler off so in-page dragging still works,
+/// which leaves the frontend holding the file's *contents* rather than a path:
+/// the bytes arrive as the raw IPC body, with the note and filename in headers.
+#[tauri::command]
+pub async fn attach_dropped_file(
+    app: AppHandle,
+    pool: State<'_, SqlitePool>,
+    request: Request<'_>,
+) -> Result<Attachment, String> {
+    let note_id = header(&request, "x-note-id")?;
+    let name = header(&request, "x-filename")?;
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("dropped file arrived without its contents".into());
+    };
+    if bytes.is_empty() {
+        return Err("dropped file is empty".into());
+    }
+    let root = attachments_root(&app)?;
+    insert_attachment(
+        &pool,
+        &root,
+        &note_id,
+        &name,
+        FileSource::Bytes(bytes.clone()),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -178,10 +202,16 @@ mod tests {
         std::fs::write(&src, b"a,b,c\n1,2,3\n").unwrap();
         let root = tmp.join("attachments");
 
-        let att = insert_attachment(&pool, &root, &note.id, &src)
-            .await
-            .unwrap();
-        assert_eq!(att.name, "data.csv");
+        let att = insert_attachment(
+            &pool,
+            &root,
+            &note.id,
+            &src.to_string_lossy(),
+            FileSource::Path(src.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(att.name, "data.csv", "the full path is reduced to its name");
         assert!(Path::new(&att.path).exists(), "file copied into workspace");
         assert!(att.size_bytes > 0);
 
@@ -205,7 +235,7 @@ mod tests {
         let src = tmp.join("a.txt");
         std::fs::write(&src, b"hi").unwrap();
         let root = tmp.join("attachments");
-        let att = insert_attachment(&pool, &root, &note.id, &src)
+        let att = insert_attachment(&pool, &root, &note.id, "a.txt", FileSource::Path(src))
             .await
             .unwrap();
         assert!(Path::new(&att.path).exists());

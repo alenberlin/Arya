@@ -5,9 +5,13 @@
 use std::path::PathBuf;
 
 use sqlx::SqlitePool;
-use tauri::{AppHandle, Manager, State};
+use tauri::{
+    ipc::{InvokeBody, Request},
+    AppHandle, Manager, State,
+};
 
 use super::Collection;
+use crate::filestage::{header, safe_file_name, stage, FileSource};
 use crate::rag::embed::OllamaEmbedder;
 
 /// Selects a [`Collection`] with its derived document counts. The counts are
@@ -188,19 +192,21 @@ pub async fn kb_list_documents(
     .map_err(|e| e.to_string())
 }
 
-/// Copy each picked file into the collection's workspace directory, register it
-/// as `pending`, and kick off background ingestion. Returns the new rows
+/// Stage each incoming file into the collection's workspace directory, register
+/// it as `pending`, and kick off background ingestion. Returns the new rows
 /// immediately so the UI shows them while they process.
-#[tauri::command]
-pub async fn kb_add_documents(
+///
+/// Shared by the file picker (which supplies paths to copy) and window drops
+/// (which supply bytes, since the webview never exposes a dropped file's path).
+async fn add_documents(
     app: AppHandle,
-    pool: State<'_, SqlitePool>,
+    pool: SqlitePool,
     collection_id: String,
-    paths: Vec<String>,
+    sources: Vec<(String, FileSource)>,
 ) -> Result<Vec<KbDocument>, String> {
     let exists: Option<String> = sqlx::query_scalar("SELECT id FROM kb_collections WHERE id = ?1")
         .bind(&collection_id)
-        .fetch_optional(&*pool)
+        .fetch_optional(&pool)
         .await
         .map_err(|e| e.to_string())?;
     if exists.is_none() {
@@ -209,35 +215,14 @@ pub async fn kb_add_documents(
     let dir = kb_root(&app)?.join(&collection_id);
 
     let mut created = Vec::new();
-    for path in paths {
-        let src = std::path::PathBuf::from(&path);
-        let name = src
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("document")
-            .to_string();
-        let ext = src
+    for (name, source) in sources {
+        let ext = PathBuf::from(&name)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_lowercase();
         let id = uuid::Uuid::new_v4().to_string();
-        let dest = dir.join(format!("{id}-{name}"));
-
-        let (byte_size, stored_path) = {
-            let dir = dir.clone();
-            let dest = dest.clone();
-            tauri::async_runtime::spawn_blocking(move || -> Result<(i64, String), String> {
-                std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-                std::fs::copy(&src, &dest).map_err(|e| format!("copy failed: {e}"))?;
-                let size = std::fs::metadata(&dest)
-                    .map(|m| m.len() as i64)
-                    .unwrap_or(0);
-                Ok((size, dest.to_string_lossy().to_string()))
-            })
-            .await
-            .map_err(|e| e.to_string())??
-        };
+        let (stored_path, byte_size) = stage(dir.clone(), &id, &name, source).await?;
 
         sqlx::query(
             "INSERT INTO kb_documents (id, collection_id, filename, ext, byte_size, status, stored_path) \
@@ -249,13 +234,13 @@ pub async fn kb_add_documents(
         .bind(&ext)
         .bind(byte_size)
         .bind(&stored_path)
-        .execute(&*pool)
+        .execute(&pool)
         .await
         .map_err(|e| e.to_string())?;
 
         let doc = sqlx::query_as::<_, KbDocument>(&format!("{DOCUMENT_SELECT} WHERE id = ?1"))
             .bind(&id)
-            .fetch_one(&*pool)
+            .fetch_one(&pool)
             .await
             .map_err(|e| e.to_string())?;
         created.push(doc);
@@ -264,7 +249,6 @@ pub async fn kb_add_documents(
     // Ingest sequentially on a background task so multiple large files don't
     // hammer the embedder concurrently. The command returns without waiting.
     let ids: Vec<String> = created.iter().map(|d| d.id.clone()).collect();
-    let pool = pool.inner().clone();
     tauri::async_runtime::spawn(async move {
         for id in ids {
             let app = app.clone();
@@ -277,6 +261,53 @@ pub async fn kb_add_documents(
     });
 
     Ok(created)
+}
+
+/// Copy each file picked in the OS dialog into the collection and ingest it.
+#[tauri::command]
+pub async fn kb_add_documents(
+    app: AppHandle,
+    pool: State<'_, SqlitePool>,
+    collection_id: String,
+    paths: Vec<String>,
+) -> Result<Vec<KbDocument>, String> {
+    let sources = paths
+        .into_iter()
+        .map(|path| (safe_file_name(&path), FileSource::Path(PathBuf::from(path))))
+        .collect();
+    add_documents(app, pool.inner().clone(), collection_id, sources).await
+}
+
+/// Register a file dropped onto the window, then ingest it.
+///
+/// The window keeps the OS drag handler off so in-page dragging still works,
+/// which leaves the frontend holding the file's *contents* rather than a path:
+/// the bytes arrive as the raw IPC body, with the collection and filename in
+/// headers. Takes one file per call so a partly-unreadable batch still reports
+/// per-file errors.
+#[tauri::command]
+pub async fn kb_add_dropped_document(
+    app: AppHandle,
+    pool: State<'_, SqlitePool>,
+    request: Request<'_>,
+) -> Result<KbDocument, String> {
+    let collection_id = header(&request, "x-collection-id")?;
+    let name = safe_file_name(&header(&request, "x-filename")?);
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("dropped file arrived without its contents".into());
+    };
+    if bytes.is_empty() {
+        return Err("dropped file is empty".into());
+    }
+    add_documents(
+        app,
+        pool.inner().clone(),
+        collection_id,
+        vec![(name, FileSource::Bytes(bytes.clone()))],
+    )
+    .await?
+    .pop()
+    .ok_or_else(|| "document was not created".to_string())
 }
 
 #[tauri::command]

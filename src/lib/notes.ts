@@ -99,6 +99,22 @@ export interface Attachment {
 }
 export const attachFile = (noteId: string, sourcePath: string) =>
   invoke<Attachment>("attach_file", { noteId, sourcePath });
+
+/**
+ * Attach one file dropped onto the window. A dropped file exposes its contents
+ * but never its path, so the bytes travel as the raw IPC body with the metadata
+ * in headers — percent-encoded, since header values must be ASCII and filenames
+ * are not.
+ */
+export async function attachDroppedFile(noteId: string, file: File): Promise<Attachment> {
+  const bytes = await file.arrayBuffer();
+  return invoke<Attachment>("attach_dropped_file", bytes, {
+    headers: {
+      "x-note-id": encodeURIComponent(noteId),
+      "x-filename": encodeURIComponent(file.name),
+    },
+  });
+}
 export const listAttachments = (noteId: string) =>
   invoke<Attachment[]>("list_attachments", { noteId });
 export const removeAttachment = (id: string) => invoke<void>("remove_attachment", { id });

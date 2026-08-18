@@ -1,12 +1,14 @@
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useWindowFileDrop } from "../lib/fileDrop";
 import {
   KB_ACCEPT_EXTENSIONS,
   type KbDocument,
   type KbProgress,
+  kbAccepts,
   kbAddDocuments,
+  kbAddDroppedDocument,
   kbDeleteDocument,
   kbListDocuments,
   kbReindexDocument,
@@ -36,7 +38,6 @@ export function KbDocuments({
 }) {
   const [documents, setDocuments] = useState<KbDocument[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [dragActive, setDragActive] = useState(false);
   const [busy, setBusy] = useState(false);
   // Read the current collection inside stable event callbacks without
   // resubscribing on every change.
@@ -100,23 +101,39 @@ export function KbDocuments({
     }
   }, [addPaths]);
 
-  // Accept files dropped anywhere while this collection is open.
-  useEffect(() => {
-    const promise = getCurrentWebview().onDragDropEvent((event) => {
-      const payload = event.payload as { type: string; paths?: string[] };
-      if (payload.type === "enter" || payload.type === "over") {
-        setDragActive(true);
-      } else if (payload.type === "leave") {
-        setDragActive(false);
-      } else if (payload.type === "drop") {
-        setDragActive(false);
-        if (payload.paths?.length) void addPaths(payload.paths);
+  const addFiles = useCallback(
+    async (files: File[]) => {
+      setBusy(true);
+      const skipped = files.filter((f) => !kbAccepts(f.name)).map((f) => f.name);
+      const failed: string[] = [];
+      try {
+        // One call per file: each file's bytes cross the IPC boundary, so they
+        // go in turn rather than being held in memory together, and a single
+        // unreadable file doesn't strand the rest of the batch.
+        for (const file of files.filter((f) => kbAccepts(f.name))) {
+          try {
+            await kbAddDroppedDocument(collectionRef.current, file);
+          } catch (e) {
+            failed.push(`${file.name} (${e})`);
+          }
+        }
+        await load();
+        onChanged();
+      } finally {
+        setBusy(false);
       }
-    });
-    return () => {
-      void promise.then((unlisten) => unlisten());
-    };
-  }, [addPaths]);
+      // Set after `load`, which clears the error slot when it succeeds.
+      const problems = [
+        skipped.length > 0 ? `Arya can't read ${skipped.join(", ")}` : "",
+        failed.length > 0 ? `Couldn't add ${failed.join(", ")}` : "",
+      ].filter(Boolean);
+      if (problems.length > 0) setError(problems.join(". "));
+    },
+    [load, onChanged],
+  );
+
+  // Accept files dropped anywhere in the window while this collection is open.
+  const dragActive = useWindowFileDrop((files) => void addFiles(files));
 
   const remove = async (id: string) => {
     try {
