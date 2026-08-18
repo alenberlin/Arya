@@ -1968,6 +1968,12 @@ mark {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* The global button rule pins every button to a 34px row and centres its
+   * content. This one stacks a name over a meta line, so both have to be
+   * undone: at 34px the flex items shrink and the name is clipped to nothing,
+   * and centring overrides the text-align. */
+  height: auto;
+  align-items: flex-start;
   gap: 1px;
   padding: var(--sp-2) 10px;
   border: none;
@@ -2005,6 +2011,11 @@ mark {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
+  /* Same as .kb-collection-main: three stacked lines cannot live in the
+   * global button rule's fixed 34px height, and the description has to wrap
+   * inside the narrow rail rather than inherit that rule's nowrap. */
+  height: auto;
+  white-space: normal;
   gap: 4px;
   margin: var(--sp-2);
   padding: var(--sp-3);
