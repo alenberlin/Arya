@@ -6,6 +6,7 @@ pub mod ecosystem;
 pub mod sidecar;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -20,6 +21,9 @@ use sidecar::{Sidecar, WriteMode};
 pub struct AgentRuntime {
     sidecars: Mutex<HashMap<WriteMode, Arc<Sidecar>>>,
     accumulators: Mutex<HashMap<String, TurnAccumulator>>,
+    /// Bumped whenever a sidecar is (re)spawned; the scheduler watches it to
+    /// reconnect MCP servers into a freshly spawned sidecar.
+    spawn_generation: AtomicU64,
 }
 
 #[derive(Default, Clone)]
@@ -62,6 +66,7 @@ impl AgentRuntime {
                 Ok(serde_json::json!({ "hits": hits }))
             },
         )?);
+        self.spawn_generation.fetch_add(1, Ordering::SeqCst);
         let mut guard = self.sidecars.lock().expect("sidecars lock");
         // Another thread may have spawned concurrently; keep whichever is in
         // the map so both callers talk to the same process.
@@ -72,6 +77,12 @@ impl AgentRuntime {
     /// Spawns the sidecar for `mode` if it isn't already running.
     pub fn ensure(&self, app: &AppHandle, mode: WriteMode) -> Result<(), String> {
         self.get_or_spawn(app, mode).map(|_| ())
+    }
+
+    /// Monotonic counter of sidecar (re)spawns, used by the scheduler to know
+    /// when to reconnect MCP servers into a fresh sidecar.
+    pub fn spawn_generation(&self) -> u64 {
+        self.spawn_generation.load(Ordering::SeqCst)
     }
 
     /// Drop every running sidecar so the next agent call respawns it with a

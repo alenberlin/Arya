@@ -80,9 +80,11 @@ export function buildTools(ctx: ToolContext) {
       execute: async ({ path }) => {
         const { target, inside } = classifyReadable(ctx.workspace, path);
         if (!inside) {
+          // Scope the session approval to this exact path, so "allow for
+          // session" on one file doesn't grant whole-filesystem reads.
           const approved = await gate(
             ctx,
-            "read_outside",
+            `read_outside:${target}`,
             `Read file outside the workspace: ${sanitizeForDisplay(target)}`,
             { path: target },
           );
@@ -115,9 +117,11 @@ export function buildTools(ctx: ToolContext) {
       execute: async ({ path }) => {
         const { target, inside } = classifyReadable(ctx.workspace, path);
         if (!inside) {
+          // Scope the session approval to this exact path, so "allow for
+          // session" on one directory doesn't grant whole-filesystem reads.
           const approved = await gate(
             ctx,
-            "read_outside",
+            `read_outside:${target}`,
             `List directory outside the workspace: ${sanitizeForDisplay(target)}`,
             { path: target },
           );

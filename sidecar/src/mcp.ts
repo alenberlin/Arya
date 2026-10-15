@@ -18,6 +18,9 @@ interface ConnectedServer {
   toolNames: string[];
 }
 
+/** How long a server may take to complete the MCP handshake before failing. */
+const CONNECT_TIMEOUT_MS = 15_000;
+
 /**
  * Minimal environment for a spawned MCP server. The sidecar's own environment
  * carries the user's provider keys. An MCP binary — which the user, or a
@@ -73,7 +76,26 @@ export class McpManager {
       env: safeMcpEnv(spec.env),
     });
     const client = new Client({ name: "arya", version: "0.1.0" });
-    await client.connect(transport);
+    try {
+      // A server that never completes the MCP handshake (e.g. npx prompting, a
+      // binary that doesn't speak MCP) must not hang the sidecar's dispatch
+      // loop forever; fail it after a bounded window.
+      await Promise.race([
+        client.connect(transport),
+        new Promise<never>((_, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`MCP server "${spec.name}" timed out during connect`)),
+            CONNECT_TIMEOUT_MS,
+          );
+          timer.unref?.();
+        }),
+      ]);
+    } catch (error) {
+      // Close the transport so a half-open child process doesn't outlive this
+      // failed connect.
+      await transport.close().catch(() => {});
+      throw error;
+    }
     const { tools } = await client.listTools();
     const toolNames = tools.map((t) => t.name);
     this.servers.set(spec.name, { name: spec.name, client, transport, toolNames });

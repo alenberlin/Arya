@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
 use serde_json::{json, Value};
@@ -83,6 +83,9 @@ pub struct Sidecar {
     stdin: Arc<Mutex<ChildStdin>>,
     next_id: AtomicU64,
     pending: PendingMap,
+    /// Set when a request times out; `is_alive` treats a hung sidecar as dead
+    /// so the next `get_or_spawn` respawns it instead of failing forever.
+    hung: AtomicBool,
 }
 
 impl Sidecar {
@@ -134,6 +137,17 @@ impl Sidecar {
                 Some(key) => command.env(var, key),
                 None => command.env_remove(var),
             };
+        }
+
+        // Put the sidecar in its own process group so Drop can kill the whole
+        // tree (the sidecar spawns MCP child servers) instead of orphaning them.
+        #[cfg(unix)]
+        unsafe {
+            use std::os::unix::process::CommandExt;
+            command.pre_exec(|| {
+                libc::setpgid(0, 0);
+                Ok(())
+            });
         }
 
         let mut child = command
@@ -219,6 +233,7 @@ impl Sidecar {
             stdin,
             next_id: AtomicU64::new(1),
             pending,
+            hung: AtomicBool::new(false),
         })
     }
 
@@ -240,9 +255,15 @@ impl Sidecar {
         // a write failure or timeout must clean up its own pending entry — else
         // the map (and its mpsc sender) leaks one slot per failed request.
         match rx.recv_timeout(std::time::Duration::from_secs(30)) {
-            Ok(result) => result,
+            Ok(result) => {
+                self.hung.store(false, Ordering::SeqCst);
+                result
+            }
             Err(_) => {
                 self.pending.lock().expect("pending lock").remove(&id);
+                // A request that never got a response means the sidecar is
+                // wedged; mark it hung so the next get_or_spawn respawns it.
+                self.hung.store(true, Ordering::SeqCst);
                 Err("sidecar did not respond".to_string())
             }
         }
@@ -250,15 +271,27 @@ impl Sidecar {
 
     /// Liveness via `&self` so it works through a shared `Arc`.
     pub fn is_alive(&self) -> bool {
-        matches!(self.child.lock().expect("child lock").try_wait(), Ok(None))
+        !self.hung.load(Ordering::SeqCst)
+            && matches!(self.child.lock().expect("child lock").try_wait(), Ok(None))
     }
 }
 
 impl Drop for Sidecar {
     fn drop(&mut self) {
         if let Ok(mut child) = self.child.lock() {
+            #[cfg(unix)]
+            {
+                // Kill the whole process group (negative pid) so MCP servers the
+                // sidecar spawned don't outlive it as orphaned children. Fall
+                // back to killing just the child if setpgid never took effect.
+                let pid = child.id() as i32;
+                if unsafe { libc::kill(-pid, libc::SIGKILL) } != 0 {
+                    let _ = child.kill();
+                }
+            }
+            #[cfg(not(unix))]
             let _ = child.kill();
-            // Reap it so the killed sidecar doesn't linger as a zombie.
+            // Reap the direct child so it doesn't linger as a zombie.
             let _ = child.wait();
         }
     }

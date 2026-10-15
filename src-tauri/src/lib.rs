@@ -311,8 +311,18 @@ fn spawn_agent_scheduler(app: tauri::AppHandle) {
             let runtime = app.state::<agent::AgentRuntime>();
             // Reconnect persisted MCP servers (best effort; sidecar spawns lazily).
             tauri::async_runtime::block_on(agent::ecosystem::reconnect_all(&app, &pool, &runtime));
+            let mut last_generation = runtime.spawn_generation();
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(30));
+                // A freshly (re)spawned sidecar has an empty MCP manager: reconnect
+                // persisted servers so their tools survive key changes and crashes.
+                let generation = runtime.spawn_generation();
+                if generation != last_generation {
+                    last_generation = generation;
+                    tauri::async_runtime::block_on(agent::ecosystem::reconnect_all(
+                        &app, &pool, &runtime,
+                    ));
+                }
                 // Isolate each tick: a panic (e.g. an FFI throw deep inside a
                 // routine) must not silently kill the scheduler for the whole
                 // session — log it and keep ticking.

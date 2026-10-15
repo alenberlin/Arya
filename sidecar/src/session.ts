@@ -64,13 +64,16 @@ export class Session {
       nextCallId,
       searchWorkspace: this.searchWorkspace,
     });
-    let tools: Record<string, Tool> = builtins;
-    if (this.mcp) {
-      const mcpTools = await this.mcp.buildTools(this.broker, this.emit, nextCallId);
-      tools = { ...builtins, ...mcpTools };
-    }
-
     try {
+      // Building MCP tools can reject (e.g. a crashed/removed server); do it
+      // inside the try so the abort is reset and turn-finished is emitted,
+      // instead of wedging the session "running" forever.
+      let tools: Record<string, Tool> = builtins;
+      if (this.mcp) {
+        const mcpTools = await this.mcp.buildTools(this.broker, this.emit, nextCallId);
+        tools = { ...builtins, ...mcpTools };
+      }
+
       const result = streamText({
         model: resolveModel(this.config.model),
         system: this.config.system ?? DEFAULT_SYSTEM,
