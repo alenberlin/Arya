@@ -78,16 +78,16 @@
   /* Darkened from #9e9585 (~2.8:1) to meet WCAG AA on --surface (now ~4.6:1);
      muted text renders at --fs-xs so it must clear the 4.5:1 small-text bar. */
   --text-muted: #79705f;
-  --accent: #be5a38;
+  --accent: #b75736;
   --accent-hover: #a94e2f;
   --accent-soft: #f1ded4;
   --accent-ghost: #f7ebe3;
   --accent-contrast: #ffffff;
-  --success: #5e7b57;
+  --success: #5d7a56;
   --success-soft: #e4eadf;
-  --warning: #b4863b;
+  --warning: #926c2f;
   --warning-soft: #f3e9d6;
-  --danger: #c0503c;
+  --danger: #bf4f3b;
   --danger-soft: #f4ddd5;
   --info: #6e665a;
   --info-soft: #f4efe6;

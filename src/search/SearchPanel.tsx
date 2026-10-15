@@ -34,6 +34,21 @@ interface RagStatus {
 }
 
 /**
+ * Map a search hit's source kind to the deep-link kind the shell understands.
+ * "session" and "transcript" are agent/meeting content that open as their owning
+ * node (agent tab / note) rather than a dedicated surface.
+ */
+function openHit(hit: DisplayHit) {
+  const kind =
+    hit.sourceKind === "session"
+      ? "agent"
+      : hit.sourceKind === "transcript"
+        ? "note"
+        : hit.sourceKind;
+  window.dispatchEvent(new CustomEvent("arya:open-node", { detail: { kind, id: hit.sourceId } }));
+}
+
+/**
  * Search across everything (F14). A literal title+content pass (`search_all`)
  * always runs and works offline; when the local embedder is up, semantic results
  * (`rag_search`) are merged in. Exact/text matches rank first, then semantic by
@@ -187,7 +202,12 @@ export function SearchPanel() {
         <ul aria-label="search results" className="plain">
           {hits.map((hit) => (
             <li key={`${hit.sourceKind}:${hit.sourceId}`}>
-              <button type="button" className="result-card">
+              <button
+                type="button"
+                className="result-card"
+                onClick={() => openHit(hit)}
+                title="Open this result"
+              >
                 <div className="result-meta">
                   <FileIcon className="result-kind-icon" />
                   <span>

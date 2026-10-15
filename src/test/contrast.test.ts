@@ -35,6 +35,9 @@ function contrast(a: string, b: string): number {
   return (light + 0.05) / (dark + 0.05);
 }
 
+const AA = 4.5;
+const AA_UI = 3.0;
+
 describe("design token contrast", () => {
   it("keeps muted text AA-readable on the primary surface", () => {
     const light = block(":root");
@@ -42,9 +45,34 @@ describe("design token contrast", () => {
 
     expect(
       contrast(token(light, "--text-muted"), token(light, "--surface")),
-    ).toBeGreaterThanOrEqual(4.5);
+    ).toBeGreaterThanOrEqual(AA);
     expect(contrast(token(dark, "--text-muted"), token(dark, "--surface"))).toBeGreaterThanOrEqual(
-      4.5,
+      AA,
     );
+  });
+
+  it("keeps accent and status colors AA-readable as text on the primary surface", () => {
+    for (const scope of [":root", '[data-theme="dark"]']) {
+      const s = block(scope);
+      const surface = token(s, "--surface");
+      for (const name of ["--accent", "--success", "--warning", "--danger"]) {
+        expect(
+          contrast(token(s, name), surface),
+          `${scope} ${name} on surface`,
+        ).toBeGreaterThanOrEqual(AA);
+      }
+    }
+  });
+
+  it("keeps status colors readable on their soft chip backgrounds", () => {
+    for (const scope of [":root", '[data-theme="dark"]']) {
+      const s = block(scope);
+      for (const name of ["--success", "--warning", "--danger"]) {
+        expect(
+          contrast(token(s, name), token(s, `${name}-soft`)),
+          `${scope} ${name} on ${name}-soft`,
+        ).toBeGreaterThanOrEqual(AA_UI);
+      }
+    }
   });
 });

@@ -9,6 +9,7 @@ import {
   routineRuns,
   routineSetEnabled,
 } from "../lib/ecosystem";
+import { formatDateTime } from "../lib/time";
 import { RoutinesIcon } from "../ui/icons";
 
 /** Scheduled agent routines with run history. */
@@ -189,7 +190,7 @@ export function RoutinesPanel() {
                         className="mono muted"
                         style={{ fontSize: 11, padding: "2px 0" }}
                       >
-                        {run.startedAt} · {run.status}
+                        {formatDateTime(run.startedAt)} · {run.status}
                         {run.detail ? ` · ${run.detail}` : ""}
                       </li>
                     ))}
