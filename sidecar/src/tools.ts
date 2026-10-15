@@ -70,6 +70,28 @@ export function sanitizeForDisplay(text: string): string {
   return out.slice(0, 500);
 }
 
+/** Keys whose values are secrets and must never reach the approval prompt. */
+const SENSITIVE_KEY =
+  /(api[_-]?key|secret|token|passw(or)?d|authorization|auth|private[_-]?key|access[_-]?token|refresh[_-]?token|cookie|credential)/i;
+
+/**
+ * Redacts secret-looking values and sanitizes the rest so a tool argument can't
+ * leak credentials or spoof the approval prompt. Used for anything rendered to
+ * the user (MCP tool args in particular carry arbitrary third-party JSON).
+ */
+export function sanitizeArgsForDisplay(args: unknown): unknown {
+  if (typeof args === "string") return sanitizeForDisplay(args);
+  if (Array.isArray(args)) return args.map(sanitizeArgsForDisplay);
+  if (args && typeof args === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(args)) {
+      out[key] = SENSITIVE_KEY.test(key) ? "[redacted]" : sanitizeArgsForDisplay(value);
+    }
+    return out;
+  }
+  return args;
+}
+
 export function buildTools(ctx: ToolContext) {
   return {
     read_file: tool({

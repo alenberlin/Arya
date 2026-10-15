@@ -3,6 +3,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { jsonSchema, type Tool, tool } from "ai";
 import type { ApprovalBroker } from "./approvals.js";
 import type { AgentEvent } from "./protocol.js";
+import { sanitizeArgsForDisplay } from "./tools.js";
 
 export interface McpServerSpec {
   name: string;
@@ -139,12 +140,13 @@ export class McpManager {
           execute: async (args: unknown) => {
             if (!broker.isPreApproved(toolName)) {
               const callId = nextCallId();
+              const safeArgs = sanitizeArgsForDisplay(args);
               emit({
                 kind: "tool-approval-required",
                 callId,
                 name: toolName,
-                args,
-                description: `MCP ${server.name}: ${definition.name}(${JSON.stringify(args)})`,
+                args: safeArgs,
+                description: `MCP ${server.name}: ${definition.name}(${JSON.stringify(safeArgs)})`,
               });
               const approved = await broker.wait(callId, toolName);
               if (!approved) return "denied by user";

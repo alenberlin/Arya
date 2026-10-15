@@ -6,7 +6,7 @@ import { ApprovalBroker } from "../src/approvals.js";
 import { safeMcpEnv } from "../src/mcp.js";
 import { classifyReadable, resolveInWorkspace } from "../src/paths.js";
 import { isChatModel, resolveModel } from "../src/providers.js";
-import { buildTools } from "../src/tools.js";
+import { buildTools, sanitizeArgsForDisplay } from "../src/tools.js";
 
 describe("workspace path jail", () => {
   const ws = "/tmp/arya-ws";
@@ -119,6 +119,27 @@ describe("MCP env scrubbing", () => {
         else process.env[key] = value;
       }
     }
+  });
+});
+
+describe("tool arg sanitization for display (C5)", () => {
+  it("redacts secret-looking keys recursively", () => {
+    const out = sanitizeArgsForDisplay({
+      query: "hello",
+      apiKey: "sk-123",
+      nested: { access_token: "tok", ok: "fine" },
+      list: [{ password: "pw", name: "x" }],
+    }) as Record<string, unknown>;
+    expect(out.query).toBe("hello");
+    expect(out.apiKey).toBe("[redacted]");
+    expect((out.nested as Record<string, unknown>).access_token).toBe("[redacted]");
+    expect((out.nested as Record<string, unknown>).ok).toBe("fine");
+    expect((out.list as unknown[])[0]).toEqual({ password: "[redacted]", name: "x" });
+  });
+
+  it("strips control and bidi characters from string values", () => {
+    const out = sanitizeArgsForDisplay({ text: "safe\u202e\u0007text" }) as Record<string, unknown>;
+    expect(out.text).toBe("safetext");
   });
 });
 
