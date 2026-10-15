@@ -4,6 +4,7 @@
   "identifier": "dev.arya.app.rc",
   "plugins": {
     "updater": {
+      "active": false,
       "endpoints": [
         "https://github.com/YOUR_ORG/arya-releases/releases/latest/download/rc.json"
       ]
