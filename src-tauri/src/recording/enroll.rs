@@ -19,7 +19,7 @@ pub async fn enroll_speaker_profile(
     pool: State<'_, SqlitePool>,
     name: String,
     seconds: Option<u32>,
-) -> Result<SpeakerProfileInfo, String> {
+) -> crate::error::AryaResult<SpeakerProfileInfo> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("a name is required".into());
@@ -28,7 +28,7 @@ pub async fn enroll_speaker_profile(
     let pool = pool.inner().clone();
     tauri::async_runtime::spawn_blocking(move || enroll_blocking(&app, &pool, &name, seconds))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
 }
 
 /// Blocking enrollment body (shared with dev hooks): capture, embed, upsert.
@@ -37,9 +37,10 @@ pub fn enroll_blocking(
     pool: &SqlitePool,
     name: &str,
     seconds: u32,
-) -> Result<SpeakerProfileInfo, String> {
+) -> crate::error::AryaResult<SpeakerProfileInfo> {
     {
-        let handle = crate::audio::start_capture(None).map_err(|e| e.to_string())?;
+        let handle =
+            crate::audio::start_capture(None).map_err(crate::error::AryaError::from_display)?;
         // Sleep in small slices, draining the bounded callback pool each time: a
         // single long sleep would fill the 64-block pool in under a second and
         // silently drop the rest of the enrollment audio.
@@ -48,9 +49,11 @@ pub fn enroll_blocking(
             std::thread::sleep(std::time::Duration::from_millis(50));
             let _ = handle.level(); // level() drains the queued callback blocks
         }
-        let clip = handle.stop().map_err(|e| e.to_string())?;
+        let clip = handle
+            .stop()
+            .map_err(crate::error::AryaError::from_display)?;
         if clip.duration_secs() < 2.0 {
-            return Err("recording too short".to_string());
+            return Err(crate::error::AryaError::message("recording too short"));
         }
         // Embed speech only: concatenate the energetic spans so the profile
         // matches what turn slices look like (no silence dilution).
@@ -67,24 +70,26 @@ pub fn enroll_blocking(
             crate::speech::AudioClip { samples }
         };
         if clip.duration_secs() < 1.5 {
-            return Err("not enough speech in the enrollment recording".to_string());
+            return Err(crate::error::AryaError::message(
+                "not enough speech in the enrollment recording",
+            ));
         }
         let models_dir = app
             .path()
             .app_data_dir()
-            .map_err(|e| e.to_string())?
+            .map_err(crate::error::AryaError::from_display)?
             .join("models");
         let model_path = tauri::async_runtime::block_on(crate::speech::models::ensure_model(
             &super::diarize::SPEAKER_MODEL,
             &models_dir,
         ))
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
         let extractor = super::diarize::get_or_load_extractor(&model_path.to_string_lossy())?;
         let embedding = extractor
             .lock()
             .expect("extractor lock")
             .compute_speaker_embedding(clip.samples, crate::speech::AudioClip::SAMPLE_RATE)
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         let blob = super::diarize::f32_to_blob(&embedding);
         let id = uuid::Uuid::new_v4().to_string();
         // RETURNING gives the row that actually won (the original id + created_at
@@ -102,7 +107,7 @@ pub fn enroll_blocking(
             .bind(&blob)
             .fetch_one(pool)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(crate::error::AryaError::from_display)
         })
     }
 }
@@ -110,21 +115,24 @@ pub fn enroll_blocking(
 #[tauri::command]
 pub async fn list_speaker_profiles(
     pool: State<'_, SqlitePool>,
-) -> Result<Vec<SpeakerProfileInfo>, String> {
+) -> crate::error::AryaResult<Vec<SpeakerProfileInfo>> {
     sqlx::query_as::<_, SpeakerProfileInfo>(
         "SELECT id, name, created_at FROM speaker_profiles ORDER BY name",
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
-pub async fn delete_speaker_profile(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+pub async fn delete_speaker_profile(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> crate::error::AryaResult<()> {
     sqlx::query("DELETE FROM speaker_profiles WHERE id = ?1")
         .bind(id)
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }

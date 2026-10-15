@@ -8,6 +8,7 @@ pub mod cleanup;
 mod cloud;
 mod db;
 mod dictation;
+mod error;
 mod filestage;
 mod galaxy;
 mod http;
@@ -452,8 +453,8 @@ fn hud_resize(app: tauri::AppHandle, width: f64, height: f64) {
 
 /// Copies text to the system clipboard (the dictation-history copy button).
 #[tauri::command]
-fn copy_to_clipboard(text: String) -> Result<(), String> {
-    paste::set_clipboard(&text).map_err(|e| e.to_string())
+fn copy_to_clipboard(text: String) -> crate::error::AryaResult<()> {
+    paste::set_clipboard(&text).map_err(crate::error::AryaError::from_display)
 }
 
 /// Debug-only runtime hooks for automated E2E checks. Each is env-gated and

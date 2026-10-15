@@ -8,7 +8,7 @@ pub const EMBED_MODEL: &str = "nomic-embed-text";
 pub const EMBED_DIM: usize = 768;
 
 pub trait Embedder: Send + Sync {
-    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String>;
+    fn embed(&self, texts: &[String]) -> crate::error::AryaResult<Vec<Vec<f32>>>;
     fn model(&self) -> &str;
 }
 
@@ -39,7 +39,7 @@ impl OllamaEmbedder {
 }
 
 impl Embedder for OllamaEmbedder {
-    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+    fn embed(&self, texts: &[String]) -> crate::error::AryaResult<Vec<Vec<f32>>> {
         if texts.is_empty() {
             return Ok(Vec::new());
         }
@@ -49,22 +49,24 @@ impl Embedder for OllamaEmbedder {
             .timeout(std::time::Duration::from_secs(120))
             .json(&json!({ "model": self.model, "input": texts }))
             .send()
-            .map_err(|e| e.to_string())?
+            .map_err(crate::error::AryaError::from_display)?
             .error_for_status()
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         #[derive(serde::Deserialize)]
         struct EmbedResponse {
             embeddings: Vec<Vec<f32>>,
         }
-        let parsed: EmbedResponse = response.json().map_err(|e| e.to_string())?;
+        let parsed: EmbedResponse = response
+            .json()
+            .map_err(crate::error::AryaError::from_display)?;
         // Guard against a swapped/misconfigured embedding model quietly returning
         // wrong-width vectors, which would corrupt cosine similarity in the index.
         if let Some(row) = parsed.embeddings.first() {
             if row.len() != EMBED_DIM {
-                return Err(format!(
+                return Err(crate::error::AryaError::message(format!(
                     "embedding model returned {} dims, expected {EMBED_DIM}",
                     row.len()
-                ));
+                )));
             }
         }
         Ok(parsed.embeddings)

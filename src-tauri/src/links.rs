@@ -31,12 +31,16 @@ fn validate_edge(
     source_id: &str,
     target_kind: &str,
     target_id: &str,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     if !valid_kind(source_kind) {
-        return Err(format!("unknown source kind: {source_kind}"));
+        return Err(crate::error::AryaError::message(format!(
+            "unknown source kind: {source_kind}"
+        )));
     }
     if !valid_kind(target_kind) {
-        return Err(format!("unknown target kind: {target_kind}"));
+        return Err(crate::error::AryaError::message(format!(
+            "unknown target kind: {target_kind}"
+        )));
     }
     if source_id.trim().is_empty() || target_id.trim().is_empty() {
         return Err("node id is required".into());
@@ -227,7 +231,7 @@ pub async fn create_link(
     target_kind: String,
     target_id: String,
     relation: Option<String>,
-) -> Result<Link, String> {
+) -> crate::error::AryaResult<Link> {
     validate_edge(&source_kind, &source_id, &target_kind, &target_id)?;
     let relation = relation.unwrap_or_else(|| "mention".into());
     if relation.trim().is_empty() {
@@ -244,7 +248,7 @@ pub async fn create_link(
         1.0,
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 /// Outbound edges from a node.
@@ -253,13 +257,15 @@ pub async fn list_links_from(
     pool: State<'_, SqlitePool>,
     kind: String,
     id: String,
-) -> Result<Vec<Link>, String> {
+) -> crate::error::AryaResult<Vec<Link>> {
     if !valid_kind(&kind) {
-        return Err(format!("unknown node kind: {kind}"));
+        return Err(crate::error::AryaError::message(format!(
+            "unknown node kind: {kind}"
+        )));
     }
     links_from(&pool, &kind, &id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// Inbound edges to a node — its backlinks.
@@ -268,19 +274,23 @@ pub async fn list_links_to(
     pool: State<'_, SqlitePool>,
     kind: String,
     id: String,
-) -> Result<Vec<Link>, String> {
+) -> crate::error::AryaResult<Vec<Link>> {
     if !valid_kind(&kind) {
-        return Err(format!("unknown node kind: {kind}"));
+        return Err(crate::error::AryaError::message(format!(
+            "unknown node kind: {kind}"
+        )));
     }
-    links_to(&pool, &kind, &id).await.map_err(|e| e.to_string())
+    links_to(&pool, &kind, &id)
+        .await
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// Delete one edge by id.
 #[tauri::command]
-pub async fn delete_link(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+pub async fn delete_link(pool: State<'_, SqlitePool>, id: String) -> crate::error::AryaResult<()> {
     delete_link_by_id(&pool, &id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// Reconcile a source node's outbound edges of one relation (default `mention`)
@@ -292,15 +302,17 @@ pub async fn reconcile_links(
     source_id: String,
     relation: Option<String>,
     targets: Vec<LinkTarget>,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     if !valid_kind(&source_kind) {
-        return Err(format!("unknown source kind: {source_kind}"));
+        return Err(crate::error::AryaError::message(format!(
+            "unknown source kind: {source_kind}"
+        )));
     }
     let relation = relation.unwrap_or_else(|| "mention".into());
     let pairs: Vec<(String, String)> = targets.into_iter().map(|t| (t.kind, t.id)).collect();
     reconcile_source_links(&pool, &source_kind, &source_id, &relation, &pairs)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[cfg(test)]

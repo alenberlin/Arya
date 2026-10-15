@@ -109,7 +109,7 @@ pub struct KbAnswer {
 pub async fn kb_list_sessions(
     pool: State<'_, SqlitePool>,
     collection_id: String,
-) -> Result<Vec<KbSession>, String> {
+) -> crate::error::AryaResult<Vec<KbSession>> {
     sqlx::query_as::<_, KbSession>(
         "SELECT id, collection_id, title, created_at, updated_at FROM kb_sessions \
          WHERE collection_id = ?1 ORDER BY updated_at DESC",
@@ -117,46 +117,49 @@ pub async fn kb_list_sessions(
     .bind(&collection_id)
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
 pub async fn kb_create_session(
     pool: State<'_, SqlitePool>,
     collection_id: String,
-) -> Result<KbSession, String> {
+) -> crate::error::AryaResult<KbSession> {
     let id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO kb_sessions (id, collection_id) VALUES (?1, ?2)")
         .bind(&id)
         .bind(&collection_id)
         .execute(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     sqlx::query_as::<_, KbSession>(
         "SELECT id, collection_id, title, created_at, updated_at FROM kb_sessions WHERE id = ?1",
     )
     .bind(&id)
     .fetch_one(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
-pub async fn kb_delete_session(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+pub async fn kb_delete_session(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> crate::error::AryaResult<()> {
     // Messages cascade on the session's foreign key.
     sqlx::query("DELETE FROM kb_sessions WHERE id = ?1")
         .bind(&id)
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
 pub async fn kb_get_messages(
     pool: State<'_, SqlitePool>,
     session_id: String,
-) -> Result<Vec<KbMessage>, String> {
+) -> crate::error::AryaResult<Vec<KbMessage>> {
     let rows = sqlx::query_as::<_, KbMessageRow>(
         "SELECT id, session_id, role, content, citations_json, created_at \
          FROM kb_session_messages WHERE session_id = ?1 ORDER BY created_at",
@@ -164,7 +167,7 @@ pub async fn kb_get_messages(
     .bind(&session_id)
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     Ok(rows.into_iter().map(KbMessage::from).collect())
 }
 
@@ -176,7 +179,7 @@ pub async fn kb_ask(
     session_id: String,
     query: String,
     model: Option<String>,
-) -> Result<KbAnswer, String> {
+) -> crate::error::AryaResult<KbAnswer> {
     let query = query.trim().to_string();
     if query.is_empty() {
         return Err("ask a question first".into());
@@ -186,7 +189,7 @@ pub async fn kb_ask(
             .bind(&session_id)
             .fetch_optional(&*pool)
             .await
-            .map_err(|e| e.to_string())?
+            .map_err(crate::error::AryaError::from_display)?
             .ok_or("chat session not found")?;
 
     // Retrieve + answer off the async runtime; only persist once it succeeds so
@@ -198,7 +201,7 @@ pub async fn kb_ask(
             answer_blocking(&pool, &collection_id, &query, model)
         })
         .await
-        .map_err(|e| e.to_string())??
+        .map_err(crate::error::AryaError::from_display)??
     };
 
     let user_id = uuid::Uuid::new_v4().to_string();
@@ -229,7 +232,7 @@ fn answer_blocking(
     collection_id: &str,
     query: &str,
     model: Option<String>,
-) -> Result<(String, Vec<Citation>), String> {
+) -> crate::error::AryaResult<(String, Vec<Citation>)> {
     let hits = super::retrieve::search_blocking(pool, collection_id, query, RETRIEVE_K)?;
     if hits.is_empty() {
         return Ok((
@@ -319,7 +322,7 @@ async fn insert_message(
     role: &str,
     content: &str,
     citations_json: &str,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     sqlx::query(
         "INSERT INTO kb_session_messages (id, session_id, role, content, citations_json) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -332,10 +335,10 @@ async fn insert_message(
     .execute(pool)
     .await
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
-async fn fetch_message(pool: &SqlitePool, id: &str) -> Result<KbMessage, String> {
+async fn fetch_message(pool: &SqlitePool, id: &str) -> crate::error::AryaResult<KbMessage> {
     sqlx::query_as::<_, KbMessageRow>(
         "SELECT id, session_id, role, content, citations_json, created_at \
          FROM kb_session_messages WHERE id = ?1",
@@ -344,7 +347,7 @@ async fn fetch_message(pool: &SqlitePool, id: &str) -> Result<KbMessage, String>
     .fetch_one(pool)
     .await
     .map(KbMessage::from)
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 /// Name a still-untitled session after its first question, and bump its

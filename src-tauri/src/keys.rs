@@ -54,8 +54,8 @@ pub struct KeysStatus {
     pub anthropic: bool,
 }
 
-fn entry(provider: Provider) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(SERVICE, provider.id()).map_err(|e| e.to_string())
+fn entry(provider: Provider) -> crate::error::AryaResult<keyring::Entry> {
+    keyring::Entry::new(SERVICE, provider.id()).map_err(crate::error::AryaError::from_display)
 }
 
 /// The stored key for `provider`, or `None` if the user hasn't set one.
@@ -73,23 +73,23 @@ pub fn get(provider: Provider) -> Option<String> {
 
 /// Store (or replace) the key for `provider`. An empty/blank value clears it,
 /// so the UI can treat "save an empty box" as "remove my key".
-pub fn set(provider: Provider, key: &str) -> Result<(), String> {
+pub fn set(provider: Provider, key: &str) -> crate::error::AryaResult<()> {
     let key = key.trim();
     if key.is_empty() {
         return clear(provider);
     }
     entry(provider)?
         .set_password(key)
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// Remove the stored key for `provider`. Idempotent: clearing an absent key is
 /// success, not an error.
-pub fn clear(provider: Provider) -> Result<(), String> {
+pub fn clear(provider: Provider) -> crate::error::AryaResult<()> {
     match entry(provider)?.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(crate::error::AryaError::from_display(e)),
     }
 }
 
@@ -114,7 +114,7 @@ pub fn keys_set(
     runtime: tauri::State<'_, crate::agent::AgentRuntime>,
     provider: String,
     key: String,
-) -> Result<KeysStatus, String> {
+) -> crate::error::AryaResult<KeysStatus> {
     let provider =
         Provider::parse(&provider).ok_or_else(|| format!("unknown provider: {provider}"))?;
     set(provider, &key)?;
@@ -128,7 +128,7 @@ pub fn keys_set(
 pub fn keys_clear(
     runtime: tauri::State<'_, crate::agent::AgentRuntime>,
     provider: String,
-) -> Result<KeysStatus, String> {
+) -> crate::error::AryaResult<KeysStatus> {
     let provider =
         Provider::parse(&provider).ok_or_else(|| format!("unknown provider: {provider}"))?;
     clear(provider)?;

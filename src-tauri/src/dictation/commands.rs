@@ -53,7 +53,7 @@ pub fn get_dictation_settings(service: State<'_, Arc<DictationService>>) -> Dict
 #[tauri::command]
 pub async fn list_ollama_models(
     service: State<'_, Arc<DictationService>>,
-) -> Result<Vec<String>, String> {
+) -> crate::error::AryaResult<Vec<String>> {
     #[derive(serde::Deserialize)]
     struct Tags {
         models: Vec<TagModel>,
@@ -68,10 +68,10 @@ pub async fn list_ollama_models(
         .timeout(std::time::Duration::from_secs(3))
         .send()
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .json()
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     Ok(tags.models.into_iter().map(|m| m.name).collect())
 }
 
@@ -91,7 +91,7 @@ pub struct OllamaStatus {
 #[tauri::command]
 pub async fn ollama_status(
     service: State<'_, Arc<DictationService>>,
-) -> Result<OllamaStatus, String> {
+) -> crate::error::AryaResult<OllamaStatus> {
     #[derive(serde::Deserialize)]
     struct Tags {
         models: Vec<serde_json::Value>,
@@ -131,15 +131,18 @@ pub fn set_dictation_settings(
     app: AppHandle,
     service: State<'_, Arc<DictationService>>,
     settings: DictationSettings,
-) -> Result<(), String> {
-    let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
+) -> crate::error::AryaResult<()> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(crate::error::AryaError::from_display)?;
     let previous = service.settings();
-    settings::save(&config_dir, &settings).map_err(|e| e.to_string())?;
+    settings::save(&config_dir, &settings).map_err(crate::error::AryaError::from_display)?;
     service.update_settings(settings.clone());
     // Keep the shared Ollama URL in sync so non-dictation AI features honor it.
     crate::provider::set_ollama_url(settings.ollama_url.clone());
     if previous.shortcut != settings.shortcut || previous.mode != settings.mode {
-        super::hotkey::register(&app, &settings).map_err(|e| e.to_string())?;
+        super::hotkey::register(&app, &settings).map_err(crate::error::AryaError::from_display)?;
     }
     Ok(())
 }
@@ -218,14 +221,14 @@ pub async fn translate_dictation(
     service: State<'_, Arc<DictationService>>,
     id: String,
     target_lang: String,
-) -> Result<DictationTranslation, String> {
+) -> crate::error::AryaResult<DictationTranslation> {
     let source: String =
         sqlx::query_scalar("SELECT clean_text FROM dictation_history WHERE id = ?1")
             .bind(&id)
             .fetch_optional(&*pool)
             .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "dictation not found".to_string())?;
+            .map_err(crate::error::AryaError::from_display)?
+            .ok_or_else(|| crate::error::AryaError::message("dictation not found"))?;
     if source.trim().is_empty() {
         return Err("this dictation has no text to translate".into());
     }
@@ -244,11 +247,13 @@ pub async fn translate_dictation(
             .and_then(|t| t.translate(&source, &target))
     })
     .await
-    .map_err(|e| e.to_string())?
-    .ok_or_else(|| "translation failed — is the model available?".to_string())?;
+    .map_err(crate::error::AryaError::from_display)?
+    .ok_or_else(|| {
+        crate::error::AryaError::message("translation failed — is the model available?")
+    })?;
     upsert_dictation_translation(&pool, &id, &target_lang, &translated, &model)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// List a dictation's on-demand translations (F8/M9).
@@ -256,30 +261,30 @@ pub async fn translate_dictation(
 pub async fn list_dictation_translations(
     pool: State<'_, SqlitePool>,
     id: String,
-) -> Result<Vec<DictationTranslation>, String> {
+) -> crate::error::AryaResult<Vec<DictationTranslation>> {
     fetch_dictation_translations(&pool, &id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// Every on-demand dictation translation, so the history renders in one load.
 #[tauri::command]
 pub async fn list_all_dictation_translations(
     pool: State<'_, SqlitePool>,
-) -> Result<Vec<DictationTranslation>, String> {
+) -> crate::error::AryaResult<Vec<DictationTranslation>> {
     sqlx::query_as::<_, DictationTranslation>(
         "SELECT id, dictation_id, lang, text, model, created_at
          FROM dictation_translations ORDER BY dictation_id, created_at",
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
 pub async fn list_dictation_history(
     pool: State<'_, SqlitePool>,
-) -> Result<Vec<HistoryItem>, String> {
+) -> crate::error::AryaResult<Vec<HistoryItem>> {
     sqlx::query_as::<_, HistoryItem>(
         "SELECT id, raw_text, clean_text, translated_text, target_lang, app_bundle_id,
                 duration_ms, asr_ms, created_at
@@ -287,32 +292,32 @@ pub async fn list_dictation_history(
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
 pub async fn delete_dictation_history_item(
     pool: State<'_, SqlitePool>,
     id: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     sqlx::query("DELETE FROM dictation_history WHERE id = ?1")
         .bind(&id)
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     // The privacy guarantee: deleting a dictation also deletes its semantic
     // index rows, so its text and embedding stop being searchable.
     crate::rag::commands::delete_for_node(&pool, "dictation", &id).await
 }
 
 #[tauri::command]
-pub async fn clear_dictation_history(pool: State<'_, SqlitePool>) -> Result<(), String> {
+pub async fn clear_dictation_history(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<()> {
     sqlx::query("DELETE FROM dictation_history")
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     crate::rag::commands::delete_for_kind(&pool, "dictation").await
 }
 
@@ -324,7 +329,7 @@ pub async fn convert_dictation_to_note(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     id: String,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     use crate::recording::generate::{
         FallbackGenerator, GeneratedNote, NoteGenerator, OllamaGenerator, TurnText,
     };
@@ -334,15 +339,15 @@ pub async fn convert_dictation_to_note(
             .bind(&id)
             .fetch_optional(&*pool)
             .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "dictation not found".to_string())?;
+            .map_err(crate::error::AryaError::from_display)?
+            .ok_or_else(|| crate::error::AryaError::message("dictation not found"))?;
     if clean.trim().is_empty() {
         return Err("this dictation has no text to convert".into());
     }
 
     let note = crate::notes::insert_note(&pool, "Meeting minutes")
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
 
     // Keep the dictation text as the note's transcript so it's reviewable.
     sqlx::query(
@@ -354,7 +359,7 @@ pub async fn convert_dictation_to_note(
     .bind(&clean)
     .execute(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     // Generate minutes off the async runtime — the model call blocks.
     let settings = crate::recording::settings::load_generation_settings(&app);
@@ -373,7 +378,7 @@ pub async fn convert_dictation_to_note(
         generator.generate(&turns, "")
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     sqlx::query(
         "UPDATE notes SET title = ?2, body_md = ?3, processing_status = 'ready',
@@ -385,7 +390,7 @@ pub async fn convert_dictation_to_note(
     .bind(&generated.body_md)
     .execute(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     Ok(note.id)
 }
@@ -398,14 +403,14 @@ pub async fn convert_dictation_to_note(
 pub async fn convert_dictation_to_plain_note(
     pool: State<'_, SqlitePool>,
     id: String,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     let clean: String =
         sqlx::query_scalar("SELECT clean_text FROM dictation_history WHERE id = ?1")
             .bind(&id)
             .fetch_optional(&*pool)
             .await
-            .map_err(|e| e.to_string())?
-            .ok_or_else(|| "dictation not found".to_string())?;
+            .map_err(crate::error::AryaError::from_display)?
+            .ok_or_else(|| crate::error::AryaError::message("dictation not found"))?;
     if clean.trim().is_empty() {
         return Err("this dictation has no text to convert".into());
     }
@@ -413,7 +418,7 @@ pub async fn convert_dictation_to_plain_note(
     let title = crate::notes::title_from_text(&clean);
     let note = crate::notes::insert_note(&pool, &title)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     sqlx::query(
         "UPDATE notes SET body_md = ?2, processing_status = 'ready',
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -423,7 +428,7 @@ pub async fn convert_dictation_to_plain_note(
     .bind(&clean)
     .execute(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     Ok(note.id)
 }
@@ -474,10 +479,13 @@ pub fn dictation_pin_app(
     app: AppHandle,
     service: State<'_, Arc<DictationService>>,
     polish: Polish,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     if let Some(overrides) = service.pin_current_app(polish) {
-        let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-        profiles::save(&config_dir, &overrides).map_err(|e| e.to_string())?;
+        let config_dir = app
+            .path()
+            .app_config_dir()
+            .map_err(crate::error::AryaError::from_display)?;
+        profiles::save(&config_dir, &overrides).map_err(crate::error::AryaError::from_display)?;
     }
     Ok(())
 }
@@ -487,10 +495,13 @@ pub fn dictation_pin_app(
 pub fn dictation_unpin_app(
     app: AppHandle,
     service: State<'_, Arc<DictationService>>,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     if let Some(overrides) = service.unpin_current_app() {
-        let config_dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-        profiles::save(&config_dir, &overrides).map_err(|e| e.to_string())?;
+        let config_dir = app
+            .path()
+            .app_config_dir()
+            .map_err(crate::error::AryaError::from_display)?;
+        profiles::save(&config_dir, &overrides).map_err(crate::error::AryaError::from_display)?;
     }
     Ok(())
 }
@@ -499,15 +510,15 @@ pub fn dictation_unpin_app(
 /// ready. Long-running: the download awaits and the model load runs on a
 /// blocking thread.
 #[tauri::command]
-pub async fn dictation_prepare_streaming(app: AppHandle) -> Result<(), String> {
+pub async fn dictation_prepare_streaming(app: AppHandle) -> crate::error::AryaResult<()> {
     let models_dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .join("models");
     let paths = crate::speech::models::ensure_streaming_model(&models_dir)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     tauri::async_runtime::spawn_blocking(move || {
         crate::speech::streaming::cached(
             &paths.encoder,
@@ -516,22 +527,22 @@ pub async fn dictation_prepare_streaming(app: AppHandle) -> Result<(), String> {
             &paths.tokens,
         )
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(crate::error::AryaError::from_display)?
 }
 
 #[tauri::command]
 pub async fn list_dictionary_entries(
     pool: State<'_, SqlitePool>,
-) -> Result<Vec<DictionaryItem>, String> {
+) -> crate::error::AryaResult<Vec<DictionaryItem>> {
     sqlx::query_as::<_, DictionaryItem>(
         "SELECT id, pattern, replacement FROM dictionary_entries ORDER BY pattern",
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
@@ -539,7 +550,7 @@ pub async fn create_dictionary_entry(
     pool: State<'_, SqlitePool>,
     pattern: String,
     replacement: String,
-) -> Result<DictionaryItem, String> {
+) -> crate::error::AryaResult<DictionaryItem> {
     let pattern = pattern.trim().to_string();
     let replacement = replacement.trim().to_string();
     if pattern.is_empty() || replacement.is_empty() {
@@ -555,7 +566,7 @@ pub async fn create_dictionary_entry(
     .bind(&replacement)
     .execute(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     Ok(DictionaryItem {
         id,
         pattern,
@@ -567,13 +578,13 @@ pub async fn create_dictionary_entry(
 pub async fn delete_dictionary_entry(
     pool: State<'_, SqlitePool>,
     id: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     sqlx::query("DELETE FROM dictionary_entries WHERE id = ?1")
         .bind(id)
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[cfg(test)]

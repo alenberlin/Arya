@@ -52,20 +52,20 @@ impl SystemCapture {
     /// Writes the embedded helper to `bin_dir` (if missing) and spawns it,
     /// capturing into `<dir>/system.partial.wav`.
     #[cfg(target_os = "macos")]
-    pub fn start(bin_dir: &Path, session_dir: &Path) -> Result<Self, String> {
+    pub fn start(bin_dir: &Path, session_dir: &Path) -> crate::error::AryaResult<Self> {
         use std::os::unix::fs::PermissionsExt;
 
-        std::fs::create_dir_all(bin_dir).map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(session_dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(bin_dir).map_err(crate::error::AryaError::from_display)?;
+        std::fs::create_dir_all(session_dir).map_err(crate::error::AryaError::from_display)?;
         let helper = bin_dir.join("arya-system-audio-helper");
         let needs_write = match std::fs::read(&helper) {
             Ok(existing) => existing != HELPER_BYTES,
             Err(_) => true,
         };
         if needs_write {
-            std::fs::write(&helper, HELPER_BYTES).map_err(|e| e.to_string())?;
+            std::fs::write(&helper, HELPER_BYTES).map_err(crate::error::AryaError::from_display)?;
             std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755))
-                .map_err(|e| e.to_string())?;
+                .map_err(crate::error::AryaError::from_display)?;
         }
 
         let partial_path = session_dir.join("system.partial.wav");
@@ -87,7 +87,7 @@ impl SystemCapture {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn start(_bin_dir: &Path, _session_dir: &Path) -> Result<Self, String> {
+    pub fn start(_bin_dir: &Path, _session_dir: &Path) -> crate::error::AryaResult<Self> {
         Err("system audio capture is macOS-only".into())
     }
 
@@ -122,18 +122,22 @@ impl SystemCapture {
     }
 
     /// Waits up to `timeout` for the helper to report ready or error.
-    pub fn wait_ready(&mut self, timeout: std::time::Duration) -> Result<(), String> {
+    pub fn wait_ready(&mut self, timeout: std::time::Duration) -> crate::error::AryaResult<()> {
         let deadline = std::time::Instant::now() + timeout;
         while std::time::Instant::now() < deadline {
             for event in self.poll_events() {
                 match event {
                     HelperEvent::Ready { .. } => return Ok(()),
-                    HelperEvent::Error { message } => return Err(message),
+                    HelperEvent::Error { message } => {
+                        return Err(crate::error::AryaError::message(message))
+                    }
                     _ => {}
                 }
             }
             if let Ok(Some(status)) = self.child.try_wait() {
-                return Err(format!("helper exited early ({status})"));
+                return Err(crate::error::AryaError::message(format!(
+                    "helper exited early ({status})"
+                )));
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
@@ -151,7 +155,7 @@ impl SystemCapture {
     /// Graceful stop: SIGTERM, wait for exit (helper finalizes the WAV),
     /// escalate to SIGKILL + header repair if it hangs. Returns the path to
     /// the finalized (still `.partial.wav`-named) file.
-    pub fn stop(mut self) -> Result<PathBuf, String> {
+    pub fn stop(mut self) -> crate::error::AryaResult<PathBuf> {
         self.signal(libc::SIGTERM);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
@@ -171,7 +175,7 @@ impl SystemCapture {
                     break;
                 }
                 Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
-                Err(e) => return Err(e.to_string()),
+                Err(e) => return Err(crate::error::AryaError::from_display(e)),
             }
         }
         Ok(self.partial_path.clone())

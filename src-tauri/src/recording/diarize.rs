@@ -28,7 +28,7 @@ fn extractor_cache() -> &'static Mutex<Option<(String, SharedExtractor)>> {
 }
 
 /// Returns the cached extractor for `model_path`, loading it on first use.
-pub fn get_or_load_extractor(model_path: &str) -> Result<SharedExtractor, String> {
+pub fn get_or_load_extractor(model_path: &str) -> crate::error::AryaResult<SharedExtractor> {
     {
         let guard = extractor_cache().lock().expect("extractor cache lock");
         if let Some((path, extractor)) = guard.as_ref() {
@@ -42,7 +42,7 @@ pub fn get_or_load_extractor(model_path: &str) -> Result<SharedExtractor, String
             model: model_path.to_string(),
             ..Default::default()
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     let shared = Arc::new(Mutex::new(extractor));
     let mut guard = extractor_cache().lock().expect("extractor cache lock");
     // Another thread may have loaded the same model while we were unlocked;

@@ -67,7 +67,7 @@ fn hex_page_refs(markdown: &str) -> impl Iterator<Item = &str> + '_ {
 pub async fn import_notion_folder(
     pool: &SqlitePool,
     root: &std::path::Path,
-) -> Result<ImportReport, String> {
+) -> crate::error::AryaResult<ImportReport> {
     if !root.is_dir() {
         return Err("please choose the unzipped Notion export folder".into());
     }
@@ -159,7 +159,7 @@ pub async fn import_notion_folder(
 pub async fn import_notion(
     pool: State<'_, SqlitePool>,
     dir_path: String,
-) -> Result<ImportReport, String> {
+) -> crate::error::AryaResult<ImportReport> {
     import_notion_folder(&pool, &PathBuf::from(dir_path)).await
 }
 

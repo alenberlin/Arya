@@ -278,8 +278,10 @@ fn semantic_edge_candidates(vectors: &[(String, Vec<f32>)]) -> Vec<GraphEdge> {
 
 /// Assemble the Galaxy graph for the whole workspace (F10).
 #[tauri::command]
-pub async fn galaxy_graph(pool: State<'_, SqlitePool>) -> Result<Graph, String> {
-    assemble_graph(&pool).await.map_err(|e| e.to_string())
+pub async fn galaxy_graph(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<Graph> {
+    assemble_graph(&pool)
+        .await
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[cfg(test)]

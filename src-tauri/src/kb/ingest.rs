@@ -51,7 +51,7 @@ pub fn ingest_blocking(
     app: &AppHandle,
     pool: &SqlitePool,
     document_id: &str,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let row = tauri::async_runtime::block_on(async {
         sqlx::query_as::<_, (String, String, String)>(
             "SELECT collection_id, ext, stored_path FROM kb_documents WHERE id = ?1",
@@ -59,7 +59,7 @@ pub fn ingest_blocking(
         .bind(document_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
     })?;
     let Some((collection_id, ext, stored_path)) = row else {
         return Err("document not found".into());
@@ -74,7 +74,7 @@ pub fn ingest_blocking(
             let msg = e.to_string();
             set_status(pool, document_id, "failed", Some(&msg));
             emit_progress(app, document_id, &collection_id, "failed", Some(&msg));
-            return Err(msg);
+            return Err(crate::error::AryaError::message(msg));
         }
     };
 
@@ -89,8 +89,14 @@ pub fn ingest_blocking(
     match &result {
         Ok(()) => emit_progress(app, document_id, &collection_id, "ready", None),
         Err(e) => {
-            set_status(pool, document_id, "failed", Some(e));
-            emit_progress(app, document_id, &collection_id, "failed", Some(e));
+            set_status(pool, document_id, "failed", Some(&e.to_string()));
+            emit_progress(
+                app,
+                document_id,
+                &collection_id,
+                "failed",
+                Some(&e.to_string()),
+            );
         }
     }
     result
@@ -103,7 +109,7 @@ fn ingest_inner(
     ext: &str,
     stored_path: &str,
     app_data_dir: &std::path::Path,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let embedder = OllamaEmbedder::new(crate::provider::ollama_url());
     if !embedder.is_available() {
         return Err("the local embedding model (Ollama) isn't running".into());
@@ -126,11 +132,11 @@ fn ingest_inner(
         embeddings.extend(embedder.embed(batch)?);
     }
     if embeddings.len() != chunks.len() {
-        return Err(format!(
+        return Err(crate::error::AryaError::message(format!(
             "embedding model returned {} rows for {} chunks",
             embeddings.len(),
             chunks.len()
-        ));
+        )));
     }
 
     let model = embedder.model().to_string();
@@ -152,12 +158,14 @@ fn extract_with_ocr(
     ext: &str,
     bytes: &[u8],
     app_data_dir: &std::path::Path,
-) -> Result<extract::Extracted, String> {
+) -> crate::error::AryaResult<extract::Extracted> {
     if ocr::is_image_ext(ext) {
         return ocr::ocr_image_file(app_data_dir, bytes);
     }
     if !extract::is_text_ext(ext) {
-        return Err(format!("unsupported file type: .{ext}"));
+        return Err(crate::error::AryaError::message(format!(
+            "unsupported file type: .{ext}"
+        )));
     }
     let extracted = extract::extract(ext, bytes)?;
     // A PDF with almost no extractable text is almost certainly a scan; try OCR
@@ -203,20 +211,23 @@ fn write_chunks(
     model: &str,
     extractor: &str,
     page_count: i64,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let chunk_count = chunks.len() as i64;
     tauri::async_runtime::block_on(async {
-        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(crate::error::AryaError::from_display)?;
         sqlx::query("DELETE FROM kb_chunks WHERE document_id = ?1")
             .bind(document_id)
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         sqlx::query("DELETE FROM kb_chunks_fts WHERE document_id = ?1")
             .bind(document_id)
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         for (ordinal, ((page, content), embedding)) in chunks.iter().zip(embeddings).enumerate() {
             let chunk_id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
@@ -234,7 +245,7 @@ fn write_chunks(
             .bind(model)
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
             sqlx::query(
                 "INSERT INTO kb_chunks_fts (chunk_id, document_id, collection_id, content) \
                  VALUES (?1, ?2, ?3, ?4)",
@@ -245,7 +256,7 @@ fn write_chunks(
             .bind(content.as_str())
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         }
         sqlx::query(
             "UPDATE kb_documents SET status = 'ready', extractor = ?2, page_count = ?3, \
@@ -258,8 +269,10 @@ fn write_chunks(
         .bind(chunk_count)
         .execute(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?;
-        tx.commit().await.map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)?;
+        tx.commit()
+            .await
+            .map_err(crate::error::AryaError::from_display)
     })
 }
 

@@ -26,8 +26,8 @@ pub struct McpServerRow {
 /// must not sit in SQLite as plaintext — same posture as provider keys).
 const MCP_ENV_SERVICE: &str = "dev.arya.app.mcp-env";
 
-fn mcp_env_entry(name: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(MCP_ENV_SERVICE, name).map_err(|e| e.to_string())
+fn mcp_env_entry(name: &str) -> crate::error::AryaResult<keyring::Entry> {
+    keyring::Entry::new(MCP_ENV_SERVICE, name).map_err(crate::error::AryaError::from_display)
 }
 
 /// Store an MCP server's env JSON in the Keychain. Returns false when the
@@ -35,7 +35,10 @@ fn mcp_env_entry(name: &str) -> Result<keyring::Entry, String> {
 /// of silently dropping the user's config.
 fn mcp_env_store(name: &str, env_json: &str) -> bool {
     mcp_env_entry(name)
-        .and_then(|e| e.set_password(env_json).map_err(|e| e.to_string()))
+        .and_then(|e| {
+            e.set_password(env_json)
+                .map_err(crate::error::AryaError::from_display)
+        })
         .is_ok()
 }
 
@@ -54,14 +57,16 @@ fn mcp_env_delete(name: &str) {
 }
 
 #[tauri::command]
-pub async fn mcp_list_servers(pool: State<'_, SqlitePool>) -> Result<Vec<McpServerRow>, String> {
+pub async fn mcp_list_servers(
+    pool: State<'_, SqlitePool>,
+) -> crate::error::AryaResult<Vec<McpServerRow>> {
     let mut servers = sqlx::query_as::<_, McpServerRow>(
         "SELECT id, name, command, args_json, env_json, enabled, created_at
          FROM mcp_servers ORDER BY name",
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     // Env stored in the Keychain is returned decrypted so the UI can edit it;
     // a legacy/fallback plaintext row is used as-is.
     for server in &mut servers {
@@ -83,13 +88,13 @@ pub async fn mcp_add_server(
     command: String,
     args: Vec<String>,
     env: std::collections::HashMap<String, String>,
-) -> Result<Vec<String>, String> {
+) -> crate::error::AryaResult<Vec<String>> {
     let name = name.trim().to_string();
     if name.is_empty() || command.trim().is_empty() {
         return Err("name and command are required".into());
     }
-    let args_json = serde_json::to_string(&args).map_err(|e| e.to_string())?;
-    let env_json = serde_json::to_string(&env).map_err(|e| e.to_string())?;
+    let args_json = serde_json::to_string(&args).map_err(crate::error::AryaError::from_display)?;
+    let env_json = serde_json::to_string(&env).map_err(crate::error::AryaError::from_display)?;
     // Keep the env (which often carries API tokens) in the Keychain, not SQLite
     // plaintext. If the Keychain is unavailable, fall back to plaintext rather
     // than dropping the user's config.
@@ -112,7 +117,7 @@ pub async fn mcp_add_server(
     .bind(&db_env)
     .execute(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     // Connect immediately in the sandboxed sidecar so tools appear now.
     let params = json!({ "name": name, "command": command, "args": args, "env": env });
@@ -134,17 +139,17 @@ pub async fn mcp_remove_server(
     pool: State<'_, SqlitePool>,
     runtime: State<'_, AgentRuntime>,
     id: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let name = sqlx::query_scalar::<_, String>("SELECT name FROM mcp_servers WHERE id = ?1")
         .bind(&id)
         .fetch_optional(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     sqlx::query("DELETE FROM mcp_servers WHERE id = ?1")
         .bind(id)
         .execute(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     if let Some(name) = &name {
         mcp_env_delete(name);
     }
@@ -209,7 +214,9 @@ pub struct RoutineRunRow {
 }
 
 #[tauri::command]
-pub async fn routine_list(pool: State<'_, SqlitePool>) -> Result<Vec<RoutineRow>, String> {
+pub async fn routine_list(
+    pool: State<'_, SqlitePool>,
+) -> crate::error::AryaResult<Vec<RoutineRow>> {
     sqlx::query_as::<_, RoutineRow>(
         "SELECT id, title, prompt, model, mode, interval_minutes, enabled,
                 last_run_at, next_run_at, created_at
@@ -217,7 +224,7 @@ pub async fn routine_list(pool: State<'_, SqlitePool>) -> Result<Vec<RoutineRow>
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
@@ -227,7 +234,7 @@ pub async fn routine_create(
     prompt: String,
     model: String,
     interval_minutes: i64,
-) -> Result<RoutineRow, String> {
+) -> crate::error::AryaResult<RoutineRow> {
     if title.trim().is_empty() || prompt.trim().is_empty() {
         return Err("title and prompt are required".into());
     }
@@ -250,7 +257,7 @@ pub async fn routine_create(
     .bind(interval_minutes)
     .fetch_one(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
@@ -258,31 +265,34 @@ pub async fn routine_set_enabled(
     pool: State<'_, SqlitePool>,
     id: String,
     enabled: bool,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     sqlx::query("UPDATE routines SET enabled = ?2 WHERE id = ?1")
         .bind(id)
         .bind(i64::from(enabled))
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
-pub async fn routine_delete(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+pub async fn routine_delete(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> crate::error::AryaResult<()> {
     sqlx::query("DELETE FROM routines WHERE id = ?1")
         .bind(id)
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
 pub async fn routine_runs(
     pool: State<'_, SqlitePool>,
     routine_id: String,
-) -> Result<Vec<RoutineRunRow>, String> {
+) -> crate::error::AryaResult<Vec<RoutineRunRow>> {
     sqlx::query_as::<_, RoutineRunRow>(
         "SELECT id, session_id, status, detail, started_at
          FROM routine_runs WHERE routine_id = ?1 ORDER BY started_at DESC LIMIT 50",
@@ -290,7 +300,7 @@ pub async fn routine_runs(
     .bind(routine_id)
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 /// Runs any routine whose next_run_at has passed, creating an agent session
@@ -329,7 +339,15 @@ pub async fn run_due_routines(app: &AppHandle, pool: &SqlitePool, runtime: &Agen
         let session_id = match session {
             Ok(s) => s.id,
             Err(e) => {
-                let _ = record_run(pool, &run_id, &routine.id, None, "failed", Some(&e)).await;
+                let _ = record_run(
+                    pool,
+                    &run_id,
+                    &routine.id,
+                    None,
+                    "failed",
+                    Some(&e.to_string()),
+                )
+                .await;
                 continue;
             }
         };
@@ -363,7 +381,7 @@ pub async fn run_due_routines(app: &AppHandle, pool: &SqlitePool, runtime: &Agen
             let _ =
                 sqlx::query("UPDATE routine_runs SET status = 'failed', detail = ?2 WHERE id = ?1")
                     .bind(&run_id)
-                    .bind(&e)
+                    .bind(e.to_string())
                     .execute(pool)
                     .await;
         }
@@ -401,21 +419,21 @@ pub async fn agent_branch_session(
     pool: State<'_, SqlitePool>,
     session_id: String,
     through_message_id: String,
-) -> Result<super::commands::AgentSession, String> {
+) -> crate::error::AryaResult<super::commands::AgentSession> {
     let source = sqlx::query_as::<_, super::commands::AgentSession>(
         "SELECT id, title, model, mode, created_at, updated_at FROM agent_sessions WHERE id = ?1",
     )
     .bind(&session_id)
     .fetch_one(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     let cutoff =
         sqlx::query_scalar::<_, String>("SELECT created_at FROM agent_messages WHERE id = ?1")
             .bind(&through_message_id)
             .fetch_one(&*pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
 
     let new_id = uuid::Uuid::new_v4().to_string();
     let new_session = sqlx::query_as::<_, super::commands::AgentSession>(
@@ -429,7 +447,7 @@ pub async fn agent_branch_session(
     .bind(&source.mode)
     .fetch_one(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     sqlx::query(
         "INSERT INTO agent_messages (id, session_id, role, content_json, created_at)
@@ -441,7 +459,7 @@ pub async fn agent_branch_session(
     .bind(&cutoff)
     .execute(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     Ok(new_session)
 }

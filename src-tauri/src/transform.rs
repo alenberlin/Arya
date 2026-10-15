@@ -28,7 +28,7 @@ fn run(
     model: Option<String>,
     text: &str,
     instruction: &str,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     let user = user_message(instruction, text);
     let qualified = match provider {
         TranslateProvider::Local => {
@@ -40,7 +40,9 @@ fn run(
         TranslateProvider::Cloud => model
             .filter(|m| m.contains(':'))
             .or_else(crate::provider::default_model)
-            .ok_or_else(|| "no cloud API key set — add one in Account.".to_string())?,
+            .ok_or_else(|| {
+                crate::error::AryaError::message("no cloud API key set — add one in Account.")
+            })?,
     };
     crate::provider::chat(
         &qualified,
@@ -60,7 +62,7 @@ pub async fn ai_transform(
     instruction: String,
     provider: Option<TranslateProvider>,
     model: Option<String>,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     if source_text.trim().is_empty() {
         return Err("there is nothing to transform".into());
     }
@@ -70,7 +72,7 @@ pub async fn ai_transform(
     let provider = provider.unwrap_or_default();
     tokio::task::spawn_blocking(move || run(provider, model, &source_text, &instruction))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
 }
 
 #[cfg(test)]

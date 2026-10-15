@@ -21,11 +21,14 @@ const BLANK_SYSTEM_AUDIO_MESSAGE: &str =
 #[derive(Default)]
 pub struct SystemCaptureSlot(pub Mutex<Option<SystemCapture>>);
 
-fn recordings_dir(app: &AppHandle, session_id: &str) -> Result<std::path::PathBuf, String> {
+fn recordings_dir(
+    app: &AppHandle,
+    session_id: &str,
+) -> crate::error::AryaResult<std::path::PathBuf> {
     Ok(app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .join("recordings")
         .join(session_id))
 }
@@ -39,7 +42,7 @@ pub async fn start_recording(
     recorder: State<'_, Recorder>,
     note_id: Option<String>,
     source_mode: Option<String>,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     start_recording_inner(&app, &pool, &recorder, note_id, source_mode).await
 }
 
@@ -49,7 +52,7 @@ pub async fn start_recording_inner(
     recorder: &Recorder,
     note_id: Option<String>,
     source_mode: Option<String>,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     let want_system = source_mode.as_deref() == Some("microphone-and-system");
     let helper_dir = if want_system {
         Some(helper_bin_dir(app)?)
@@ -61,7 +64,7 @@ pub async fn start_recording_inner(
         None => {
             crate::notes::insert_note(pool, "New recording")
                 .await
-                .map_err(|e| e.to_string())?
+                .map_err(crate::error::AryaError::from_display)?
                 .id
         }
     };
@@ -190,7 +193,7 @@ pub async fn start_recording_inner(
     .bind(&note_id)
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     Ok(note_id)
 }
 
@@ -199,7 +202,7 @@ pub async fn pause_recording(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     recorder: State<'_, Recorder>,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let status = recorder.status();
     recorder.pause()?;
     if let Some(capture) = app
@@ -222,7 +225,7 @@ pub async fn resume_recording(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     recorder: State<'_, Recorder>,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     recorder.resume()?;
     if let Some(capture) = app
         .state::<SystemCaptureSlot>()
@@ -245,7 +248,7 @@ pub async fn finish_recording(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     recorder: State<'_, Recorder>,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     finish_recording_inner(&app, &pool, &recorder).await
 }
 
@@ -253,7 +256,7 @@ pub async fn finish_recording_inner(
     app: &AppHandle,
     pool: &SqlitePool,
     recorder: &Recorder,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     let status = recorder.status();
     let (session_id, note_id) = match (status.session_id, status.note_id) {
         (Some(s), Some(n)) => (s, n),
@@ -279,7 +282,7 @@ pub async fn finish_recording_inner(
     )
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     // Stop the system helper (if running) and promote its file.
     let capture = app
@@ -306,7 +309,7 @@ pub async fn finish_recording_inner(
                         .bind(size as i64)
                         .execute(pool)
                         .await
-                        .map_err(|e| e.to_string())?;
+                        .map_err(crate::error::AryaError::from_display)?;
                     } else {
                         let _ = app.emit(
                             "recording:system-audio-unavailable",
@@ -335,8 +338,11 @@ async fn insert_starting_session(
     source_mode: &str,
     microphone_partial: &std::path::Path,
     system_partial: Option<&std::path::Path>,
-) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+) -> crate::error::AryaResult<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(crate::error::AryaError::from_display)?;
     sqlx::query(
         "INSERT INTO recording_sessions
              (id, note_id, status, source_mode, sample_rate, channels, started_at, updated_at)
@@ -348,7 +354,7 @@ async fn insert_starting_session(
     .bind(source_mode)
     .execute(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     sqlx::query(
         "INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at)
          VALUES (?1, ?2, 'microphone', ?3, 'partial', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
@@ -358,7 +364,7 @@ async fn insert_starting_session(
     .bind(microphone_partial.to_string_lossy().to_string())
     .execute(&mut *tx)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     if let Some(path) = system_partial {
         sqlx::query(
             "INSERT INTO audio_artifacts (id, session_id, source, path, status, created_at)
@@ -369,9 +375,11 @@ async fn insert_starting_session(
         .bind(path.to_string_lossy().to_string())
         .execute(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     }
-    tx.commit().await.map_err(|e| e.to_string())
+    tx.commit()
+        .await
+        .map_err(crate::error::AryaError::from_display)
 }
 
 async fn mark_session_recording(
@@ -380,7 +388,7 @@ async fn mark_session_recording(
     source_mode: &str,
     sample_rate: u32,
     channels: u16,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     sqlx::query(
         "UPDATE recording_sessions
          SET status = 'recording', source_mode = ?2, sample_rate = ?3, channels = ?4,
@@ -394,16 +402,19 @@ async fn mark_session_recording(
     .execute(pool)
     .await
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
-async fn remove_system_artifact(pool: &SqlitePool, session_id: &str) -> Result<(), String> {
+async fn remove_system_artifact(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> crate::error::AryaResult<()> {
     sqlx::query("DELETE FROM audio_artifacts WHERE session_id = ?1 AND source = 'system'")
         .bind(session_id)
         .execute(pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 fn system_artifact_has_audio(size_bytes: u64) -> bool {
@@ -429,7 +440,7 @@ pub fn retry_processing(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     note_id: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     spawn_processing(app, pool.inner().clone(), note_id);
     Ok(())
 }
@@ -440,7 +451,10 @@ pub fn get_generation_settings(app: AppHandle) -> GenerationSettings {
 }
 
 #[tauri::command]
-pub fn set_generation_settings(app: AppHandle, settings: GenerationSettings) -> Result<(), String> {
+pub fn set_generation_settings(
+    app: AppHandle,
+    settings: GenerationSettings,
+) -> crate::error::AryaResult<()> {
     save_generation_settings(&app, &settings)
 }
 
@@ -459,17 +473,18 @@ pub fn calendar_access_status() -> crate::calendar::CalendarAccess {
 }
 
 #[tauri::command]
-pub async fn request_calendar_access() -> Result<crate::calendar::CalendarAccess, String> {
+pub async fn request_calendar_access() -> crate::error::AryaResult<crate::calendar::CalendarAccess>
+{
     tauri::async_runtime::spawn_blocking(crate::calendar::request_access)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
-fn helper_bin_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+fn helper_bin_dir(app: &AppHandle) -> crate::error::AryaResult<std::path::PathBuf> {
     Ok(app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .join("bin"))
 }
 
@@ -531,7 +546,7 @@ async fn update_session_status(
     session_id: &str,
     status: &str,
     elapsed_ms: u64,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     sqlx::query(
         "UPDATE recording_sessions SET status = ?2, elapsed_ms = ?3,
          updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
@@ -542,7 +557,7 @@ async fn update_session_status(
     .execute(pool)
     .await
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[cfg(test)]

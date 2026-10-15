@@ -58,7 +58,7 @@ pub fn search_blocking(
     collection_id: &str,
     query: &str,
     limit: usize,
-) -> Result<Vec<KbHit>, String> {
+) -> crate::error::AryaResult<Vec<KbHit>> {
     let query = query.trim();
     if query.is_empty() {
         return Ok(Vec::new());
@@ -165,7 +165,10 @@ fn rank(
         .collect()
 }
 
-async fn load_chunks(pool: &SqlitePool, collection_id: &str) -> Result<Vec<ChunkRow>, String> {
+async fn load_chunks(
+    pool: &SqlitePool,
+    collection_id: &str,
+) -> crate::error::AryaResult<Vec<ChunkRow>> {
     let rows = sqlx::query_as::<_, (String, String, String, Option<i64>, String, Vec<u8>)>(
         "SELECT c.id, c.document_id, d.filename, c.page, c.content, c.embedding \
          FROM kb_chunks c JOIN kb_documents d ON d.id = c.document_id \
@@ -174,7 +177,7 @@ async fn load_chunks(pool: &SqlitePool, collection_id: &str) -> Result<Vec<Chunk
     .bind(collection_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     Ok(rows
         .into_iter()
         .map(
@@ -197,7 +200,7 @@ async fn fts_search(
     collection_id: &str,
     query: &str,
     limit: i64,
-) -> Result<Vec<String>, String> {
+) -> crate::error::AryaResult<Vec<String>> {
     let Some(match_query) = fts_match_query(query) else {
         return Ok(Vec::new());
     };
@@ -211,7 +214,7 @@ async fn fts_search(
     .bind(limit)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 /// Build a safe FTS5 MATCH expression from free text: each alphanumeric token is

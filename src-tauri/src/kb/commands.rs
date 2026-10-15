@@ -24,30 +24,32 @@ const COLLECTION_SELECT: &str = "SELECT c.id, c.name, c.description, c.created_a
 
 /// Root directory holding every collection's copied raw files:
 /// `<app_data>/knowledge/<collection_id>/<uuid>-<name>`.
-pub(crate) fn kb_root(app: &AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn kb_root(app: &AppHandle) -> crate::error::AryaResult<PathBuf> {
     Ok(app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .join("knowledge"))
 }
 
 /// Re-reads one collection (with counts) after a mutation so the UI always
 /// receives the authoritative row.
-async fn fetch_collection(pool: &SqlitePool, id: &str) -> Result<Collection, String> {
+async fn fetch_collection(pool: &SqlitePool, id: &str) -> crate::error::AryaResult<Collection> {
     sqlx::query_as::<_, Collection>(&format!("{COLLECTION_SELECT} WHERE c.id = ?1"))
         .bind(id)
         .fetch_one(pool)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
-pub async fn kb_list_collections(pool: State<'_, SqlitePool>) -> Result<Vec<Collection>, String> {
+pub async fn kb_list_collections(
+    pool: State<'_, SqlitePool>,
+) -> crate::error::AryaResult<Vec<Collection>> {
     sqlx::query_as::<_, Collection>(&format!("{COLLECTION_SELECT} ORDER BY c.updated_at DESC"))
         .fetch_all(&*pool)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
@@ -55,7 +57,7 @@ pub async fn kb_create_collection(
     pool: State<'_, SqlitePool>,
     name: String,
     description: Option<String>,
-) -> Result<Collection, String> {
+) -> crate::error::AryaResult<Collection> {
     let name = name.trim();
     if name.is_empty() {
         return Err("a collection name is required".into());
@@ -67,7 +69,7 @@ pub async fn kb_create_collection(
         .bind(description.unwrap_or_default().trim())
         .execute(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     fetch_collection(&pool, &id).await
 }
 
@@ -77,7 +79,7 @@ pub async fn kb_rename_collection(
     id: String,
     name: String,
     description: Option<String>,
-) -> Result<Collection, String> {
+) -> crate::error::AryaResult<Collection> {
     let name = name.trim();
     if name.is_empty() {
         return Err("a collection name is required".into());
@@ -94,7 +96,7 @@ pub async fn kb_rename_collection(
     .bind(description.map(|d| d.trim().to_string()))
     .execute(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     fetch_collection(&pool, &id).await
 }
 
@@ -102,24 +104,27 @@ pub async fn kb_rename_collection(
 /// up. Split out from the command so it is testable without an `AppHandle`. The
 /// FTS mirror has no foreign key, so its rows are pruned explicitly before the
 /// collection row's cascade removes `kb_documents` + `kb_chunks`.
-async fn delete_collection_inner(pool: &SqlitePool, id: &str) -> Result<Vec<String>, String> {
+async fn delete_collection_inner(
+    pool: &SqlitePool,
+    id: &str,
+) -> crate::error::AryaResult<Vec<String>> {
     let paths: Vec<String> = sqlx::query_scalar(
         "SELECT stored_path FROM kb_documents WHERE collection_id = ?1 AND stored_path <> ''",
     )
     .bind(id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     sqlx::query("DELETE FROM kb_chunks_fts WHERE collection_id = ?1")
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     sqlx::query("DELETE FROM kb_collections WHERE id = ?1")
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     Ok(paths)
 }
 
@@ -128,7 +133,7 @@ pub async fn kb_delete_collection(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     id: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let paths = delete_collection_inner(&pool, &id).await?;
     for p in paths {
         let _ = std::fs::remove_file(&p);
@@ -148,7 +153,7 @@ pub struct KbStatus {
 }
 
 #[tauri::command]
-pub async fn kb_status() -> Result<KbStatus, String> {
+pub async fn kb_status() -> crate::error::AryaResult<KbStatus> {
     let url = crate::provider::ollama_url();
     let embedder_available =
         tauri::async_runtime::spawn_blocking(move || OllamaEmbedder::new(url).is_available())
@@ -182,14 +187,14 @@ const DOCUMENT_SELECT: &str = "SELECT id, collection_id, filename, ext, byte_siz
 pub async fn kb_list_documents(
     pool: State<'_, SqlitePool>,
     collection_id: String,
-) -> Result<Vec<KbDocument>, String> {
+) -> crate::error::AryaResult<Vec<KbDocument>> {
     sqlx::query_as::<_, KbDocument>(&format!(
         "{DOCUMENT_SELECT} WHERE collection_id = ?1 ORDER BY created_at DESC"
     ))
     .bind(&collection_id)
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 /// Stage each incoming file into the collection's workspace directory, register
@@ -203,12 +208,12 @@ async fn add_documents(
     pool: SqlitePool,
     collection_id: String,
     sources: Vec<(String, FileSource)>,
-) -> Result<Vec<KbDocument>, String> {
+) -> crate::error::AryaResult<Vec<KbDocument>> {
     let exists: Option<String> = sqlx::query_scalar("SELECT id FROM kb_collections WHERE id = ?1")
         .bind(&collection_id)
         .fetch_optional(&pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     if exists.is_none() {
         return Err("collection not found".into());
     }
@@ -236,13 +241,13 @@ async fn add_documents(
         .bind(&stored_path)
         .execute(&pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
 
         let doc = sqlx::query_as::<_, KbDocument>(&format!("{DOCUMENT_SELECT} WHERE id = ?1"))
             .bind(&id)
             .fetch_one(&pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         created.push(doc);
     }
 
@@ -270,7 +275,7 @@ pub async fn kb_add_documents(
     pool: State<'_, SqlitePool>,
     collection_id: String,
     paths: Vec<String>,
-) -> Result<Vec<KbDocument>, String> {
+) -> crate::error::AryaResult<Vec<KbDocument>> {
     let sources = paths
         .into_iter()
         .map(|path| (safe_file_name(&path), FileSource::Path(PathBuf::from(path))))
@@ -290,7 +295,7 @@ pub async fn kb_add_dropped_document(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     request: Request<'_>,
-) -> Result<KbDocument, String> {
+) -> crate::error::AryaResult<KbDocument> {
     let collection_id = header(&request, "x-collection-id")?;
     let name = safe_file_name(&header(&request, "x-filename")?);
     let InvokeBody::Raw(bytes) = request.body() else {
@@ -307,28 +312,31 @@ pub async fn kb_add_dropped_document(
     )
     .await?
     .pop()
-    .ok_or_else(|| "document was not created".to_string())
+    .ok_or_else(|| crate::error::AryaError::message("document was not created"))
 }
 
 #[tauri::command]
-pub async fn kb_delete_document(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+pub async fn kb_delete_document(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> crate::error::AryaResult<()> {
     let path: Option<String> =
         sqlx::query_scalar("SELECT stored_path FROM kb_documents WHERE id = ?1")
             .bind(&id)
             .fetch_optional(&*pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
     // kb_chunks cascade on the document row; the FTS mirror has no FK.
     sqlx::query("DELETE FROM kb_chunks_fts WHERE document_id = ?1")
         .bind(&id)
         .execute(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     sqlx::query("DELETE FROM kb_documents WHERE id = ?1")
         .bind(&id)
         .execute(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     if let Some(p) = path {
         if !p.is_empty() {
             let _ = std::fs::remove_file(&p);
@@ -345,14 +353,14 @@ pub async fn kb_search(
     collection_id: String,
     query: String,
     limit: Option<i64>,
-) -> Result<Vec<super::retrieve::KbHit>, String> {
+) -> crate::error::AryaResult<Vec<super::retrieve::KbHit>> {
     let limit = limit.unwrap_or(8).clamp(1, 50) as usize;
     let pool = pool.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         super::retrieve::search_blocking(&pool, &collection_id, &query, limit)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(crate::error::AryaError::from_display)?
 }
 
 /// Re-run extraction + embedding for one document (e.g. after starting Ollama).
@@ -361,12 +369,12 @@ pub async fn kb_reindex_document(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     id: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     sqlx::query("UPDATE kb_documents SET status = 'pending', error = NULL WHERE id = ?1")
         .bind(&id)
         .execute(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     let pool = pool.inner().clone();
     tauri::async_runtime::spawn(async move {
         let _ = tauri::async_runtime::spawn_blocking(move || {

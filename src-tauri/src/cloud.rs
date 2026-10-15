@@ -29,7 +29,7 @@ pub fn chat(
     user: &str,
     temperature: f32,
     timeout: Duration,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     let (provider, model) = resolve(qualified_model)?;
     let key = keys::get(provider)
         .ok_or_else(|| format!("no {} API key set — add one in Account.", provider.id()))?;
@@ -63,7 +63,7 @@ pub fn default_model() -> Option<String> {
 /// Resolve a model string to `(provider, bare_model)`. An explicit
 /// `provider:model` prefix wins; a bare id falls back to whichever key the user
 /// has (Anthropic preferred), so a caller with a hard-coded default still works.
-fn resolve(qualified: &str) -> Result<(Provider, String), String> {
+fn resolve(qualified: &str) -> crate::error::AryaResult<(Provider, String)> {
     if let Some((prefix, model)) = qualified.split_once(':') {
         if let Some(provider) = Provider::parse(prefix) {
             return Ok((provider, model.to_string()));
@@ -75,7 +75,9 @@ fn resolve(qualified: &str) -> Result<(Provider, String), String> {
     if keys::get(Provider::OpenAi).is_some() {
         return Ok((Provider::OpenAi, qualified.to_string()));
     }
-    Err("no cloud API key set — add one in Account.".to_string())
+    Err(crate::error::AryaError::message(
+        "no cloud API key set — add one in Account.",
+    ))
 }
 
 // ---- OpenAI (chat/completions) --------------------------------------------
@@ -101,7 +103,7 @@ fn openai_chat(
     user: &str,
     temperature: f32,
     timeout: Duration,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     let body = json!({
         "model": model,
         "temperature": temperature,
@@ -117,18 +119,18 @@ fn openai_chat(
         .header("authorization", format!("Bearer {key}"))
         .json(&body)
         .send()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .error_for_status()
         .map_err(map_status_err)?
         .json()
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     parsed
         .choices
         .into_iter()
         .next()
         .map(|c| c.message.content.trim().to_string())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| "the model returned nothing".to_string())
+        .ok_or_else(|| crate::error::AryaError::message("the model returned nothing"))
 }
 
 // ---- Anthropic (messages) -------------------------------------------------
@@ -151,7 +153,7 @@ fn anthropic_chat(
     user: &str,
     temperature: f32,
     timeout: Duration,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     let body = json!({
         "model": model,
         "max_tokens": MAX_TOKENS,
@@ -166,11 +168,11 @@ fn anthropic_chat(
         .header("anthropic-version", "2023-06-01")
         .json(&body)
         .send()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .error_for_status()
         .map_err(map_status_err)?
         .json()
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     let text = parsed
         .content
         .into_iter()
@@ -179,7 +181,9 @@ fn anthropic_chat(
         .trim()
         .to_string();
     if text.is_empty() {
-        Err("the model returned nothing".to_string())
+        Err(crate::error::AryaError::message(
+            "the model returned nothing",
+        ))
     } else {
         Ok(text)
     }

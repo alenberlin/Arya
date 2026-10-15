@@ -12,14 +12,14 @@ use crate::speech::AudioClip;
 enum Command {
     Start {
         device: Option<String>,
-        reply: mpsc::Sender<Result<(), String>>,
+        reply: mpsc::Sender<crate::error::AryaResult<()>>,
     },
     Stop {
-        reply: mpsc::Sender<Result<AudioClip, String>>,
+        reply: mpsc::Sender<crate::error::AryaResult<AudioClip>>,
     },
     /// Non-destructive copy of the audio so far, for live transcription.
     Snapshot {
-        reply: mpsc::Sender<Result<AudioClip, String>>,
+        reply: mpsc::Sender<crate::error::AryaResult<AudioClip>>,
     },
     Abort,
 }
@@ -59,13 +59,16 @@ impl CaptureWorker {
                                     let _ = reply.send(Ok(()));
                                 }
                                 Err(e) => {
-                                    let _ = reply.send(Err(e.to_string()));
+                                    let _ =
+                                        reply.send(Err(crate::error::AryaError::from_display(e)));
                                 }
                             }
                         }
                         Ok(Command::Stop { reply }) => match active.take() {
                             Some(handle) => {
-                                let _ = reply.send(handle.stop().map_err(|e| e.to_string()));
+                                let _ = reply.send(
+                                    handle.stop().map_err(crate::error::AryaError::from_display),
+                                );
                             }
                             None => {
                                 let _ = reply.send(Err("not recording".into()));
@@ -73,7 +76,9 @@ impl CaptureWorker {
                         },
                         Ok(Command::Snapshot { reply }) => {
                             let result = match &active {
-                                Some(handle) => handle.snapshot().map_err(|e| e.to_string()),
+                                Some(handle) => handle
+                                    .snapshot()
+                                    .map_err(crate::error::AryaError::from_display),
                                 None => Err("not recording".into()),
                             };
                             let _ = reply.send(result);
@@ -95,7 +100,7 @@ impl CaptureWorker {
         Self { sender, level }
     }
 
-    pub fn start(&self, device: Option<String>) -> Result<(), String> {
+    pub fn start(&self, device: Option<String>) -> crate::error::AryaResult<()> {
         let (reply, rx) = mpsc::channel();
         self.sender
             .send(Command::Start { device, reply })
@@ -103,7 +108,7 @@ impl CaptureWorker {
         rx.recv().map_err(|_| "capture worker gone".to_string())?
     }
 
-    pub fn stop(&self) -> Result<AudioClip, String> {
+    pub fn stop(&self) -> crate::error::AryaResult<AudioClip> {
         let (reply, rx) = mpsc::channel();
         self.sender
             .send(Command::Stop { reply })
@@ -112,7 +117,7 @@ impl CaptureWorker {
     }
 
     /// Non-destructive copy of the audio captured so far (live transcription).
-    pub fn snapshot(&self) -> Result<AudioClip, String> {
+    pub fn snapshot(&self) -> crate::error::AryaResult<AudioClip> {
         let (reply, rx) = mpsc::channel();
         self.sender
             .send(Command::Snapshot { reply })

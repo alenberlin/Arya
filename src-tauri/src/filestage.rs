@@ -46,7 +46,7 @@ pub fn safe_file_name(raw: &str) -> String {
 
 /// Read a percent-encoded metadata header off a raw-body IPC request. Header
 /// values must be ASCII, so the frontend encodes filenames before sending them.
-pub fn header(request: &Request<'_>, key: &str) -> Result<String, String> {
+pub fn header(request: &Request<'_>, key: &str) -> crate::error::AryaResult<String> {
     let raw = request
         .headers()
         .get(key)
@@ -67,12 +67,12 @@ pub async fn stage(
     id: &str,
     name: &str,
     source: FileSource,
-) -> Result<(String, i64), String> {
+) -> crate::error::AryaResult<(String, i64)> {
     let dest = dir.join(format!("{id}-{name}"));
     let stored_path = dest.to_string_lossy().to_string();
     // A staged file can be hundreds of megabytes; never on the async threads.
-    let size = tauri::async_runtime::spawn_blocking(move || -> Result<i64, String> {
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let size = tauri::async_runtime::spawn_blocking(move || -> crate::error::AryaResult<i64> {
+        std::fs::create_dir_all(&dir).map_err(crate::error::AryaError::from_display)?;
         match source {
             FileSource::Path(src) => {
                 std::fs::copy(&src, &dest).map_err(|e| format!("copy failed: {e}"))?;
@@ -86,7 +86,7 @@ pub async fn stage(
             .unwrap_or(0))
     })
     .await
-    .map_err(|e| e.to_string())??;
+    .map_err(crate::error::AryaError::from_display)??;
     Ok((stored_path, size))
 }
 

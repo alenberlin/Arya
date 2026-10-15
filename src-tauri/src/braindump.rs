@@ -44,7 +44,7 @@ pub struct ProposedNote {
 /// Read and concatenate the text of several files (UTF-8, lossy). Used when the
 /// user adds text files to a brain dump. Reading happens off the async runtime.
 #[tauri::command]
-pub async fn read_text_files(paths: Vec<String>) -> Result<String, String> {
+pub async fn read_text_files(paths: Vec<String>) -> crate::error::AryaResult<String> {
     tokio::task::spawn_blocking(move || {
         let mut out = String::new();
         for path in &paths {
@@ -57,7 +57,7 @@ pub async fn read_text_files(paths: Vec<String>) -> Result<String, String> {
         Ok(out)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(crate::error::AryaError::from_display)?
 }
 
 /// Split a brain dump into proposed single-topic notes using the local model.
@@ -66,17 +66,17 @@ pub async fn read_text_files(paths: Vec<String>) -> Result<String, String> {
 pub async fn split_braindump_into_notes(
     source_text: String,
     model: Option<String>,
-) -> Result<Vec<ProposedNote>, String> {
+) -> crate::error::AryaResult<Vec<ProposedNote>> {
     let text = source_text.trim().to_string();
     if text.chars().count() < MIN_CHARS {
         return Err("there isn't enough text to organize into notes".into());
     }
     tokio::task::spawn_blocking(move || run_split(&text, model))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
 }
 
-fn run_split(text: &str, model: Option<String>) -> Result<Vec<ProposedNote>, String> {
+fn run_split(text: &str, model: Option<String>) -> crate::error::AryaResult<Vec<ProposedNote>> {
     let model = model.unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string());
     // Constrain the decoder to a valid array of {title, body}. Local models
     // reliably produce *almost*-valid JSON on longer outputs (trailing commas,
@@ -146,7 +146,7 @@ pub async fn create_notes_from_split(
     pool: State<'_, SqlitePool>,
     notes: Vec<ProposedNote>,
     folder_id: Option<String>,
-) -> Result<Vec<String>, String> {
+) -> crate::error::AryaResult<Vec<String>> {
     create_notes_inner(&pool, notes, folder_id).await
 }
 
@@ -156,7 +156,7 @@ async fn create_notes_inner(
     pool: &SqlitePool,
     notes: Vec<ProposedNote>,
     folder_id: Option<String>,
-) -> Result<Vec<String>, String> {
+) -> crate::error::AryaResult<Vec<String>> {
     let notes: Vec<ProposedNote> = notes
         .into_iter()
         .filter(|n| !n.body.trim().is_empty())
@@ -164,7 +164,10 @@ async fn create_notes_inner(
     if notes.is_empty() {
         return Err("there are no notes to create".into());
     }
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(crate::error::AryaError::from_display)?;
     let mut ids = Vec::with_capacity(notes.len());
     for note in &notes {
         let id = uuid::Uuid::new_v4().to_string();
@@ -183,10 +186,12 @@ async fn create_notes_inner(
         .bind(&folder_id)
         .execute(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
         ids.push(id);
     }
-    tx.commit().await.map_err(|e| e.to_string())?;
+    tx.commit()
+        .await
+        .map_err(crate::error::AryaError::from_display)?;
     Ok(ids)
 }
 

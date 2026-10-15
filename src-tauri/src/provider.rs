@@ -19,7 +19,7 @@ pub fn chat(
     user: &str,
     temperature: f32,
     timeout: Duration,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     if let Some(model) = qualified_model.strip_prefix("ollama:") {
         let client = crate::http::blocking_client();
         crate::http::ollama_chat(
@@ -31,7 +31,9 @@ pub fn chat(
             temperature,
             timeout,
         )
-        .ok_or_else(|| "the local model did not respond — is Ollama running?".to_string())
+        .ok_or_else(|| {
+            crate::error::AryaError::message("the local model did not respond — is Ollama running?")
+        })
     } else {
         crate::cloud::chat(qualified_model, system, user, temperature, timeout)
     }
@@ -50,7 +52,7 @@ pub fn chat_ex(
     timeout: Duration,
     num_ctx: Option<u32>,
     format: Option<serde_json::Value>,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     let Some(model) = qualified_model.strip_prefix("ollama:") else {
         return Err(
             "extended options (num_ctx/format) are only supported for local Ollama models".into(),
@@ -68,7 +70,9 @@ pub fn chat_ex(
         num_ctx,
         format,
     )
-    .ok_or_else(|| "the local model did not respond — is Ollama running?".to_string())
+    .ok_or_else(|| {
+        crate::error::AryaError::message("the local model did not respond — is Ollama running?")
+    })
 }
 
 fn url_holder() -> &'static RwLock<String> {

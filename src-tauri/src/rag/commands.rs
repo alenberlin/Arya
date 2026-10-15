@@ -40,11 +40,11 @@ pub struct RagStatus {
 }
 
 #[tauri::command]
-pub async fn rag_status(pool: State<'_, SqlitePool>) -> Result<RagStatus, String> {
+pub async fn rag_status(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<RagStatus> {
     let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM rag_chunks")
         .fetch_one(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     let available = tauri::async_runtime::spawn_blocking(|| {
         OllamaEmbedder::new(crate::provider::ollama_url()).is_available()
     })
@@ -60,24 +60,28 @@ pub async fn rag_status(pool: State<'_, SqlitePool>) -> Result<RagStatus, String
 /// `dictation` | `session`) and invalidates the in-memory search cache so the
 /// next query reflects the deletion. Every delete path must call this so a
 /// deleted note/dictation/chat is truly gone, not still searchable.
-pub async fn delete_for_node(pool: &SqlitePool, kind: &str, id: &str) -> Result<(), String> {
+pub async fn delete_for_node(
+    pool: &SqlitePool,
+    kind: &str,
+    id: &str,
+) -> crate::error::AryaResult<()> {
     sqlx::query("DELETE FROM rag_chunks WHERE source_kind = ?1 AND source_id = ?2")
         .bind(kind)
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     invalidate_cache();
     Ok(())
 }
 
 /// Removes every semantic-index row of a kind (delete-all flows).
-pub async fn delete_for_kind(pool: &SqlitePool, kind: &str) -> Result<(), String> {
+pub async fn delete_for_kind(pool: &SqlitePool, kind: &str) -> crate::error::AryaResult<()> {
     sqlx::query("DELETE FROM rag_chunks WHERE source_kind = ?1")
         .bind(kind)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     invalidate_cache();
     Ok(())
 }
@@ -85,21 +89,27 @@ pub async fn delete_for_kind(pool: &SqlitePool, kind: &str) -> Result<(), String
 /// Rebuilds the index from all current notes, transcripts, dictation, and
 /// agent sessions. Emits `rag:progress` as it goes.
 #[tauri::command]
-pub async fn rag_reindex(app: AppHandle, pool: State<'_, SqlitePool>) -> Result<i64, String> {
+pub async fn rag_reindex(
+    app: AppHandle,
+    pool: State<'_, SqlitePool>,
+) -> crate::error::AryaResult<i64> {
     let pool = pool.inner().clone();
     tauri::async_runtime::spawn_blocking(move || reindex_blocking(&app, &pool))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
 }
 
 /// Public wrapper for the debug-only dev hooks; compiled out of release, like
 /// its only caller.
 #[cfg(debug_assertions)]
-pub fn reindex_blocking_public(app: &AppHandle, pool: &SqlitePool) -> Result<i64, String> {
+pub fn reindex_blocking_public(
+    app: &AppHandle,
+    pool: &SqlitePool,
+) -> crate::error::AryaResult<i64> {
     reindex_blocking(app, pool)
 }
 
-fn reindex_blocking(app: &AppHandle, pool: &SqlitePool) -> Result<i64, String> {
+fn reindex_blocking(app: &AppHandle, pool: &SqlitePool) -> crate::error::AryaResult<i64> {
     let embedder = OllamaEmbedder::new(crate::provider::ollama_url());
     if !embedder.is_available() {
         return Err("local embedding model (Ollama) is not running".into());
@@ -135,7 +145,7 @@ fn replace_index(
     pool: &SqlitePool,
     documents: &[Document],
     embedder: &dyn Embedder,
-) -> Result<i64, String> {
+) -> crate::error::AryaResult<i64> {
     // Embed everything into memory FIRST. Only once all embedding succeeds do we
     // touch the live index, and then in a single transaction — so a mid-run
     // Ollama failure leaves the existing index intact instead of emptying search.
@@ -147,11 +157,11 @@ fn replace_index(
         }
         let embeddings = embedder.embed(&chunks)?;
         if embeddings.len() != chunks.len() {
-            return Err(format!(
+            return Err(crate::error::AryaError::message(format!(
                 "embedding model returned {} rows for {} chunks",
                 embeddings.len(),
                 chunks.len()
-            ));
+            )));
         }
         for (chunk, embedding) in chunks.iter().zip(&embeddings) {
             staged.push(Staged {
@@ -167,11 +177,14 @@ fn replace_index(
     let total = staged.len() as i64;
     let model = embedder.model().to_string();
     tauri::async_runtime::block_on(async {
-        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(crate::error::AryaError::from_display)?;
         sqlx::query("DELETE FROM rag_chunks")
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         for row in &staged {
             sqlx::query(
                 "INSERT INTO rag_chunks
@@ -187,9 +200,11 @@ fn replace_index(
             .bind(&model)
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         }
-        tx.commit().await.map_err(|e| e.to_string())
+        tx.commit()
+            .await
+            .map_err(crate::error::AryaError::from_display)
     })?;
     Ok(total)
 }
@@ -200,19 +215,19 @@ pub async fn rag_search(
     pool: State<'_, SqlitePool>,
     query: String,
     limit: Option<i64>,
-) -> Result<Vec<SearchHit>, String> {
+) -> crate::error::AryaResult<Vec<SearchHit>> {
     let limit = limit.unwrap_or(8).clamp(1, 50) as usize;
     let pool = pool.inner().clone();
     tauri::async_runtime::spawn_blocking(move || search_blocking(&pool, &query, limit))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
 }
 
 pub fn search_blocking(
     pool: &SqlitePool,
     query: &str,
     limit: usize,
-) -> Result<Vec<SearchHit>, String> {
+) -> crate::error::AryaResult<Vec<SearchHit>> {
     let embedder = OllamaEmbedder::new(crate::provider::ollama_url());
     let query_embedding = embedder
         .embed(&[query.to_string()])?
@@ -245,7 +260,7 @@ pub fn search_blocking(
 }
 
 /// Loads chunk embeddings into the in-memory cache if not already present.
-fn ensure_cache_loaded(pool: &SqlitePool) -> Result<(), String> {
+fn ensure_cache_loaded(pool: &SqlitePool) -> crate::error::AryaResult<()> {
     if cache().lock().expect("rag cache lock").is_some() {
         return Ok(());
     }
@@ -255,7 +270,7 @@ fn ensure_cache_loaded(pool: &SqlitePool) -> Result<(), String> {
         )
         .fetch_all(pool)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
     })?;
     let chunks: Vec<CachedChunk> = rows
         .into_iter()
@@ -280,7 +295,7 @@ struct Document {
     content: String,
 }
 
-async fn collect_documents(pool: &SqlitePool) -> Result<Vec<Document>, String> {
+async fn collect_documents(pool: &SqlitePool) -> crate::error::AryaResult<Vec<Document>> {
     let mut docs = Vec::new();
 
     // Notes: title + body + manual notes.
@@ -289,7 +304,7 @@ async fn collect_documents(pool: &SqlitePool) -> Result<Vec<Document>, String> {
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     for (id, title, body, manual) in notes {
         let content = format!("{title}\n{manual}\n{body}");
         if content.trim().len() > 3 {
@@ -308,7 +323,7 @@ async fn collect_documents(pool: &SqlitePool) -> Result<Vec<Document>, String> {
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     for (id, text) in dictations {
         docs.push(Document {
             kind: "dictation".into(),
@@ -322,7 +337,7 @@ async fn collect_documents(pool: &SqlitePool) -> Result<Vec<Document>, String> {
     let sessions = sqlx::query_as::<_, (String, String)>("SELECT id, title FROM agent_sessions")
         .fetch_all(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     for (id, title) in sessions {
         let texts = sqlx::query_scalar::<_, String>(
             "SELECT content_json FROM agent_messages WHERE session_id = ?1 ORDER BY created_at",
@@ -330,7 +345,7 @@ async fn collect_documents(pool: &SqlitePool) -> Result<Vec<Document>, String> {
         .bind(&id)
         .fetch_all(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
         let content: String = texts
             .iter()
             .filter_map(|c| serde_json::from_str::<serde_json::Value>(c).ok())
@@ -360,7 +375,7 @@ async fn collect_documents(pool: &SqlitePool) -> Result<Vec<Document>, String> {
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     for (note_id, title, text) in turns {
         let entry = by_note
             .entry(note_id)
@@ -387,7 +402,7 @@ mod tests {
     struct FailingEmbedder;
 
     impl Embedder for FailingEmbedder {
-        fn embed(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>, String> {
+        fn embed(&self, _texts: &[String]) -> crate::error::AryaResult<Vec<Vec<f32>>> {
             Err("embedding backend failed".into())
         }
 
@@ -420,7 +435,7 @@ mod tests {
         let documents = tauri::async_runtime::block_on(collect_documents(&pool)).unwrap();
 
         let err = replace_index(&pool, &documents, &FailingEmbedder).unwrap_err();
-        assert!(err.contains("embedding backend failed"));
+        assert!(err.to_string().contains("embedding backend failed"));
 
         let rows: Vec<(String, String)> = tauri::async_runtime::block_on(async {
             sqlx::query_as("SELECT id, content FROM rag_chunks ORDER BY id")

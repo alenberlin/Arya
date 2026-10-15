@@ -22,18 +22,18 @@ pub struct SpeechModelStatus {
     pub downloaded: bool,
 }
 
-fn models_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+fn models_dir(app: &AppHandle) -> crate::error::AryaResult<std::path::PathBuf> {
     Ok(app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .join("models"))
 }
 
 /// The speech-model catalog with per-model download state, so the picker can
 /// mark which are ready and offer a Download button for the rest.
 #[tauri::command]
-pub fn speech_models_status(app: AppHandle) -> Result<Vec<SpeechModelStatus>, String> {
+pub fn speech_models_status(app: AppHandle) -> crate::error::AryaResult<Vec<SpeechModelStatus>> {
     let dir = models_dir(&app)?;
     Ok(models::CATALOG
         .iter()
@@ -50,12 +50,12 @@ pub fn speech_models_status(app: AppHandle) -> Result<Vec<SpeechModelStatus>, St
 /// `{ id, received, total, done }` as it streams. Idempotent: an already-present
 /// model returns immediately with a `done` event.
 #[tauri::command]
-pub async fn download_speech_model(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn download_speech_model(app: AppHandle, id: String) -> crate::error::AryaResult<()> {
     let spec = models::find(&id).ok_or_else(|| format!("unknown model: {id}"))?;
     let dir = models_dir(&app)?;
     tokio::fs::create_dir_all(&dir)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     let target = dir.join(spec.file_name);
     let emit_done = || {
         let _ = app.emit(
@@ -82,19 +82,19 @@ pub async fn download_speech_model(app: AppHandle, id: String) -> Result<(), Str
         },
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     emit_done();
     Ok(())
 }
 
 /// Delete a downloaded model to reclaim disk. Idempotent.
 #[tauri::command]
-pub async fn delete_speech_model(app: AppHandle, id: String) -> Result<(), String> {
+pub async fn delete_speech_model(app: AppHandle, id: String) -> crate::error::AryaResult<()> {
     let spec = models::find(&id).ok_or_else(|| format!("unknown model: {id}"))?;
     let target = models_dir(&app)?.join(spec.file_name);
     match tokio::fs::remove_file(&target).await {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(crate::error::AryaError::from_display(e)),
     }
 }

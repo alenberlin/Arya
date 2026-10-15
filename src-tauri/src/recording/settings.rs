@@ -34,12 +34,15 @@ pub fn load_generation_settings(app: &tauri::AppHandle) -> GenerationSettings {
 pub fn save_generation_settings(
     app: &tauri::AppHandle,
     settings: &GenerationSettings,
-) -> Result<(), String> {
-    let dir = app.path().app_config_dir().map_err(|e| e.to_string())?;
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+) -> crate::error::AryaResult<()> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(crate::error::AryaError::from_display)?;
+    std::fs::create_dir_all(&dir).map_err(crate::error::AryaError::from_display)?;
     std::fs::write(
         dir.join("generation-settings.json"),
         serde_json::to_string_pretty(settings).expect("settings serialize"),
     )
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }

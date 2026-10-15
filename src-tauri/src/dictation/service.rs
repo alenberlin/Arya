@@ -201,7 +201,7 @@ impl DictationService {
                 self.spawn_partials(app, gen, &settings);
             }
             Err(message) => {
-                emit_state(app, DictationState::Error, Some(message), None);
+                emit_state(app, DictationState::Error, Some(message.to_string()), None);
             }
         }
     }
@@ -389,7 +389,7 @@ impl DictationService {
                 let clip = match service.worker.stop() {
                     Ok(clip) => clip,
                     Err(message) => {
-                        emit_state(&app, DictationState::Error, Some(message), None);
+                        emit_state(&app, DictationState::Error, Some(message.to_string()), None);
                         hide_hud_soon(&app, 1500);
                         return;
                     }
@@ -409,7 +409,7 @@ impl DictationService {
                         hide_hud_soon(&app, 900);
                     }
                     Err(message) => {
-                        emit_state(&app, DictationState::Error, Some(message), None);
+                        emit_state(&app, DictationState::Error, Some(message.to_string()), None);
                         hide_hud_soon(&app, 2500);
                     }
                 }
@@ -424,7 +424,7 @@ impl DictationService {
         app: &AppHandle,
         settings: &DictationSettings,
         clip: &AudioClip,
-    ) -> Result<(String, i64), String> {
+    ) -> crate::error::AryaResult<(String, i64)> {
         self.transcribe_whisper_with_model(app, &settings.speech_model, &settings.language, clip)
     }
 
@@ -434,7 +434,7 @@ impl DictationService {
         model_id: &str,
         language: &Option<String>,
         clip: &AudioClip,
-    ) -> Result<(String, i64), String> {
+    ) -> crate::error::AryaResult<(String, i64)> {
         let engine = self.ensure_engine_for_model(app, model_id)?;
         let options = TranscribeOptions {
             language: language.clone(),
@@ -442,7 +442,7 @@ impl DictationService {
         let started = Instant::now();
         let transcript = engine
             .transcribe(clip, &options)
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         let asr_ms = started.elapsed().as_millis() as i64;
         Ok((transcript.text.trim().to_string(), asr_ms))
     }
@@ -490,7 +490,7 @@ impl DictationService {
         clip: &AudioClip,
         raw: String,
         asr_ms: i64,
-    ) -> Result<String, String> {
+    ) -> crate::error::AryaResult<String> {
         let settings = self.settings();
         let dictionary = fetch_dictionary_blocking(pool)?;
         let target = self
@@ -589,7 +589,7 @@ impl DictationService {
         if target.bundle_id.as_deref() == Some(app.config().identifier.as_str()) {
             let _ = app.emit("dictation:insert", &final_text);
         } else {
-            paste::paste_text(&final_text).map_err(|e| e.to_string())?;
+            paste::paste_text(&final_text).map_err(crate::error::AryaError::from_display)?;
         }
         Ok(final_text)
     }
@@ -600,7 +600,7 @@ impl DictationService {
         app: &AppHandle,
         pool: &SqlitePool,
         clip: AudioClip,
-    ) -> Result<String, String> {
+    ) -> crate::error::AryaResult<String> {
         let settings = self.settings();
         let (raw, asr_ms) = self.transcribe_whisper(app, &settings, &clip)?;
         if raw.is_empty() {
@@ -619,7 +619,7 @@ impl DictationService {
         pool: &SqlitePool,
         clip: AudioClip,
         engine: &SherpaStreamingEngine,
-    ) -> Result<String, String> {
+    ) -> crate::error::AryaResult<String> {
         let started = Instant::now();
         engine.feed_up_to(&clip.samples);
         let raw = engine.finalize();
@@ -646,7 +646,7 @@ impl DictationService {
         &self,
         app: &AppHandle,
         settings: &DictationSettings,
-    ) -> Result<Arc<WhisperEngine>, String> {
+    ) -> crate::error::AryaResult<Arc<WhisperEngine>> {
         self.ensure_engine_for_model(app, &settings.speech_model)
     }
 
@@ -654,23 +654,23 @@ impl DictationService {
         &self,
         app: &AppHandle,
         model_id: &str,
-    ) -> Result<Arc<WhisperEngine>, String> {
+    ) -> crate::error::AryaResult<Arc<WhisperEngine>> {
         let spec =
             models::find(model_id).ok_or_else(|| format!("unknown speech model {model_id}"))?;
         let models_dir = app
             .path()
             .app_data_dir()
-            .map_err(|e| e.to_string())?
+            .map_err(crate::error::AryaError::from_display)?
             .join("models");
         let target = models_dir.join(spec.file_name);
         if !target.exists() {
             emit_state(app, DictationState::PreparingModel, None, None);
             tauri::async_runtime::block_on(models::ensure_model(spec, &models_dir))
-                .map_err(|e| e.to_string())?;
+                .map_err(crate::error::AryaError::from_display)?;
         }
         // Share the process-wide engine cache with note transcription so a
         // model used by both is loaded into memory only once.
-        engine_cache::get_or_load(&target).map_err(|e| e.to_string())
+        engine_cache::get_or_load(&target).map_err(crate::error::AryaError::from_display)
     }
 
     /// One global ticker publishes live levels to the HUD. It only emits while
@@ -704,16 +704,18 @@ fn join_ticker(handle: Option<JoinHandle<()>>) {
 /// Ensure the streaming model is present and the engine is loaded into the
 /// cache, returning it. Blocking (downloads + model load); keep off the UI and
 /// audio threads.
-fn load_streaming_blocking(app: &AppHandle) -> Result<Arc<SherpaStreamingEngine>, String> {
+fn load_streaming_blocking(
+    app: &AppHandle,
+) -> crate::error::AryaResult<Arc<SherpaStreamingEngine>> {
     let models_dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .join("models");
     let paths = tauri::async_runtime::block_on(models::ensure_streaming_model(&models_dir))
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     streaming::cached(&paths.encoder, &paths.decoder, &paths.joiner, &paths.tokens)
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// Warm the streaming engine in the background (download + load) so a later
@@ -771,7 +773,7 @@ fn hide_hud_soon(app: &AppHandle, delay_ms: u64) {
     }
 }
 
-fn fetch_dictionary_blocking(pool: &SqlitePool) -> Result<Vec<DictionaryEntry>, String> {
+fn fetch_dictionary_blocking(pool: &SqlitePool) -> crate::error::AryaResult<Vec<DictionaryEntry>> {
     tauri::async_runtime::block_on(async {
         sqlx::query_as::<_, (String, String)>(
             "SELECT pattern, replacement FROM dictionary_entries ORDER BY pattern",
@@ -786,7 +788,7 @@ fn fetch_dictionary_blocking(pool: &SqlitePool) -> Result<Vec<DictionaryEntry>, 
                 })
                 .collect()
         })
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
     })
 }
 
@@ -800,7 +802,7 @@ fn insert_history_blocking(
     bundle_id: Option<&str>,
     duration_ms: i64,
     asr_ms: i64,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     tauri::async_runtime::block_on(async {
         sqlx::query(
             "INSERT INTO dictation_history
@@ -819,7 +821,7 @@ fn insert_history_blocking(
         .execute(pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
     })
 }
 

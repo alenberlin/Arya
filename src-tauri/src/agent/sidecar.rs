@@ -13,7 +13,7 @@ use std::sync::{mpsc, Arc, Mutex};
 
 use serde_json::{json, Value};
 
-type PendingMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
+type PendingMap = Arc<Mutex<HashMap<u64, mpsc::Sender<crate::error::AryaResult<Value>>>>>;
 
 /// The agent always runs sandboxed. A single-variant enum keeps the session
 /// `mode` column and the shell↔sidecar protocol stable while making it
@@ -100,15 +100,15 @@ impl Sidecar {
         mode: WriteMode,
         workspace: &Path,
         on_event: impl Fn(Value) + Send + 'static,
-        on_context: impl Fn(String, i64) -> Result<Value, String> + Send + 'static,
-    ) -> Result<Self, String> {
-        std::fs::create_dir_all(workspace).map_err(|e| e.to_string())?;
+        on_context: impl Fn(String, i64) -> crate::error::AryaResult<Value> + Send + 'static,
+    ) -> crate::error::AryaResult<Self> {
+        std::fs::create_dir_all(workspace).map_err(crate::error::AryaError::from_display)?;
         let node = which_node()?;
 
         // Redirect node's scratch into the jailed workspace so it never needs
         // write access to the shared temp roots.
         let tmp_dir = workspace.join(".tmp");
-        std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&tmp_dir).map_err(crate::error::AryaError::from_display)?;
 
         let mut command = if cfg!(target_os = "macos") {
             let mut c = Command::new("/usr/bin/sandbox-exec");
@@ -204,11 +204,12 @@ impl Sidecar {
                         let sender = pending_reader.lock().expect("pending lock").remove(&id);
                         if let Some(sender) = sender {
                             let result = if let Some(error) = message.get("error") {
-                                Err(error
-                                    .get("message")
-                                    .and_then(|m| m.as_str())
-                                    .unwrap_or("sidecar error")
-                                    .to_string())
+                                Err(crate::error::AryaError::message(
+                                    error
+                                        .get("message")
+                                        .and_then(|m| m.as_str())
+                                        .unwrap_or("sidecar error"),
+                                ))
                             } else {
                                 Ok(message.get("result").cloned().unwrap_or(Value::Null))
                             };
@@ -221,7 +222,7 @@ impl Sidecar {
                     }
                 }
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
 
         std::thread::Builder::new()
             .name(format!("arya-sidecar-{}-err", mode.as_str()))
@@ -230,7 +231,7 @@ impl Sidecar {
                     eprintln!("sidecar[{}]: {line}", mode.as_str());
                 }
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
 
         Ok(Self {
             child: Mutex::new(child),
@@ -242,7 +243,7 @@ impl Sidecar {
     }
 
     /// Sends a request and waits for its response.
-    pub fn request(&self, method: &str, params: Value) -> Result<Value, String> {
+    pub fn request(&self, method: &str, params: Value) -> crate::error::AryaResult<Value> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel();
         self.pending.lock().expect("pending lock").insert(id, tx);
@@ -253,7 +254,7 @@ impl Sidecar {
         };
         if let Err(e) = write_result {
             self.pending.lock().expect("pending lock").remove(&id);
-            return Err(e.to_string());
+            return Err(crate::error::AryaError::from_display(e));
         }
         // The reader only removes an entry when a matching response arrives, so
         // a write failure or timeout must clean up its own pending entry — else
@@ -268,7 +269,7 @@ impl Sidecar {
                 // A request that never got a response means the sidecar is
                 // wedged; mark it hung so the next get_or_spawn respawns it.
                 self.hung.store(true, Ordering::SeqCst);
-                Err("sidecar did not respond".to_string())
+                Err(crate::error::AryaError::message("sidecar did not respond"))
             }
         }
     }
@@ -302,7 +303,7 @@ impl Drop for Sidecar {
 }
 
 /// Locates a node binary: env override, bundled runtime (M14), or PATH.
-fn which_node() -> Result<PathBuf, String> {
+fn which_node() -> crate::error::AryaResult<PathBuf> {
     if let Ok(path) = std::env::var("ARYA_NODE_PATH") {
         return Ok(PathBuf::from(path));
     }
@@ -315,7 +316,7 @@ fn which_node() -> Result<PathBuf, String> {
             return Ok(PathBuf::from(candidate));
         }
     }
-    which_in_path("node").ok_or_else(|| "node runtime not found".to_string())
+    which_in_path("node").ok_or_else(|| crate::error::AryaError::message("node runtime not found"))
 }
 
 fn which_in_path(name: &str) -> Option<PathBuf> {
@@ -327,7 +328,7 @@ fn which_in_path(name: &str) -> Option<PathBuf> {
 }
 
 /// Dev/bundled location of the sidecar script.
-pub fn sidecar_script() -> Result<PathBuf, String> {
+pub fn sidecar_script() -> crate::error::AryaResult<PathBuf> {
     if let Ok(path) = std::env::var("ARYA_SIDECAR_PATH") {
         return Ok(PathBuf::from(path));
     }
@@ -340,7 +341,9 @@ pub fn sidecar_script() -> Result<PathBuf, String> {
             return Ok(dev);
         }
     }
-    Err("sidecar script not found; run `pnpm --filter arya-sidecar build`".to_string())
+    Err(crate::error::AryaError::message(
+        "sidecar script not found; run `pnpm --filter arya-sidecar build`",
+    ))
 }
 
 #[cfg(test)]

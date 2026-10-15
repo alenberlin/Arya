@@ -49,12 +49,12 @@ pub fn models_dir(app_data_dir: &Path) -> PathBuf {
 
 /// Ensure one model is present under `dir`, downloading + verifying it if not.
 /// Blocking (called from the ingest worker thread).
-fn ensure_model(dir: &Path, spec: &OcrModelSpec) -> Result<PathBuf, String> {
+fn ensure_model(dir: &Path, spec: &OcrModelSpec) -> crate::error::AryaResult<PathBuf> {
     let target = dir.join(spec.file);
     if target.exists() {
         return Ok(target);
     }
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(dir).map_err(crate::error::AryaError::from_display)?;
     let bytes = crate::http::blocking_client()
         .get(spec.url)
         .timeout(std::time::Duration::from_secs(600))
@@ -63,54 +63,61 @@ fn ensure_model(dir: &Path, spec: &OcrModelSpec) -> Result<PathBuf, String> {
         .error_for_status()
         .map_err(|e| format!("could not download the OCR model: {e}"))?
         .bytes()
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     let actual = format!("{:x}", Sha256::digest(&bytes));
     if actual != spec.sha256 {
-        return Err(format!(
+        return Err(crate::error::AryaError::message(format!(
             "OCR model {} failed its integrity check; not using it",
             spec.file
-        ));
+        )));
     }
     // Write to .partial then rename so a torn download is never mistaken for a
     // complete, verified model.
     let partial = target.with_extension("partial");
-    std::fs::write(&partial, &bytes).map_err(|e| e.to_string())?;
-    std::fs::rename(&partial, &target).map_err(|e| e.to_string())?;
+    std::fs::write(&partial, &bytes).map_err(crate::error::AryaError::from_display)?;
+    std::fs::rename(&partial, &target).map_err(crate::error::AryaError::from_display)?;
     Ok(target)
 }
 
 /// Load the OCR engine, downloading + verifying the models on first use. Loading
 /// the ~12 MB models is not free, so callers build one engine per document and
 /// reuse it across that document's pages/images.
-pub fn load_engine(app_data_dir: &Path) -> Result<OcrEngine, String> {
+pub fn load_engine(app_data_dir: &Path) -> crate::error::AryaResult<OcrEngine> {
     let dir = models_dir(app_data_dir);
     let detection = ensure_model(&dir, &DETECTION)?;
     let recognition = ensure_model(&dir, &RECOGNITION)?;
-    let detection_model = Model::load(std::fs::read(&detection).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("could not load OCR detection model: {e}"))?;
-    let recognition_model = Model::load(std::fs::read(&recognition).map_err(|e| e.to_string())?)
-        .map_err(|e| format!("could not load OCR recognition model: {e}"))?;
+    let detection_model =
+        Model::load(std::fs::read(&detection).map_err(crate::error::AryaError::from_display)?)
+            .map_err(|e| format!("could not load OCR detection model: {e}"))?;
+    let recognition_model =
+        Model::load(std::fs::read(&recognition).map_err(crate::error::AryaError::from_display)?)
+            .map_err(|e| format!("could not load OCR recognition model: {e}"))?;
     OcrEngine::new(OcrEngineParams {
         detection_model: Some(detection_model),
         recognition_model: Some(recognition_model),
         ..Default::default()
     })
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 /// OCR raw image bytes (any format the `image` crate decodes) into text.
-pub fn ocr_image_bytes(engine: &OcrEngine, bytes: &[u8]) -> Result<String, String> {
+pub fn ocr_image_bytes(engine: &OcrEngine, bytes: &[u8]) -> crate::error::AryaResult<String> {
     let img = image::load_from_memory(bytes)
         .map_err(|e| format!("could not decode image: {e}"))?
         .into_rgb8();
     let dimensions = img.dimensions();
-    let source = ImageSource::from_bytes(img.as_raw(), dimensions).map_err(|e| e.to_string())?;
-    let input = engine.prepare_input(source).map_err(|e| e.to_string())?;
-    engine.get_text(&input).map_err(|e| e.to_string())
+    let source = ImageSource::from_bytes(img.as_raw(), dimensions)
+        .map_err(crate::error::AryaError::from_display)?;
+    let input = engine
+        .prepare_input(source)
+        .map_err(crate::error::AryaError::from_display)?;
+    engine
+        .get_text(&input)
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// OCR a single image file into a one-page [`Extracted`].
-pub fn ocr_image_file(app_data_dir: &Path, bytes: &[u8]) -> Result<Extracted, String> {
+pub fn ocr_image_file(app_data_dir: &Path, bytes: &[u8]) -> crate::error::AryaResult<Extracted> {
     let engine = load_engine(app_data_dir)?;
     let text = ocr_image_bytes(&engine, bytes)?;
     if text.trim().is_empty() {
@@ -126,7 +133,10 @@ pub fn ocr_image_file(app_data_dir: &Path, bytes: &[u8]) -> Result<Extracted, St
 /// OCR a scanned PDF by extracting its embedded page images and running OCR on
 /// each. Only DCTDecode (JPEG) images are handled — the dominant encoding for
 /// scanned documents; other encodings are skipped rather than mis-decoded.
-pub fn ocr_pdf_images(app_data_dir: &Path, pdf_bytes: &[u8]) -> Result<Extracted, String> {
+pub fn ocr_pdf_images(
+    app_data_dir: &Path,
+    pdf_bytes: &[u8],
+) -> crate::error::AryaResult<Extracted> {
     let images = extract_pdf_jpeg_images(pdf_bytes)?;
     if images.is_empty() {
         return Err(
@@ -161,7 +171,7 @@ pub fn ocr_pdf_images(app_data_dir: &Path, pdf_bytes: &[u8]) -> Result<Extracted
 }
 
 /// Pull DCTDecode (JPEG) page images out of a PDF as `(page_number, jpeg_bytes)`.
-fn extract_pdf_jpeg_images(pdf_bytes: &[u8]) -> Result<Vec<(i64, Vec<u8>)>, String> {
+fn extract_pdf_jpeg_images(pdf_bytes: &[u8]) -> crate::error::AryaResult<Vec<(i64, Vec<u8>)>> {
     let doc =
         lopdf::Document::load_mem(pdf_bytes).map_err(|e| format!("could not parse PDF: {e}"))?;
     let mut out = Vec::new();

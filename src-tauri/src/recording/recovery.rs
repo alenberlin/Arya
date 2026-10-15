@@ -23,13 +23,13 @@ pub struct RecoverableRecording {
 #[tauri::command]
 pub async fn scan_recoverable_recordings(
     pool: State<'_, SqlitePool>,
-) -> Result<Vec<RecoverableRecording>, String> {
+) -> crate::error::AryaResult<Vec<RecoverableRecording>> {
     scan_recoverable_inner(&pool).await
 }
 
 pub async fn scan_recoverable_inner(
     pool: &SqlitePool,
-) -> Result<Vec<RecoverableRecording>, String> {
+) -> crate::error::AryaResult<Vec<RecoverableRecording>> {
     // One row per session: a meeting-mode session has both a microphone and a
     // system partial, so a plain JOIN would emit a duplicate per source. Prefer
     // the mic track (always present) as the representative file for the size
@@ -51,7 +51,7 @@ pub async fn scan_recoverable_inner(
     )
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     Ok(candidates
         .into_iter()
@@ -74,7 +74,7 @@ pub async fn recover_recording(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     session_id: String,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     recover_recording_inner(&app, &pool, &session_id).await
 }
 
@@ -82,7 +82,7 @@ pub async fn recover_recording_inner(
     app: &AppHandle,
     pool: &SqlitePool,
     session_id: &str,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     let note_id = recover_artifacts(pool, session_id).await?;
     super::commands::spawn_processing(app.clone(), pool.clone(), note_id.clone());
     Ok(note_id)
@@ -92,7 +92,10 @@ pub async fn recover_recording_inner(
 /// artifact of a crashed session, mark it finished, return the note id.
 /// Separated so the multi-artifact data-loss fix is covered by a fast,
 /// deterministic test instead of a flaky live-audio E2E.
-pub async fn recover_artifacts(pool: &SqlitePool, session_id: &str) -> Result<String, String> {
+pub async fn recover_artifacts(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> crate::error::AryaResult<String> {
     // A meeting-mode session has two partial artifacts (microphone, system).
     // Recover every one that carries data; drop only silent/empty tracks.
     let rows = sqlx::query_as::<_, (String, String, String)>(
@@ -103,11 +106,11 @@ pub async fn recover_artifacts(pool: &SqlitePool, session_id: &str) -> Result<St
     .bind(session_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     let note_id = rows
         .first()
         .map(|(note_id, _, _)| note_id.clone())
-        .ok_or_else(|| "no partial artifacts for session".to_string())?;
+        .ok_or_else(|| crate::error::AryaError::message("no partial artifacts for session"))?;
 
     for (_, source, partial_path) in &rows {
         let partial = std::path::PathBuf::from(partial_path);
@@ -134,7 +137,7 @@ pub async fn recover_artifacts(pool: &SqlitePool, session_id: &str) -> Result<St
         )
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     }
     // Decide success by whether final audio now exists — by us OR a concurrent
     // recover call (double-click) that beat us to the renames. That makes a
@@ -146,15 +149,17 @@ pub async fn recover_artifacts(pool: &SqlitePool, session_id: &str) -> Result<St
     .bind(session_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     if final_count == 0 {
-        return Err("no recoverable audio in this session".to_string());
+        return Err(crate::error::AryaError::message(
+            "no recoverable audio in this session",
+        ));
     }
     sqlx::query("UPDATE recording_sessions SET status = 'finished', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1")
         .bind(session_id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     Ok(note_id)
 }
 
@@ -163,17 +168,20 @@ pub async fn recover_artifacts(pool: &SqlitePool, session_id: &str) -> Result<St
 pub async fn discard_recording(
     pool: State<'_, SqlitePool>,
     session_id: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     discard_recording_inner(&pool, &session_id).await
 }
 
-pub async fn discard_recording_inner(pool: &SqlitePool, session_id: &str) -> Result<(), String> {
+pub async fn discard_recording_inner(
+    pool: &SqlitePool,
+    session_id: &str,
+) -> crate::error::AryaResult<()> {
     let paths =
         sqlx::query_scalar::<_, String>("SELECT path FROM audio_artifacts WHERE session_id = ?1")
             .bind(session_id)
             .fetch_all(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
     for path in paths {
         let _ = std::fs::remove_file(&path);
     }
@@ -181,7 +189,7 @@ pub async fn discard_recording_inner(pool: &SqlitePool, session_id: &str) -> Res
         .bind(session_id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     Ok(())
 }
 

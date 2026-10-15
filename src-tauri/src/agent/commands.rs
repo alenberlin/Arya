@@ -31,7 +31,7 @@ pub struct AgentMessage {
 pub fn agent_list_models(
     app: AppHandle,
     runtime: State<'_, AgentRuntime>,
-) -> Result<Vec<String>, String> {
+) -> crate::error::AryaResult<Vec<String>> {
     let result = runtime.request(&app, WriteMode::Sandboxed, "models.list", json!({}))?;
     Ok(result
         .get("models")
@@ -51,7 +51,7 @@ pub async fn agent_create_session(
     runtime: State<'_, AgentRuntime>,
     model: String,
     mode: Option<String>,
-) -> Result<AgentSession, String> {
+) -> crate::error::AryaResult<AgentSession> {
     agent_create_session_inner(&app, &pool, &runtime, model, mode).await
 }
 
@@ -61,7 +61,7 @@ pub async fn agent_create_session_inner(
     runtime: &AgentRuntime,
     model: String,
     mode: Option<String>,
-) -> Result<AgentSession, String> {
+) -> crate::error::AryaResult<AgentSession> {
     let mode = mode.unwrap_or_else(|| "sandboxed".into());
     let id = uuid::Uuid::new_v4().to_string();
     let session = sqlx::query_as::<_, AgentSession>(
@@ -75,7 +75,7 @@ pub async fn agent_create_session_inner(
     .bind(&mode)
     .fetch_one(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     let workspace = super::agent_workspace(app)?;
     runtime.request(
@@ -93,21 +93,23 @@ pub async fn agent_create_session_inner(
 }
 
 #[tauri::command]
-pub async fn agent_list_sessions(pool: State<'_, SqlitePool>) -> Result<Vec<AgentSession>, String> {
+pub async fn agent_list_sessions(
+    pool: State<'_, SqlitePool>,
+) -> crate::error::AryaResult<Vec<AgentSession>> {
     sqlx::query_as::<_, AgentSession>(
         "SELECT id, title, model, mode, created_at, updated_at
          FROM agent_sessions ORDER BY updated_at DESC",
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
 pub async fn agent_get_messages(
     pool: State<'_, SqlitePool>,
     session_id: String,
-) -> Result<Vec<AgentMessage>, String> {
+) -> crate::error::AryaResult<Vec<AgentMessage>> {
     sqlx::query_as::<_, AgentMessage>(
         "SELECT id, role, content_json, created_at
          FROM agent_messages WHERE session_id = ?1 ORDER BY created_at",
@@ -115,7 +117,7 @@ pub async fn agent_get_messages(
     .bind(session_id)
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 /// The visible text of one persisted message (`content_json` is
@@ -150,13 +152,13 @@ fn transcript_markdown(messages: &[AgentMessage]) -> String {
 pub async fn convert_session_to_note(
     pool: State<'_, SqlitePool>,
     session_id: String,
-) -> Result<String, String> {
+) -> crate::error::AryaResult<String> {
     let title: String = sqlx::query_scalar("SELECT title FROM agent_sessions WHERE id = ?1")
         .bind(&session_id)
         .fetch_optional(&*pool)
         .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "chat not found".to_string())?;
+        .map_err(crate::error::AryaError::from_display)?
+        .ok_or_else(|| crate::error::AryaError::message("chat not found"))?;
 
     let messages: Vec<AgentMessage> = sqlx::query_as::<_, AgentMessage>(
         "SELECT id, role, content_json, created_at
@@ -165,7 +167,7 @@ pub async fn convert_session_to_note(
     .bind(&session_id)
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     let body = transcript_markdown(&messages);
     if body.trim().is_empty() {
@@ -179,7 +181,7 @@ pub async fn convert_session_to_note(
 
     let note = crate::notes::insert_note(&pool, &note_title)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     sqlx::query(
         "UPDATE notes SET body_md = ?2, processing_status = 'ready',
              updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -189,7 +191,7 @@ pub async fn convert_session_to_note(
     .bind(&body)
     .execute(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     Ok(note.id)
 }
@@ -203,7 +205,7 @@ pub async fn agent_send(
     runtime: State<'_, AgentRuntime>,
     session_id: String,
     text: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     agent_send_inner(&app, &pool, &runtime, session_id, text).await
 }
 
@@ -213,14 +215,14 @@ pub async fn agent_send_inner(
     runtime: &AgentRuntime,
     session_id: String,
     text: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let session = sqlx::query_as::<_, AgentSession>(
         "SELECT id, title, model, mode, created_at, updated_at FROM agent_sessions WHERE id = ?1",
     )
     .bind(&session_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     let mode = WriteMode::parse(&session.mode);
 
     let workspace = super::agent_workspace(app)?;
@@ -246,7 +248,7 @@ pub async fn agent_send_inner(
     .bind(json!({ "text": text, "tools": [] }).to_string())
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     // Deliver only the new message: the sidecar keeps the running conversation
     // in memory, so re-seeding the whole history is done ONLY when the sidecar
@@ -255,7 +257,7 @@ pub async fn agent_send_inner(
     let deliver = json!({ "sessionId": &session_id, "text": &text });
     match runtime.request(app, mode, "session.message", deliver.clone()) {
         Ok(_) => Ok(()),
-        Err(e) if e.contains("unknown session") => {
+        Err(e) if e.to_string().contains("unknown session") => {
             let history = restore_history(pool, &session_id, &user_msg_id).await?;
             runtime.request(
                 app,
@@ -283,7 +285,7 @@ async fn restore_history(
     pool: &SqlitePool,
     session_id: &str,
     exclude_message_id: &str,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> crate::error::AryaResult<Vec<serde_json::Value>> {
     Ok(sqlx::query_as::<_, (String, String)>(
         "SELECT role, content_json FROM agent_messages
          WHERE session_id = ?1 AND id != ?2 ORDER BY created_at",
@@ -292,7 +294,7 @@ async fn restore_history(
     .bind(exclude_message_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(crate::error::AryaError::from_display)?
     .into_iter()
     .filter_map(|(role, content)| {
         let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
@@ -313,7 +315,7 @@ pub async fn agent_steer(
     runtime: State<'_, AgentRuntime>,
     session_id: String,
     text: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let mode = session_mode(&pool, &session_id).await?;
     runtime.request(
         &app,
@@ -330,7 +332,7 @@ pub async fn agent_cancel(
     pool: State<'_, SqlitePool>,
     runtime: State<'_, AgentRuntime>,
     session_id: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let mode = session_mode(&pool, &session_id).await?;
     runtime.request(
         &app,
@@ -349,7 +351,7 @@ pub async fn agent_resolve_approval(
     session_id: String,
     call_id: String,
     decision: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let mode = session_mode(&pool, &session_id).await?;
     runtime.request(
         &app,
@@ -365,7 +367,7 @@ pub async fn agent_delete_session(
     pool: State<'_, SqlitePool>,
     runtime: State<'_, AgentRuntime>,
     session_id: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     agent_delete_session_inner(&pool, &runtime, session_id).await
 }
 
@@ -373,12 +375,12 @@ pub async fn agent_delete_session_inner(
     pool: &SqlitePool,
     runtime: &AgentRuntime,
     session_id: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let mode = sqlx::query_scalar::<_, String>("SELECT mode FROM agent_sessions WHERE id = ?1")
         .bind(&session_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     if let Some(mode) = mode {
         runtime.end_session_if_running(WriteMode::parse(&mode), &session_id);
     } else {
@@ -389,18 +391,18 @@ pub async fn agent_delete_session_inner(
         .execute(pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     // The privacy guarantee: deleting a chat also deletes its semantic index
     // rows, so its text and embedding stop being searchable.
     crate::rag::commands::delete_for_node(pool, "session", &session_id).await
 }
 
-async fn session_mode(pool: &SqlitePool, session_id: &str) -> Result<WriteMode, String> {
+async fn session_mode(pool: &SqlitePool, session_id: &str) -> crate::error::AryaResult<WriteMode> {
     let mode = sqlx::query_scalar::<_, String>("SELECT mode FROM agent_sessions WHERE id = ?1")
         .bind(session_id)
         .fetch_one(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     Ok(WriteMode::parse(&mode))
 }
 

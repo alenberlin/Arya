@@ -38,7 +38,11 @@ impl AgentRuntime {
     /// map lock is held only long enough to look up or insert; the caller
     /// makes the blocking round-trip against the returned handle with no lock
     /// held, so cancel/steer on the same mode never wait behind a long call.
-    fn get_or_spawn(&self, app: &AppHandle, mode: WriteMode) -> Result<Arc<Sidecar>, String> {
+    fn get_or_spawn(
+        &self,
+        app: &AppHandle,
+        mode: WriteMode,
+    ) -> crate::error::AryaResult<Arc<Sidecar>> {
         {
             let mut guard = self.sidecars.lock().expect("sidecars lock");
             if let Some(existing) = guard.get(&mode) {
@@ -75,7 +79,7 @@ impl AgentRuntime {
     }
 
     /// Spawns the sidecar for `mode` if it isn't already running.
-    pub fn ensure(&self, app: &AppHandle, mode: WriteMode) -> Result<(), String> {
+    pub fn ensure(&self, app: &AppHandle, mode: WriteMode) -> crate::error::AryaResult<()> {
         self.get_or_spawn(app, mode).map(|_| ())
     }
 
@@ -99,7 +103,7 @@ impl AgentRuntime {
         mode: WriteMode,
         method: &str,
         params: Value,
-    ) -> Result<Value, String> {
+    ) -> crate::error::AryaResult<Value> {
         let sidecar = self.get_or_spawn(app, mode)?;
         // No map lock held here — the blocking round-trip can't serialize
         // other commands (cancel/steer) for this mode.
@@ -136,11 +140,11 @@ impl AgentRuntime {
     }
 }
 
-pub fn agent_workspace(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+pub fn agent_workspace(app: &AppHandle) -> crate::error::AryaResult<std::path::PathBuf> {
     Ok(app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .join("agent/workspace"))
 }
 
@@ -151,7 +155,7 @@ pub fn agent_generate_image(
     runtime: tauri::State<'_, AgentRuntime>,
     prompt: String,
     size: Option<String>,
-) -> Result<serde_json::Value, String> {
+) -> crate::error::AryaResult<serde_json::Value> {
     let workspace = agent_workspace(&app)?;
     runtime.request(
         &app,
@@ -167,13 +171,16 @@ pub fn agent_generate_image(
 
 /// Reads a workspace file as base64 (for inline image rendering).
 #[tauri::command]
-pub fn agent_workspace_read_b64(app: AppHandle, path: String) -> Result<String, String> {
+pub fn agent_workspace_read_b64(app: AppHandle, path: String) -> crate::error::AryaResult<String> {
     let base = agent_workspace(&app)?;
-    let target = base.join(&path).canonicalize().map_err(|e| e.to_string())?;
+    let target = base
+        .join(&path)
+        .canonicalize()
+        .map_err(crate::error::AryaError::from_display)?;
     if !target.starts_with(&base) {
         return Err("path escapes workspace".into());
     }
-    let bytes = std::fs::read(&target).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&target).map_err(crate::error::AryaError::from_display)?;
     if bytes.len() > 8 * 1024 * 1024 {
         return Err("file too large".into());
     }

@@ -173,10 +173,10 @@ pub async fn create_note(
     pool: State<'_, SqlitePool>,
     title: String,
     parent_id: Option<String>,
-) -> Result<Note, String> {
+) -> crate::error::AryaResult<Note> {
     insert_note_under(&pool, &title, parent_id.as_deref())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// Re-parent a note (or move it to top level with `parentId = null`). Guards
@@ -187,7 +187,7 @@ pub async fn set_note_parent(
     pool: State<'_, SqlitePool>,
     note_id: String,
     parent_id: Option<String>,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     set_note_parent_inner(&pool, &note_id, parent_id.as_deref()).await
 }
 
@@ -198,15 +198,18 @@ pub async fn set_note_parent_inner(
     pool: &SqlitePool,
     note_id: &str,
     parent_id: Option<&str>,
-) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+) -> crate::error::AryaResult<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(crate::error::AryaError::from_display)?;
     if let Some(pid) = parent_id {
         if pid == note_id {
             return Err("a page cannot be its own parent".into());
         }
         let descendants = descendant_ids(&mut *tx, note_id)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         if descendants.iter().any(|d| d == pid) {
             return Err("cannot move a page into its own subtree".into());
         }
@@ -216,13 +219,17 @@ pub async fn set_note_parent_inner(
         .bind(parent_id)
         .execute(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?;
-    tx.commit().await.map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)?;
+    tx.commit()
+        .await
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
-pub async fn list_notes(pool: State<'_, SqlitePool>) -> Result<Vec<NoteSummary>, String> {
-    fetch_notes(&pool).await.map_err(|e| e.to_string())
+pub async fn list_notes(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<Vec<NoteSummary>> {
+    fetch_notes(&pool)
+        .await
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// Filters the notes list by a keyword found in the title or content. An empty
@@ -231,14 +238,16 @@ pub async fn list_notes(pool: State<'_, SqlitePool>) -> Result<Vec<NoteSummary>,
 pub async fn search_notes(
     pool: State<'_, SqlitePool>,
     query: String,
-) -> Result<Vec<NoteSummary>, String> {
+) -> crate::error::AryaResult<Vec<NoteSummary>> {
     let q = query.trim();
     if q.is_empty() {
-        return fetch_notes(&pool).await.map_err(|e| e.to_string());
+        return fetch_notes(&pool)
+            .await
+            .map_err(crate::error::AryaError::from_display);
     }
     search_notes_query(&pool, q)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// Fetch the full note payload for the editor.
@@ -254,17 +263,20 @@ pub async fn fetch_note_detail(pool: &SqlitePool, id: &str) -> Result<NoteDetail
 }
 
 #[tauri::command]
-pub async fn get_note(pool: State<'_, SqlitePool>, id: String) -> Result<NoteDetail, String> {
+pub async fn get_note(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> crate::error::AryaResult<NoteDetail> {
     fetch_note_detail(&pool, &id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
 pub async fn get_note_turns(
     pool: State<'_, SqlitePool>,
     id: String,
-) -> Result<Vec<TranscriptTurn>, String> {
+) -> crate::error::AryaResult<Vec<TranscriptTurn>> {
     sqlx::query_as::<_, TranscriptTurn>(
         "SELECT turn_index, source, start_ms, end_ms, speaker, text
          FROM transcript_turns WHERE note_id = ?1 ORDER BY turn_index",
@@ -272,7 +284,7 @@ pub async fn get_note_turns(
     .bind(id)
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 /// Persist edited note fields. Any `None` field is left unchanged (COALESCE), so
@@ -314,7 +326,7 @@ pub async fn update_note(
     body_md: Option<String>,
     manual_notes: Option<String>,
     document_json: Option<String>,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     update_note_fields(
         &pool,
         &id,
@@ -324,12 +336,12 @@ pub async fn update_note(
         document_json.as_deref(),
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 /// Deletes a note and its recordings/attachments from disk (rows cascade).
 #[tauri::command]
-pub async fn delete_note(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+pub async fn delete_note(pool: State<'_, SqlitePool>, id: String) -> crate::error::AryaResult<()> {
     delete_note_inner(&pool, &id).await
 }
 
@@ -337,7 +349,7 @@ pub async fn delete_note(pool: State<'_, SqlitePool>, id: String) -> Result<(), 
 /// operation, children cascading), then best-effort removes the files — so a
 /// failed delete leaves the note and its files intact rather than orphaning
 /// files under a still-live row.
-pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String> {
+pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> crate::error::AryaResult<()> {
     // Collect every file path BEFORE deleting: the rows that hold the paths
     // cascade away with the note, so afterwards they'd be unqueryable.
     // The whole subtree — the note plus every descendant page — collected before
@@ -354,7 +366,7 @@ pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String
     .bind(id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     let audio_paths = sqlx::query_scalar::<_, String>(
         "WITH RECURSIVE subtree(id) AS (
@@ -368,7 +380,7 @@ pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String
     .bind(id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
     let attachment_paths = sqlx::query_scalar::<_, String>(
         "WITH RECURSIVE subtree(id) AS (
              SELECT ?1 UNION ALL
@@ -379,7 +391,7 @@ pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String
     .bind(id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     // Deleting the root cascades the descendant pages (parent_note_id ON DELETE
     // CASCADE), and each page's sessions/attachments/turns cascade in turn.
@@ -387,7 +399,7 @@ pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
 
     // Drop graph edges for every page that was in the subtree (best-effort: the
     // authoritative rows are already gone; a leftover edge resolves as deleted).
@@ -407,7 +419,7 @@ pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String
 /// Deletes every note, and its recordings/attachments from disk. Backs the
 /// "Delete all" action in the notes list.
 #[tauri::command]
-pub async fn delete_all_notes(pool: State<'_, SqlitePool>) -> Result<(), String> {
+pub async fn delete_all_notes(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<()> {
     delete_all_notes_inner(&pool).await
 }
 
@@ -416,20 +428,20 @@ pub async fn delete_all_notes(pool: State<'_, SqlitePool>) -> Result<(), String>
 /// so deleting all notes removes them all. Mirrors [`delete_note_inner`]:
 /// collect the file paths first, delete the rows, then unlink the files — a
 /// failed delete leaves everything intact rather than orphaning files.
-pub async fn delete_all_notes_inner(pool: &SqlitePool) -> Result<(), String> {
+pub async fn delete_all_notes_inner(pool: &SqlitePool) -> crate::error::AryaResult<()> {
     let audio_paths = sqlx::query_scalar::<_, String>("SELECT path FROM audio_artifacts")
         .fetch_all(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     let attachment_paths = sqlx::query_scalar::<_, String>("SELECT path FROM note_attachments")
         .fetch_all(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
 
     sqlx::query("DELETE FROM notes")
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
 
     // Every note is gone, so drop every edge touching a note (best-effort) and
     // every semantic-index row so deleted text is no longer searchable.
@@ -456,7 +468,10 @@ fn remove_files(paths: impl IntoIterator<Item = String>) {
 }
 
 #[tauri::command]
-pub async fn create_folder(pool: State<'_, SqlitePool>, name: String) -> Result<Folder, String> {
+pub async fn create_folder(
+    pool: State<'_, SqlitePool>,
+    name: String,
+) -> crate::error::AryaResult<Folder> {
     let name = name.trim().to_string();
     if name.is_empty() {
         return Err("folder name is required".into());
@@ -470,15 +485,15 @@ pub async fn create_folder(pool: State<'_, SqlitePool>, name: String) -> Result<
     .bind(&name)
     .fetch_one(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
-pub async fn list_folders(pool: State<'_, SqlitePool>) -> Result<Vec<Folder>, String> {
+pub async fn list_folders(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<Vec<Folder>> {
     sqlx::query_as::<_, Folder>("SELECT id, name, created_at FROM folders ORDER BY name")
         .fetch_all(&*pool)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
@@ -486,33 +501,41 @@ pub async fn rename_folder(
     pool: State<'_, SqlitePool>,
     id: String,
     name: String,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     sqlx::query("UPDATE folders SET name = ?2 WHERE id = ?1")
         .bind(id)
         .bind(name.trim())
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// Deletes a folder; notes inside revert to no folder. The detach + delete run
 /// in one transaction so a crash between them can't leave dangling folder ids
 /// (the FK's ON DELETE SET NULL is a second, row-level backstop).
 #[tauri::command]
-pub async fn delete_folder(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+pub async fn delete_folder(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> crate::error::AryaResult<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(crate::error::AryaError::from_display)?;
     sqlx::query("UPDATE notes SET folder_id = NULL WHERE folder_id = ?1")
         .bind(&id)
         .execute(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     sqlx::query("DELETE FROM folders WHERE id = ?1")
         .bind(id)
         .execute(&mut *tx)
         .await
-        .map_err(|e| e.to_string())?;
-    tx.commit().await.map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)?;
+    tx.commit()
+        .await
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
@@ -520,14 +543,14 @@ pub async fn assign_note_to_folder(
     pool: State<'_, SqlitePool>,
     note_id: String,
     folder_id: Option<String>,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     sqlx::query("UPDATE notes SET folder_id = ?2 WHERE id = ?1")
         .bind(note_id)
         .bind(folder_id)
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 /// One confirmed move from the AI-sort review: a note into an existing folder.
@@ -544,17 +567,22 @@ pub struct FolderAssignment {
 pub async fn assign_notes_to_folders(
     pool: State<'_, SqlitePool>,
     assignments: Vec<FolderAssignment>,
-) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+) -> crate::error::AryaResult<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(crate::error::AryaError::from_display)?;
     for a in &assignments {
         sqlx::query("UPDATE notes SET folder_id = ?2 WHERE id = ?1")
             .bind(&a.note_id)
             .bind(&a.folder_id)
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
     }
-    tx.commit().await.map_err(|e| e.to_string())
+    tx.commit()
+        .await
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[cfg(test)]
@@ -652,7 +680,10 @@ mod tests {
         let err = set_note_parent_inner(&pool, &a.id, Some(&c.id))
             .await
             .unwrap_err();
-        assert!(err.contains("own subtree"), "unexpected error: {err}");
+        assert!(
+            err.to_string().contains("own subtree"),
+            "unexpected error: {err}"
+        );
 
         // The move was rejected: A is still a root.
         let notes = fetch_notes(&pool).await.unwrap();

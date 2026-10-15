@@ -71,7 +71,7 @@ pub fn is_text_ext(ext: &str) -> bool {
 }
 
 /// Extract text from `bytes` according to `ext` (lowercase, no leading dot).
-pub fn extract(ext: &str, bytes: &[u8]) -> Result<Extracted, String> {
+pub fn extract(ext: &str, bytes: &[u8]) -> crate::error::AryaResult<Extracted> {
     match ext {
         "pdf" => extract_pdf(bytes),
         "docx" => extract_docx(bytes),
@@ -80,14 +80,16 @@ pub fn extract(ext: &str, bytes: &[u8]) -> Result<Extracted, String> {
         "tsv" => Ok(single(extract_delimited(bytes, b'\t'))),
         "html" | "htm" => Ok(single(strip_html(&decode_utf8(bytes)))),
         "txt" | "md" | "markdown" | "text" | "log" | "json" => Ok(single(decode_utf8(bytes))),
-        other => Err(format!("unsupported file type: .{other}")),
+        other => Err(crate::error::AryaError::message(format!(
+            "unsupported file type: .{other}"
+        ))),
     }
 }
 
 /// Per-page PDF text via `pdf-extract` (pure Rust, no external binary). A page
 /// with no extractable text yields an empty string — the caller can then route
 /// the document to OCR.
-fn extract_pdf(bytes: &[u8]) -> Result<Extracted, String> {
+fn extract_pdf(bytes: &[u8]) -> crate::error::AryaResult<Extracted> {
     let pages = pdf_extract::extract_text_from_mem_by_pages(bytes)
         .map_err(|e| format!("could not read PDF: {e}"))?;
     let page_count = pages.len() as i64;
@@ -108,7 +110,7 @@ fn extract_pdf(bytes: &[u8]) -> Result<Extracted, String> {
 
 /// DOCX text: unzip and pull the runs out of `word/document.xml`. Paragraphs
 /// become newlines so chunk boundaries land on real breaks.
-fn extract_docx(bytes: &[u8]) -> Result<Extracted, String> {
+fn extract_docx(bytes: &[u8]) -> crate::error::AryaResult<Extracted> {
     let mut archive =
         zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| format!("not a valid .docx: {e}"))?;
     let mut xml = String::new();
@@ -116,7 +118,7 @@ fn extract_docx(bytes: &[u8]) -> Result<Extracted, String> {
         .by_name("word/document.xml")
         .map_err(|e| format!("missing word/document.xml: {e}"))?
         .read_to_string(&mut xml)
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
     Ok(single(docx_xml_to_text(&xml)))
 }
 
@@ -154,7 +156,7 @@ fn docx_xml_to_text(xml: &str) -> String {
 
 /// Spreadsheet text via `calamine`: every sheet's cells joined row by row, so a
 /// table stays queryable as "col | col | col" lines.
-fn extract_spreadsheet(bytes: &[u8]) -> Result<Extracted, String> {
+fn extract_spreadsheet(bytes: &[u8]) -> crate::error::AryaResult<Extracted> {
     use calamine::Reader;
 
     // Cursor over the borrow reads directly — no full-file copy for the parser.

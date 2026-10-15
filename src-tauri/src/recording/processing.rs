@@ -53,7 +53,11 @@ fn in_flight() -> &'static Mutex<HashSet<String>> {
     IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-pub fn process_note(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> {
+pub fn process_note(
+    app: &AppHandle,
+    pool: &SqlitePool,
+    note_id: &str,
+) -> crate::error::AryaResult<()> {
     {
         let mut set = in_flight().lock().expect("in-flight lock");
         if !set.insert(note_id.to_string()) {
@@ -63,20 +67,22 @@ pub fn process_note(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result
     let result = run(app, pool, note_id);
     in_flight().lock().expect("in-flight lock").remove(note_id);
     if let Err(message) = &result {
-        set_status_blocking(pool, note_id, "failed", Some(message.clone()));
-        emit(app, note_id, "failed", Some(message.clone()));
+        set_status_blocking(pool, note_id, "failed", Some(message.to_string()));
+        emit(app, note_id, "failed", Some(message.to_string()));
     }
     result
 }
 
-fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> {
+fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> crate::error::AryaResult<()> {
     let existing_turns = fetch_turn_texts(pool, note_id)?;
     let turns = if existing_turns.is_empty() {
         set_status_blocking(pool, note_id, "transcribing", None);
         emit(app, note_id, "transcribing", None);
         let artifacts = final_artifacts(pool, note_id)?;
         if artifacts.files.is_empty() {
-            return Err("no audio artifact for note".to_string());
+            return Err(crate::error::AryaError::message(
+                "no audio artifact for note",
+            ));
         }
         let meeting_intent = artifacts.source_mode == "microphone-and-system";
         let mut turns: Vec<TurnText> = Vec::new();
@@ -100,7 +106,7 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> 
             }
         }
         if turns.is_empty() {
-            return Err(errors.join("; "));
+            return Err(crate::error::AryaError::message(errors.join("; ")));
         }
         // Speaker labels are a meeting feature. Keep the user intent even when
         // system audio was blank and removed: the mic may still contain more
@@ -151,7 +157,7 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> 
         .execute(pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
     })?;
     emit(app, note_id, "ready", None);
     Ok(())
@@ -164,15 +170,17 @@ fn transcribe_artifact(
     wav_path: &Path,
     source: &str,
     offset_ms: i64,
-) -> Result<Vec<TurnWithSamples>, String> {
-    let clip = wav_file::load_normalized(wav_path).map_err(|e| e.to_string())?;
+) -> crate::error::AryaResult<Vec<TurnWithSamples>> {
+    let clip =
+        wav_file::load_normalized(wav_path).map_err(crate::error::AryaError::from_display)?;
     let spans = detect_turns(&clip, &TurnConfig::default());
     if spans.is_empty() {
-        return Err("no speech detected".to_string());
+        return Err(crate::error::AryaError::message("no speech detected"));
     }
 
     let model_path = default_model_path(app)?;
-    let engine = engine_cache::get_or_load(&model_path).map_err(|e| e.to_string())?;
+    let engine =
+        engine_cache::get_or_load(&model_path).map_err(crate::error::AryaError::from_display)?;
     let options = TranscribeOptions { language: None };
 
     let mut turns = Vec::new();
@@ -187,7 +195,7 @@ fn transcribe_artifact(
                     },
                     &options,
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(crate::error::AryaError::from_display)?;
             if !piece.text.trim().is_empty() {
                 if !text.is_empty() {
                     text.push(' ');
@@ -210,12 +218,14 @@ fn transcribe_artifact(
         }
     }
     if turns.is_empty() {
-        return Err("transcription produced no text".to_string());
+        return Err(crate::error::AryaError::message(
+            "transcription produced no text",
+        ));
     }
     Ok(turns)
 }
 
-pub fn default_model_path(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+pub fn default_model_path(app: &AppHandle) -> crate::error::AryaResult<std::path::PathBuf> {
     // Return an error instead of panicking: this runs on the detached note-
     // processing / live-preview threads, and a catalog rename must surface as a
     // failed note rather than a silent thread panic that kills processing.
@@ -223,12 +233,12 @@ pub fn default_model_path(app: &AppHandle) -> Result<std::path::PathBuf, String>
     let models_dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .join("models");
     let target = models_dir.join(spec.file_name);
     if !target.exists() {
         tauri::async_runtime::block_on(models::ensure_model(spec, &models_dir))
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
     }
     Ok(target)
 }
@@ -242,22 +252,22 @@ fn assign_speakers(
     pool: &SqlitePool,
     turns: &mut [TurnText],
     samples_by_turn: &[Vec<f32>],
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let models_dir = app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .join("models");
     let model_path = tauri::async_runtime::block_on(crate::speech::models::ensure_model(
         &diarize::SPEAKER_MODEL,
         &models_dir,
     ))
-    .map_err(|e| e.to_string())?;
+    .map_err(crate::error::AryaError::from_display)?;
 
     let extractor = diarize::get_or_load_extractor(&model_path.to_string_lossy())?;
 
-    let profiles =
-        tauri::async_runtime::block_on(diarize::load_profiles(pool)).map_err(|e| e.to_string())?;
+    let profiles = tauri::async_runtime::block_on(diarize::load_profiles(pool))
+        .map_err(crate::error::AryaError::from_display)?;
 
     // Embeddings for turns long enough to carry identity, grouped by source.
     let min_samples =
@@ -370,7 +380,7 @@ fn refresh_existing_speaker_labels(
     pool: &SqlitePool,
     note_id: &str,
     turns: &mut [TurnText],
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     let artifacts = final_artifacts(pool, note_id)?;
     let meeting_intent = artifacts.source_mode == "microphone-and-system";
     if !meeting_intent
@@ -393,10 +403,11 @@ fn refresh_existing_speaker_labels(
 fn samples_for_existing_turns(
     artifact_files: &[(String, String, i64)],
     turns: &[TurnText],
-) -> Result<Vec<Vec<f32>>, String> {
+) -> crate::error::AryaResult<Vec<Vec<f32>>> {
     let mut clips = HashMap::new();
     for (source, path, offset_ms) in artifact_files {
-        let clip = wav_file::load_normalized(Path::new(path)).map_err(|e| e.to_string())?;
+        let clip = wav_file::load_normalized(Path::new(path))
+            .map_err(crate::error::AryaError::from_display)?;
         clips.insert(source.clone(), (clip, *offset_ms));
     }
 
@@ -442,7 +453,7 @@ struct FinalArtifacts {
     files: Vec<(String, String, i64)>, // (source, path, offset_ms)
 }
 
-fn final_artifacts(pool: &SqlitePool, note_id: &str) -> Result<FinalArtifacts, String> {
+fn final_artifacts(pool: &SqlitePool, note_id: &str) -> crate::error::AryaResult<FinalArtifacts> {
     tauri::async_runtime::block_on(async {
         let Some((session_id, source_mode)) = sqlx::query_as::<_, (String, String)>(
             "SELECT id, source_mode FROM recording_sessions
@@ -452,7 +463,7 @@ fn final_artifacts(pool: &SqlitePool, note_id: &str) -> Result<FinalArtifacts, S
         .bind(note_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         else {
             return Ok(FinalArtifacts {
                 source_mode: "microphone-only".to_string(),
@@ -467,12 +478,12 @@ fn final_artifacts(pool: &SqlitePool, note_id: &str) -> Result<FinalArtifacts, S
         .bind(session_id)
         .fetch_all(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(crate::error::AryaError::from_display)?;
         Ok(FinalArtifacts { source_mode, files })
     })
 }
 
-fn fetch_turn_texts(pool: &SqlitePool, note_id: &str) -> Result<Vec<TurnText>, String> {
+fn fetch_turn_texts(pool: &SqlitePool, note_id: &str) -> crate::error::AryaResult<Vec<TurnText>> {
     tauri::async_runtime::block_on(async {
         sqlx::query_as::<_, (i64, i64, String, Option<String>, String)>(
             "SELECT start_ms, end_ms, source, speaker, text FROM transcript_turns WHERE note_id = ?1 ORDER BY turn_index",
@@ -491,16 +502,23 @@ fn fetch_turn_texts(pool: &SqlitePool, note_id: &str) -> Result<Vec<TurnText>, S
                 })
                 .collect()
         })
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
     })
 }
 
-fn store_turns(pool: &SqlitePool, note_id: &str, turns: &[TurnText]) -> Result<(), String> {
+fn store_turns(
+    pool: &SqlitePool,
+    note_id: &str,
+    turns: &[TurnText],
+) -> crate::error::AryaResult<()> {
     // All-or-nothing: a crash or a mid-loop failure must not leave a *prefix*
     // of turns, because retry sees any existing turns and skips
     // re-transcription (run()), which would silently truncate the note.
     tauri::async_runtime::block_on(async {
-        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(crate::error::AryaError::from_display)?;
         for (index, turn) in turns.iter().enumerate() {
             sqlx::query(
                 "INSERT INTO transcript_turns (id, note_id, source, turn_index, start_ms, end_ms, speaker, text)
@@ -516,9 +534,11 @@ fn store_turns(pool: &SqlitePool, note_id: &str, turns: &[TurnText]) -> Result<(
             .bind(&turn.text)
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         }
-        tx.commit().await.map_err(|e| e.to_string())
+        tx.commit()
+            .await
+            .map_err(crate::error::AryaError::from_display)
     })
 }
 
@@ -526,9 +546,12 @@ fn update_turn_speakers(
     pool: &SqlitePool,
     note_id: &str,
     turns: &[TurnText],
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     tauri::async_runtime::block_on(async {
-        let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(crate::error::AryaError::from_display)?;
         for (index, turn) in turns.iter().enumerate() {
             sqlx::query(
                 "UPDATE transcript_turns SET speaker = ?3
@@ -539,19 +562,21 @@ fn update_turn_speakers(
             .bind(&turn.speaker)
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
         }
-        tx.commit().await.map_err(|e| e.to_string())
+        tx.commit()
+            .await
+            .map_err(crate::error::AryaError::from_display)
     })
 }
 
-fn fetch_manual_notes(pool: &SqlitePool, note_id: &str) -> Result<String, String> {
+fn fetch_manual_notes(pool: &SqlitePool, note_id: &str) -> crate::error::AryaResult<String> {
     tauri::async_runtime::block_on(async {
         sqlx::query_scalar::<_, String>("SELECT manual_notes FROM notes WHERE id = ?1")
             .bind(note_id)
             .fetch_one(pool)
             .await
-            .map_err(|e| e.to_string())
+            .map_err(crate::error::AryaError::from_display)
     })
 }
 

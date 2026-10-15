@@ -80,7 +80,10 @@ pub async fn update_mindmap_fields(
 }
 
 #[tauri::command]
-pub async fn create_mindmap(pool: State<'_, SqlitePool>, title: String) -> Result<Mindmap, String> {
+pub async fn create_mindmap(
+    pool: State<'_, SqlitePool>,
+    title: String,
+) -> crate::error::AryaResult<Mindmap> {
     let title = if title.trim().is_empty() {
         "New mind map".to_string()
     } else {
@@ -88,17 +91,26 @@ pub async fn create_mindmap(pool: State<'_, SqlitePool>, title: String) -> Resul
     };
     insert_mindmap(&pool, &title)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
-pub async fn list_mindmaps(pool: State<'_, SqlitePool>) -> Result<Vec<MindmapSummary>, String> {
-    fetch_mindmaps(&pool).await.map_err(|e| e.to_string())
+pub async fn list_mindmaps(
+    pool: State<'_, SqlitePool>,
+) -> crate::error::AryaResult<Vec<MindmapSummary>> {
+    fetch_mindmaps(&pool)
+        .await
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
-pub async fn get_mindmap(pool: State<'_, SqlitePool>, id: String) -> Result<Mindmap, String> {
-    fetch_mindmap(&pool, &id).await.map_err(|e| e.to_string())
+pub async fn get_mindmap(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> crate::error::AryaResult<Mindmap> {
+    fetch_mindmap(&pool, &id)
+        .await
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
@@ -107,14 +119,17 @@ pub async fn update_mindmap(
     id: String,
     title: Option<String>,
     doc_json: Option<String>,
-) -> Result<(), String> {
+) -> crate::error::AryaResult<()> {
     update_mindmap_fields(&pool, &id, title.as_deref(), doc_json.as_deref())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[tauri::command]
-pub async fn delete_mindmap(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+pub async fn delete_mindmap(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> crate::error::AryaResult<()> {
     // A mind map is a graph node; drop its edges too so nothing dangles.
     let _ = crate::links::delete_for_node(&pool, "mindmap", &id).await;
     sqlx::query("DELETE FROM mindmaps WHERE id = ?1")
@@ -122,7 +137,7 @@ pub async fn delete_mindmap(pool: State<'_, SqlitePool>, id: String) -> Result<(
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[cfg(test)]

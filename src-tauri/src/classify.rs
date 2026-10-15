@@ -196,7 +196,7 @@ pub async fn classify_notes_into_folders(
     pool: State<'_, SqlitePool>,
     note_ids: Vec<String>,
     model: Option<String>,
-) -> Result<Vec<FolderSuggestion>, String> {
+) -> crate::error::AryaResult<Vec<FolderSuggestion>> {
     if note_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -204,7 +204,7 @@ pub async fn classify_notes_into_folders(
         sqlx::query_as::<_, FolderRow>("SELECT id, name FROM folders ORDER BY name")
             .fetch_all(&*pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
     if folders.is_empty() {
         return Ok(Vec::new());
     }
@@ -224,7 +224,7 @@ pub async fn classify_notes_into_folders(
     let notes: Vec<NoteRow> = query
         .fetch_all(&*pool)
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .into_iter()
         .filter(|n| has_classifiable_content(&n.title, &n.body_md))
         .collect();
@@ -236,7 +236,7 @@ pub async fn classify_notes_into_folders(
     let base_url = crate::provider::ollama_url();
     tokio::task::spawn_blocking(move || run_classify(&base_url, &model, &folders, &notes))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[cfg(test)]

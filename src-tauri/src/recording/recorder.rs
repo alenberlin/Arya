@@ -38,11 +38,14 @@ pub struct StartSpec {
 }
 
 enum Command {
-    Start(StartSpec, mpsc::Sender<Result<(u32, u16), String>>),
-    Pause(mpsc::Sender<Result<(), String>>),
-    Resume(mpsc::Sender<Result<(), String>>),
+    Start(
+        StartSpec,
+        mpsc::Sender<crate::error::AryaResult<(u32, u16)>>,
+    ),
+    Pause(mpsc::Sender<crate::error::AryaResult<()>>),
+    Resume(mpsc::Sender<crate::error::AryaResult<()>>),
     /// Finalize and rename; replies with the final path.
-    Finish(mpsc::Sender<Result<PathBuf, String>>),
+    Finish(mpsc::Sender<crate::error::AryaResult<PathBuf>>),
     Status(mpsc::Sender<RecorderStatus>),
     /// Drains the rolling live-preview buffer: (interleaved samples, rate, channels).
     TakePreview(mpsc::Sender<Option<(Vec<f32>, u32, u16)>>),
@@ -90,7 +93,7 @@ impl Recorder {
         Self { sender, elapsed_ms }
     }
 
-    pub fn start(&self, spec: StartSpec) -> Result<(u32, u16), String> {
+    pub fn start(&self, spec: StartSpec) -> crate::error::AryaResult<(u32, u16)> {
         let (tx, rx) = mpsc::channel();
         self.sender
             .send(Command::Start(spec, tx))
@@ -98,15 +101,15 @@ impl Recorder {
         rx.recv().map_err(|_| "recorder gone".to_string())?
     }
 
-    pub fn pause(&self) -> Result<(), String> {
+    pub fn pause(&self) -> crate::error::AryaResult<()> {
         self.round_trip(Command::Pause)
     }
 
-    pub fn resume(&self) -> Result<(), String> {
+    pub fn resume(&self) -> crate::error::AryaResult<()> {
         self.round_trip(Command::Resume)
     }
 
-    pub fn finish(&self) -> Result<PathBuf, String> {
+    pub fn finish(&self) -> crate::error::AryaResult<PathBuf> {
         let (tx, rx) = mpsc::channel();
         self.sender
             .send(Command::Finish(tx))
@@ -147,8 +150,8 @@ impl Recorder {
 
     fn round_trip(
         &self,
-        make: impl FnOnce(mpsc::Sender<Result<(), String>>) -> Command,
-    ) -> Result<(), String> {
+        make: impl FnOnce(mpsc::Sender<crate::error::AryaResult<()>>) -> Command,
+    ) -> crate::error::AryaResult<()> {
         let (tx, rx) = mpsc::channel();
         self.sender
             .send(make(tx))
@@ -226,7 +229,7 @@ fn run_loop(
                         .sink
                         .finalize(&final_path)
                         .map(|()| final_path)
-                        .map_err(|e| e.to_string());
+                        .map_err(crate::error::AryaError::from_display);
                     level_out.store(0, Ordering::Relaxed);
                     let _ = reply.send(result);
                 }
@@ -273,11 +276,11 @@ fn run_loop(
     }
 }
 
-fn begin(spec: StartSpec, level_out: Arc<AtomicU32>) -> Result<Active, String> {
+fn begin(spec: StartSpec, level_out: Arc<AtomicU32>) -> crate::error::AryaResult<Active> {
     let (stream, sample_rx, sample_free_tx, sample_rate, channels) =
         build_stream(spec.device.as_deref(), level_out)?;
-    let sink =
-        WavSink::create(&spec.final_path, sample_rate, channels).map_err(|e| e.to_string())?;
+    let sink = WavSink::create(&spec.final_path, sample_rate, channels)
+        .map_err(crate::error::AryaError::from_display)?;
     Ok(Active {
         spec,
         sink,
@@ -295,23 +298,25 @@ fn begin(spec: StartSpec, level_out: Arc<AtomicU32>) -> Result<Active, String> {
 fn build_stream(
     device_name: Option<&str>,
     level_out: Arc<AtomicU32>,
-) -> Result<RecorderStream, String> {
+) -> crate::error::AryaResult<RecorderStream> {
     let host = cpal::default_host();
     let device = match device_name {
         Some(name) => host
             .input_devices()
-            .map_err(|e| e.to_string())?
+            .map_err(crate::error::AryaError::from_display)?
             .find(|d| {
                 d.description()
                     .map(|desc| desc.name() == name)
                     .unwrap_or(false)
             })
-            .ok_or_else(|| "input device not found".to_string())?,
+            .ok_or_else(|| crate::error::AryaError::message("input device not found"))?,
         None => host
             .default_input_device()
-            .ok_or_else(|| "no input device".to_string())?,
+            .ok_or_else(|| crate::error::AryaError::message("no input device"))?,
     };
-    let config = device.default_input_config().map_err(|e| e.to_string())?;
+    let config = device
+        .default_input_config()
+        .map_err(crate::error::AryaError::from_display)?;
     let sample_rate = config.sample_rate();
     let channels = config.channels();
     let sample_format = config.sample_format();
@@ -329,7 +334,7 @@ fn build_stream(
                     |e| eprintln!("recording stream error: {e}"),
                     None,
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(crate::error::AryaError::from_display)?;
             (stream, sample_rx, sample_free_tx)
         }
         cpal::SampleFormat::I16 => {
@@ -344,12 +349,18 @@ fn build_stream(
                     |e| eprintln!("recording stream error: {e}"),
                     None,
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(crate::error::AryaError::from_display)?;
             (stream, sample_rx, sample_free_tx)
         }
-        other => return Err(format!("unsupported sample format {other:?}")),
+        other => {
+            return Err(crate::error::AryaError::message(format!(
+                "unsupported sample format {other:?}"
+            )))
+        }
     };
-    stream.play().map_err(|e| e.to_string())?;
+    stream
+        .play()
+        .map_err(crate::error::AryaError::from_display)?;
     Ok((stream, sample_rx, sample_free_tx, sample_rate, channels))
 }
 

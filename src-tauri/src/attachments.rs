@@ -37,7 +37,7 @@ pub async fn insert_attachment(
     note_id: &str,
     name: &str,
     source: FileSource,
-) -> Result<Attachment, String> {
+) -> crate::error::AryaResult<Attachment> {
     let name = safe_file_name(name);
     let dir = attachments_root.join(note_id);
     let id = uuid::Uuid::new_v4().to_string();
@@ -55,10 +55,13 @@ pub async fn insert_attachment(
     .bind(size_bytes)
     .fetch_one(pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
-pub async fn list_for_note(pool: &SqlitePool, note_id: &str) -> Result<Vec<Attachment>, String> {
+pub async fn list_for_note(
+    pool: &SqlitePool,
+    note_id: &str,
+) -> crate::error::AryaResult<Vec<Attachment>> {
     sqlx::query_as::<_, Attachment>(
         "SELECT id, note_id, name, path, size_bytes, created_at
          FROM note_attachments WHERE note_id = ?1 ORDER BY created_at",
@@ -66,17 +69,17 @@ pub async fn list_for_note(pool: &SqlitePool, note_id: &str) -> Result<Vec<Attac
     .bind(note_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(crate::error::AryaError::from_display)
 }
 
 /// Delete one attachment's row and its file.
-pub async fn delete_attachment(pool: &SqlitePool, id: &str) -> Result<(), String> {
+pub async fn delete_attachment(pool: &SqlitePool, id: &str) -> crate::error::AryaResult<()> {
     let path: Option<String> =
         sqlx::query_scalar("SELECT path FROM note_attachments WHERE id = ?1")
             .bind(id)
             .fetch_optional(pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AryaError::from_display)?;
     if let Some(path) = path {
         let _ = std::fs::remove_file(&path);
     }
@@ -85,27 +88,27 @@ pub async fn delete_attachment(pool: &SqlitePool, id: &str) -> Result<(), String
         .execute(pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
-fn attachments_root(app: &AppHandle) -> Result<PathBuf, String> {
+fn attachments_root(app: &AppHandle) -> crate::error::AryaResult<PathBuf> {
     Ok(app
         .path()
         .app_data_dir()
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AryaError::from_display)?
         .join("attachments"))
 }
 
 /// Open a path in the OS default app (macOS `open`), mirroring the account
 /// module's URL opener.
-fn open_path(path: &str) -> Result<(), String> {
+fn open_path(path: &str) -> crate::error::AryaResult<()> {
     #[cfg(target_os = "macos")]
     {
         std::process::Command::new("open")
             .arg(path)
             .spawn()
             .map(|_| ())
-            .map_err(|e| e.to_string())
+            .map_err(crate::error::AryaError::from_display)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -120,7 +123,7 @@ pub async fn attach_file(
     pool: State<'_, SqlitePool>,
     note_id: String,
     source_path: String,
-) -> Result<Attachment, String> {
+) -> crate::error::AryaResult<Attachment> {
     let root = attachments_root(&app)?;
     insert_attachment(
         &pool,
@@ -142,7 +145,7 @@ pub async fn attach_dropped_file(
     app: AppHandle,
     pool: State<'_, SqlitePool>,
     request: Request<'_>,
-) -> Result<Attachment, String> {
+) -> crate::error::AryaResult<Attachment> {
     let note_id = header(&request, "x-note-id")?;
     let name = header(&request, "x-filename")?;
     let InvokeBody::Raw(bytes) = request.body() else {
@@ -166,23 +169,29 @@ pub async fn attach_dropped_file(
 pub async fn list_attachments(
     pool: State<'_, SqlitePool>,
     note_id: String,
-) -> Result<Vec<Attachment>, String> {
+) -> crate::error::AryaResult<Vec<Attachment>> {
     list_for_note(&pool, &note_id).await
 }
 
 #[tauri::command]
-pub async fn remove_attachment(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+pub async fn remove_attachment(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> crate::error::AryaResult<()> {
     delete_attachment(&pool, &id).await
 }
 
 #[tauri::command]
-pub async fn open_attachment(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+pub async fn open_attachment(
+    pool: State<'_, SqlitePool>,
+    id: String,
+) -> crate::error::AryaResult<()> {
     let path: String = sqlx::query_scalar("SELECT path FROM note_attachments WHERE id = ?1")
         .bind(&id)
         .fetch_optional(&*pool)
         .await
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "attachment not found".to_string())?;
+        .map_err(crate::error::AryaError::from_display)?
+        .ok_or_else(|| crate::error::AryaError::message("attachment not found"))?;
     open_path(&path)
 }
 

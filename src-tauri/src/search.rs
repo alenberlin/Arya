@@ -104,14 +104,14 @@ pub async fn search_all(
     pool: State<'_, SqlitePool>,
     query: String,
     limit: Option<i64>,
-) -> Result<Vec<TextHit>, String> {
+) -> crate::error::AryaResult<Vec<TextHit>> {
     let q = query.trim();
     if q.is_empty() {
         return Ok(Vec::new());
     }
     search_all_query(&pool, q, limit.unwrap_or(20))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AryaError::from_display)
 }
 
 #[cfg(test)]
