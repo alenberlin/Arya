@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
 import brand from "../../brand.json";
@@ -195,14 +194,7 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
           </>
         ) : null}
 
-        <button
-          type="button"
-          className="btn-ghost btn-sm onboarding-skip"
-          onClick={() => {
-            void invoke("account_signin_state").catch(() => {});
-            finish();
-          }}
-        >
+        <button type="button" className="btn-ghost btn-sm onboarding-skip" onClick={finish}>
           Skip onboarding
         </button>
       </div>

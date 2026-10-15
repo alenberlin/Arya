@@ -1679,7 +1679,10 @@ export function NotesWorkspace({
         folders={folders}
         seedText={brainDump?.seedText}
         sourceNoteId={brainDump?.sourceNoteId}
-        onCreated={(count) => {
+        onCreated={(count, deletedSourceNoteId) => {
+          // The "delete original" flow removed the note this dialog was seeded
+          // from; close it so the editor doesn't keep showing a deleted note.
+          if (deletedSourceNoteId) closeTab(deletedSourceNoteId);
           void refreshNotes();
           setNotice(`Created ${count} note${count === 1 ? "" : "s"} from your brain dump.`);
         }}

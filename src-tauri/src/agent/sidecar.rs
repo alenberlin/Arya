@@ -15,26 +15,23 @@ use serde_json::{json, Value};
 
 type PendingMap = Arc<Mutex<HashMap<u64, mpsc::Sender<Result<Value, String>>>>>;
 
+/// The agent always runs sandboxed. A single-variant enum keeps the session
+/// `mode` column and the shell↔sidecar protocol stable while making it
+/// impossible to spawn an unsandboxed sidecar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WriteMode {
     Sandboxed,
-    Unrestricted,
 }
 
 impl WriteMode {
     pub fn as_str(&self) -> &'static str {
-        match self {
-            WriteMode::Sandboxed => "sandboxed",
-            WriteMode::Unrestricted => "unrestricted",
-        }
+        "sandboxed"
     }
 
-    pub fn parse(value: &str) -> Self {
-        if value == "unrestricted" {
-            WriteMode::Unrestricted
-        } else {
-            WriteMode::Sandboxed
-        }
+    /// Legacy sessions may carry `unrestricted`; they degrade to sandboxed
+    /// (strictly safer) rather than failing.
+    pub fn parse(_value: &str) -> Self {
+        WriteMode::Sandboxed
     }
 }
 
@@ -47,7 +44,7 @@ impl WriteMode {
 ///
 /// Threat model: this is a WRITE jail, not a network jail. `(allow default)`
 /// still permits network and process-exec, and reads are unrestricted — the
-/// sidecar needs network to reach the Arya proxy/Ollama. Exfiltration is
+/// sidecar needs network to reach the cloud providers/Ollama. Exfiltration is
 /// therefore contained at the tool layer instead: the sidecar confines
 /// `read_file`/`list_dir` to the workspace (out-of-workspace reads require user
 /// approval) and runs `run_command` without a shell, approved per program.
@@ -106,7 +103,7 @@ impl Sidecar {
         let tmp_dir = workspace.join(".tmp");
         std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
 
-        let mut command = if mode == WriteMode::Sandboxed && cfg!(target_os = "macos") {
+        let mut command = if cfg!(target_os = "macos") {
             let mut c = Command::new("/usr/bin/sandbox-exec");
             c.arg("-p").arg(seatbelt_profile(workspace)).arg(&node);
             c
@@ -123,29 +120,20 @@ impl Sidecar {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if crate::account::tokens::proxy_configured() {
-            // Hosted / self-hosted proxy: it holds the provider keys and meters
-            // usage, so the sidecar talks to it (never directly to a provider).
-            command.env("ARYA_API_URL", crate::account::tokens::api_url());
-            match crate::account::tokens::current_token() {
-                Some(token) => command.env("ARYA_API_TOKEN", token),
-                None => command.env_remove("ARYA_API_TOKEN"),
+        // Local-only: no proxy. The agent reaches cloud providers directly with
+        // the user's own keys. With none set, it offers only local Ollama models.
+        // The env-removes keep a stray proxy variable from a parent environment
+        // out of the sidecar.
+        command.env_remove("ARYA_API_URL");
+        command.env_remove("ARYA_API_TOKEN");
+        for (provider, var) in [
+            (crate::keys::Provider::Anthropic, "ANTHROPIC_API_KEY"),
+            (crate::keys::Provider::OpenAi, "OPENAI_API_KEY"),
+        ] {
+            match crate::keys::get(provider) {
+                Some(key) => command.env(var, key),
+                None => command.env_remove(var),
             };
-        } else {
-            // Open-source / local build: no proxy. The agent reaches cloud
-            // providers directly with the user's own keys. With none set, the
-            // agent simply offers only local Ollama models.
-            command.env_remove("ARYA_API_URL");
-            command.env_remove("ARYA_API_TOKEN");
-            for (provider, var) in [
-                (crate::keys::Provider::Anthropic, "ANTHROPIC_API_KEY"),
-                (crate::keys::Provider::OpenAi, "OPENAI_API_KEY"),
-            ] {
-                match crate::keys::get(provider) {
-                    Some(key) => command.env(var, key),
-                    None => command.env_remove(var),
-                };
-            }
         }
 
         let mut child = command
@@ -323,10 +311,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn write_mode_round_trips() {
-        assert_eq!(WriteMode::parse("unrestricted"), WriteMode::Unrestricted);
+    fn legacy_unrestricted_mode_degrades_to_sandboxed() {
+        assert_eq!(WriteMode::parse("unrestricted"), WriteMode::Sandboxed);
         assert_eq!(WriteMode::parse("sandboxed"), WriteMode::Sandboxed);
         assert_eq!(WriteMode::parse("junk"), WriteMode::Sandboxed);
+        assert_eq!(WriteMode::Sandboxed.as_str(), "sandboxed");
     }
 
     #[test]

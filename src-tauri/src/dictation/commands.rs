@@ -294,11 +294,14 @@ pub async fn delete_dictation_history_item(
     id: String,
 ) -> Result<(), String> {
     sqlx::query("DELETE FROM dictation_history WHERE id = ?1")
-        .bind(id)
+        .bind(&id)
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // The privacy guarantee: deleting a dictation also deletes its semantic
+    // index rows, so its text and embedding stop being searchable.
+    crate::rag::commands::delete_for_node(&pool, "dictation", &id).await
 }
 
 #[tauri::command]
@@ -307,7 +310,8 @@ pub async fn clear_dictation_history(pool: State<'_, SqlitePool>) -> Result<(), 
         .execute(&*pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::rag::commands::delete_for_kind(&pool, "dictation").await
 }
 
 /// Turns a dictation into a meeting-minutes note: creates a note whose

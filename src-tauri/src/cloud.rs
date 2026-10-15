@@ -1,10 +1,8 @@
 //! Direct cloud LLM calls using the user's own API key (see [`crate::keys`]).
 //!
-//! This is the open-source / local build's cloud path: there is no Arya proxy
-//! in front, so we talk to the provider's public API directly with the key the
-//! user pasted into Account → Cloud API keys. Hosted builds (with the metering
-//! proxy configured) keep using the proxy path in the callers; this module is
-//! only reached when [`crate::account::tokens::proxy_configured`] is false.
+//! Arya is local-first with no proxy: cloud calls talk to the provider's
+//! public API directly with the key the user pasted into Account → Cloud API
+//! keys.
 //!
 //! One entry point — [`chat`] — takes a provider-qualified model id
 //! (`anthropic:claude-sonnet-5`, `openai:gpt-5.2`) so the caller doesn't have

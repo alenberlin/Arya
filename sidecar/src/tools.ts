@@ -7,14 +7,14 @@ import { z } from "zod";
 import type { ApprovalBroker } from "./approvals.js";
 import { generateImageToWorkspace, imageGenerationAvailable } from "./images.js";
 import { safeMcpEnv } from "./mcp.js";
-import { classifyReadable, resolveInWorkspace, resolveReadable } from "./paths.js";
+import { classifyReadable, resolveInWorkspace } from "./paths.js";
 import type { AgentEvent } from "./protocol.js";
 
 const execFileAsync = promisify(execFile);
 
 export interface ToolContext {
   workspace: string;
-  mode: "sandboxed" | "unrestricted";
+  mode: "sandboxed";
   broker: ApprovalBroker;
   emit: (event: AgentEvent) => void;
   nextCallId: () => string;
@@ -100,22 +100,6 @@ export function buildTools(ctx: ToolContext) {
       description: "Write a text file inside the workspace, creating parent directories.",
       inputSchema: z.object({ path: z.string(), content: z.string() }),
       execute: async ({ path, content }) => {
-        // In unrestricted mode writes anywhere require approval; in
-        // sandboxed mode the jail confines writes, and workspace writes
-        // are the agent's normal work - no prompt.
-        if (ctx.mode === "unrestricted") {
-          const approved = await gate(
-            ctx,
-            "write_file",
-            `Write ${content.length} chars to ${path}`,
-            { path },
-          );
-          if (!approved) return "denied by user";
-          const target = resolveReadable(ctx.workspace, path);
-          await mkdir(dirname(target), { recursive: true });
-          await writeFile(target, content, "utf8");
-          return `wrote ${content.length} chars to ${path}`;
-        }
         const target = resolveInWorkspace(ctx.workspace, path);
         await mkdir(dirname(target), { recursive: true });
         await writeFile(target, content, "utf8");
@@ -210,9 +194,9 @@ export function buildTools(ctx: ToolContext) {
             cwd: ctx.workspace,
             timeout: 120_000,
             maxBuffer: 4 * 1024 * 1024,
-            // Scrub the environment: the sidecar carries ARYA_API_TOKEN (and, in
-            // direct-key dev, provider keys). An approved program must never
-            // inherit those — same guard MCP server spawns already use.
+            // Scrub the environment: the sidecar carries the user's provider keys.
+            // An approved program must never inherit those — same guard MCP
+            // server spawns already use.
             env: safeMcpEnv(),
           });
           return clip(`${stdout}${stderr ? `\nstderr:\n${stderr}` : ""}` || "(no output)");

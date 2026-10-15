@@ -189,21 +189,6 @@ describe("model resolution", () => {
     expect(resolveModel("anthropic:claude-sonnet-5")).toBeTruthy();
     expect(resolveModel("openai:gpt-5-mini")).toBeTruthy();
   });
-
-  it("requires an explicit bearer token in proxy mode", () => {
-    const savedUrl = process.env.ARYA_API_URL;
-    const savedToken = process.env.ARYA_API_TOKEN;
-    process.env.ARYA_API_URL = "https://api.arya.example.com";
-    delete process.env.ARYA_API_TOKEN;
-    try {
-      expect(() => resolveModel("openai:gpt-5-mini")).toThrow(/ARYA_API_TOKEN/);
-    } finally {
-      if (savedUrl === undefined) delete process.env.ARYA_API_URL;
-      else process.env.ARYA_API_URL = savedUrl;
-      if (savedToken === undefined) delete process.env.ARYA_API_TOKEN;
-      else process.env.ARYA_API_TOKEN = savedToken;
-    }
-  });
 });
 
 describe("Ollama chat-model filtering", () => {

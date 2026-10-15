@@ -4,5 +4,9 @@
 <dict>
     <key>NSMicrophoneUsageDescription</key>
     <string>Arya records your voice for dictation and meeting notes. Audio never leaves this Mac.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>Arya reads upcoming events to offer one-click meeting capture.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Arya reads upcoming events to offer one-click meeting capture.</string>
 </dict>
 </plist>

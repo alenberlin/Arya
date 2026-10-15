@@ -5,22 +5,9 @@ import type { LanguageModel } from "ai";
 
 const OLLAMA_URL = process.env.ARYA_OLLAMA_URL ?? "http://127.0.0.1:11434";
 
-function aryaApiUrl(): string | undefined {
-  return process.env.ARYA_API_URL || undefined;
-}
-
-function proxyHeaders(): Record<string, string> {
-  const token = process.env.ARYA_API_TOKEN;
-  if (!token) {
-    throw new Error("ARYA_API_TOKEN is required when ARYA_API_URL is set");
-  }
-  return { authorization: `Bearer ${token}` };
-}
-
 /**
- * Resolves "provider:model" to a language model. Providers:
- *   anthropic:* / openai:*  - direct APIs (keys via env until the Arya API
- *                             proxy lands in M11)
+ * Resolves "provider:model" to a language model.
+ *   anthropic:* / openai:*  - direct APIs with the user's own key
  *   ollama:*                - local, free, via Ollama's OpenAI endpoint
  */
 export function resolveModel(qualified: string): LanguageModel {
@@ -31,16 +18,6 @@ export function resolveModel(qualified: string): LanguageModel {
   }
   switch (provider) {
     case "anthropic": {
-      const proxyUrl = aryaApiUrl();
-      if (proxyUrl) {
-        // Route through the proxy: it holds the key and meters usage.
-        const proxied = createOpenAICompatible({
-          name: "arya-anthropic",
-          baseURL: `${proxyUrl}/v1/anthropic`,
-          headers: proxyHeaders(),
-        });
-        return proxied(model);
-      }
       const anthropic = createAnthropic({
         apiKey: process.env.ANTHROPIC_API_KEY,
         baseURL: process.env.ARYA_ANTHROPIC_BASE_URL,
@@ -48,15 +25,6 @@ export function resolveModel(qualified: string): LanguageModel {
       return anthropic(model);
     }
     case "openai": {
-      const proxyUrl = aryaApiUrl();
-      if (proxyUrl) {
-        const proxied = createOpenAICompatible({
-          name: "arya-openai",
-          baseURL: `${proxyUrl}/v1/openai`,
-          headers: proxyHeaders(),
-        });
-        return proxied(model);
-      }
       const openai = createOpenAI({
         apiKey: process.env.OPENAI_API_KEY,
         baseURL: process.env.ARYA_OPENAI_BASE_URL,
@@ -76,26 +44,9 @@ export function resolveModel(qualified: string): LanguageModel {
 }
 
 /**
- * Cloud models available to the desktop. In proxy mode (ARYA_API_URL set) they
- * come from the Arya API catalog (/v1/models) — the source of truth — so the
- * list reflects what the server can actually serve, not what local keys exist.
- * In a direct-key dev setup they come from the provider keys in the env.
+ * Cloud models available to the desktop, from the provider keys in the env.
  */
 export async function listCloudModels(): Promise<string[]> {
-  const proxyUrl = aryaApiUrl();
-  if (proxyUrl) {
-    try {
-      const response = await fetch(`${proxyUrl}/v1/models`, {
-        signal: AbortSignal.timeout(2_000),
-      });
-      if (!response.ok) return [];
-      const data = (await response.json()) as { models?: Array<{ id: string }> };
-      // Ollama (local) models are listed separately via listOllamaModels().
-      return (data.models ?? []).map((m) => m.id).filter((id) => id && !id.startsWith("ollama:"));
-    } catch {
-      return [];
-    }
-  }
   const cloud: string[] = [];
   if (process.env.ANTHROPIC_API_KEY) {
     cloud.push("anthropic:claude-sonnet-5", "anthropic:claude-opus-4-8");

@@ -3,28 +3,17 @@ import { join } from "node:path";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateImage } from "ai";
 
-// Image generation is not yet routed through the Arya proxy. Whenever the proxy
-// holds key custody (ARYA_API_URL set — the production configuration), image
-// generation is disabled rather than reaching for a local provider key, which
-// would bypass the proxy. It remains available only in a direct-key dev setup.
-const PROXY_MODE = Boolean(process.env.ARYA_API_URL);
-
 /**
- * Text-to-image via OpenAI's image model. Disabled in proxy mode until a
- * server-side image endpoint lands; returns the workspace-relative PNG path.
+ * Text-to-image via OpenAI's image model with the user's own key; returns the
+ * workspace-relative PNG path.
  */
 export async function generateImageToWorkspace(
   workspace: string,
   prompt: string,
   size?: string,
 ): Promise<{ path: string; bytes: number }> {
-  if (PROXY_MODE) {
-    throw new Error(
-      "image generation is not available in proxy mode yet (deferred to a later pass)",
-    );
-  }
   if (!process.env.OPENAI_API_KEY) {
-    throw new Error("image generation needs a cloud image model; no OpenAI API key is configured");
+    throw new Error("image generation needs an OpenAI API key (set one in Account)");
   }
   const openai = createOpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const { image } = await generateImage({
@@ -41,5 +30,5 @@ export async function generateImageToWorkspace(
 }
 
 export function imageGenerationAvailable(): boolean {
-  return !PROXY_MODE && Boolean(process.env.OPENAI_API_KEY);
+  return Boolean(process.env.OPENAI_API_KEY);
 }

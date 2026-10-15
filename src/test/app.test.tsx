@@ -35,8 +35,6 @@ vi.mock("../notes/BlockEditor", () => ({ BlockEditor: () => null }));
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     switch (cmd) {
-      case "account_signin_state":
-        return { signedIn: true, hostedAuth: false };
       case "list_notes":
         return backend.notes;
       case "list_folders":

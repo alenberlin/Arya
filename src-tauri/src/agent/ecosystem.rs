@@ -64,10 +64,10 @@ pub async fn mcp_add_server(
     .await
     .map_err(|e| e.to_string())?;
 
-    // Connect immediately in both write-modes' sidecars so tools appear now.
+    // Connect immediately in the sandboxed sidecar so tools appear now.
     let params = json!({ "name": name, "command": command, "args": args, "env": env });
     let mut tools = Vec::new();
-    if let Ok(result) = runtime.request(&app, WriteMode::Sandboxed, "mcp.connect", params.clone()) {
+    if let Ok(result) = runtime.request(&app, WriteMode::Sandboxed, "mcp.connect", params) {
         if let Some(list) = result.get("tools").and_then(|t| t.as_array()) {
             tools = list
                 .iter()
@@ -75,7 +75,6 @@ pub async fn mcp_add_server(
                 .collect();
         }
     }
-    let _ = runtime.request(&app, WriteMode::Unrestricted, "mcp.connect", params);
     Ok(tools)
 }
 
@@ -98,8 +97,7 @@ pub async fn mcp_remove_server(
         .map_err(|e| e.to_string())?;
     if let Some(name) = name {
         let params = json!({ "name": name });
-        let _ = runtime.request(&app, WriteMode::Sandboxed, "mcp.disconnect", params.clone());
-        let _ = runtime.request(&app, WriteMode::Unrestricted, "mcp.disconnect", params);
+        let _ = runtime.request(&app, WriteMode::Sandboxed, "mcp.disconnect", params);
     }
     Ok(())
 }

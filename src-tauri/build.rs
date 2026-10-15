@@ -15,6 +15,10 @@ fn main() {
             _ => "arm64", // Rust's "aarch64" is spelled "arm64" in an Apple triple
         };
         let target = format!("{arch}-apple-macosx14.2");
+        // Pin the Swift module cache inside OUT_DIR so the build is hermetic
+        // and never writes to the macOS per-user cache dir (/var/folders/…),
+        // which sandboxed and reproducible builds cannot reach.
+        let module_cache = format!("{out_dir}/swift-module-cache");
         let status = std::process::Command::new("swiftc")
             .args([
                 "-O",
@@ -24,6 +28,8 @@ fn main() {
                 "AVFoundation",
                 "-target",
                 &target,
+                "-module-cache-path",
+                &module_cache,
                 "-o",
                 &out,
                 "native/system-audio-helper/main.swift",

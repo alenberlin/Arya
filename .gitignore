@@ -1,14 +1,17 @@
 node_modules/
+.pnpm-store/
 dist/
 coverage/
 src-tauri/target/
+.cargo-home/
+.buildtmp/
+.webui_secret_key
 .DS_Store
 *.local
 .env
 .env.*
 !.env.example
 _reference/
-arya-api/target/
 
 # Handoff / upload artifacts — not source, keep out of history
 Arya Mac AI Workspace-handoff.zip

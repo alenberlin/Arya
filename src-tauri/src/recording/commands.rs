@@ -244,6 +244,25 @@ pub async fn finish_recording_inner(
     let elapsed = recorder.elapsed_ms();
     let final_path = recorder.finish()?;
 
+    // Mark the microphone artifact final immediately: recorder.finish() already
+    // renamed its partial to final on disk, so a crash during the (slower)
+    // system-audio stop below must not leave a final file with a 'partial' DB
+    // row — recovery only looks at 'partial' rows and would orphan the WAV.
+    sqlx::query(
+        "UPDATE audio_artifacts SET path = ?2, status = 'final', size_bytes = ?3
+         WHERE session_id = ?1 AND source = 'microphone'",
+    )
+    .bind(&session_id)
+    .bind(final_path.to_string_lossy().to_string())
+    .bind(
+        std::fs::metadata(&final_path)
+            .map(|m| m.len() as i64)
+            .unwrap_or(0),
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+
     // Stop the system helper (if running) and promote its file.
     let capture = app
         .state::<SystemCaptureSlot>()
@@ -285,20 +304,6 @@ pub async fn finish_recording_inner(
         }
     }
 
-    sqlx::query(
-        "UPDATE audio_artifacts SET path = ?2, status = 'final', size_bytes = ?3
-         WHERE session_id = ?1 AND source = 'microphone'",
-    )
-    .bind(&session_id)
-    .bind(final_path.to_string_lossy().to_string())
-    .bind(
-        std::fs::metadata(&final_path)
-            .map(|m| m.len() as i64)
-            .unwrap_or(0),
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| e.to_string())?;
     update_session_status(pool, &session_id, "finished", elapsed).await?;
 
     spawn_processing(app.clone(), pool.clone(), note_id.clone());

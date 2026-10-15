@@ -1,15 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  type AccountSnapshot,
-  accountSignInState,
-  accountSignOut,
-  accountSnapshot,
-  type SignInState,
-} from "../lib/account";
-import { AccountIcon, LockIcon } from "../ui/icons";
+import { LockIcon } from "../ui/icons";
 import { ModelSettings } from "./ModelSettings";
 
-/** On-device model privacy tiers — shown in both local and cloud modes. */
+/** On-device model privacy tiers. */
 function PrivacyTiers() {
   return (
     <div className="card" style={{ marginBottom: 14 }}>
@@ -48,143 +40,30 @@ function PrivacyTiers() {
   );
 }
 
-/** Account: sign-in state and cloud-credit balance/usage. Arya is free — no plans, no billing. */
+/** Account: cloud API keys + on-device model setup. Arya is free and local-first. */
 export function AccountPanel() {
-  const [signIn, setSignIn] = useState<SignInState | null>(null);
-  const [snapshot, setSnapshot] = useState<AccountSnapshot | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      const state = await accountSignInState();
-      setSignIn(state);
-      // Only the hosted/cloud build has an account backend; local mode never
-      // reaches out, so it can't (and shouldn't) error.
-      if (state.hostedAuth) {
-        setSnapshot(await accountSnapshot());
-      }
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  // Local mode: no account, nothing to fetch, no errors — everything's on-device.
-  if (signIn && !signIn.hostedAuth) {
-    return (
-      <div className="screen-center">
-        <div className="screen-col narrow">
-          <h1 style={{ marginBottom: 20 }}>Account</h1>
-          <div className="card hstack" style={{ gap: 16, marginBottom: 14 }}>
-            <span className="avatar avatar-lg">
-              <LockIcon />
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 17, fontWeight: 600 }}>Local mode</div>
-              <div className="muted" style={{ fontSize: 13 }}>
-                Everything runs on your Mac — no account needed. Local models and on-device speech
-                are always free.
-              </div>
-            </div>
-          </div>
-          <PrivacyTiers />
-          <ModelSettings />
-          <p className="muted" style={{ fontSize: 12 }}>
-            Arya is free — local models and on-device speech never cost anything. Cloud models are
-            optional and billed by your provider against your own key.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="screen-center">
-        <div className="screen-col narrow">
-          <h1 style={{ marginBottom: 16 }}>Account</h1>
-          <p role="alert">{error}</p>
-          <button type="button" onClick={() => void refresh()}>
-            Retry
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (!snapshot) {
-    return (
-      <div className="screen-center">
-        <div className="screen-col narrow">
-          <h1 style={{ marginBottom: 16 }}>Account</h1>
-          <p>Loading account…</p>
-        </div>
-      </div>
-    );
-  }
-
-  const total = snapshot.includedCredits + snapshot.topupCredits;
-  const remainingPct =
-    total > 0 ? Math.min(100, Math.round((snapshot.remainingCredits / total) * 100)) : 0;
-
   return (
     <div className="screen-center">
       <div className="screen-col narrow">
         <h1 style={{ marginBottom: 20 }}>Account</h1>
-        {notice ? (
-          <p role="status" className="muted" style={{ marginBottom: 12 }}>
-            {notice}
-          </p>
-        ) : null}
-
         <div className="card hstack" style={{ gap: 16, marginBottom: 14 }}>
           <span className="avatar avatar-lg">
-            <AccountIcon />
+            <LockIcon />
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 17, fontWeight: 600 }}>Cloud account</div>
+            <div style={{ fontSize: 17, fontWeight: 600 }}>Local-first</div>
             <div className="muted" style={{ fontSize: 13 }}>
-              Free, no plan required · on-device speech is always free
+              Everything runs on your Mac — no account needed. Cloud models are optional and use
+              your own key.
             </div>
           </div>
         </div>
-
-        <div className="card" style={{ marginBottom: 14 }}>
-          <div className="spread" style={{ alignItems: "baseline", marginBottom: 12 }}>
-            <div style={{ fontSize: 14, fontWeight: 600 }}>Cloud credits</div>
-            <div className="mono muted" style={{ fontSize: 13 }}>
-              {snapshot.remainingCredits.toLocaleString()} / {total.toLocaleString()}
-            </div>
-          </div>
-          <div className="meter">
-            <div
-              className="meter-fill"
-              style={{
-                width: `${remainingPct}%`,
-                background: remainingPct < 10 ? "var(--danger)" : "var(--accent)",
-              }}
-            />
-          </div>
-          <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
-            {snapshot.remainingCredits.toLocaleString()} free credits left, refilled regularly. Only
-            used when you choose a cloud model — local models and on-device speech are always free.
-          </div>
-        </div>
-
         <PrivacyTiers />
-
-        <button
-          type="button"
-          className="btn-ghost"
-          onClick={() => void accountSignOut().then(() => setNotice("Signed out."))}
-        >
-          Sign out
-        </button>
+        <ModelSettings />
+        <p className="muted" style={{ fontSize: 12 }}>
+          Arya is free. Local models and on-device speech never cost anything. Cloud models are
+          optional and billed by your provider against your own key.
+        </p>
       </div>
     </div>
   );

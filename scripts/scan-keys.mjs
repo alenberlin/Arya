@@ -3,7 +3,7 @@
 // server-side — and no signing/cloud secret may land in git history or a
 // release bundle. Runs in `make verify` and in the release workflow before
 // packaging. Scans the whole tracked tree via `git grep`, not a fixed dir list,
-// so configs, workflows, docs, scripts, and arya-api are all covered.
+// so configs, workflows, docs, and scripts are all covered.
 import { execSync } from "node:child_process";
 
 // High-signal secret shapes. Kept specific so legitimate config doesn't trip.

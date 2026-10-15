@@ -40,7 +40,14 @@ pub fn enroll_blocking(
 ) -> Result<SpeakerProfileInfo, String> {
     {
         let handle = crate::audio::start_capture(None).map_err(|e| e.to_string())?;
-        std::thread::sleep(std::time::Duration::from_secs(seconds as u64));
+        // Sleep in small slices, draining the bounded callback pool each time: a
+        // single long sleep would fill the 64-block pool in under a second and
+        // silently drop the rest of the enrollment audio.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds as u64);
+        while std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            let _ = handle.level(); // level() drains the queued callback blocks
+        }
         let clip = handle.stop().map_err(|e| e.to_string())?;
         if clip.duration_secs() < 2.0 {
             return Err("recording too short".to_string());

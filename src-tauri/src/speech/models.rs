@@ -5,6 +5,7 @@
 //! `ggml-org/whisper.cpp` Hugging Face artifacts at pin time.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
@@ -56,6 +57,15 @@ pub fn find(id: &str) -> Option<&'static ModelSpec> {
     CATALOG.iter().find(|m| m.id == id)
 }
 
+/// Serializes downloads so two first-use paths (e.g. the whisper preview ticker
+/// and the finish pipeline both warming the same model) can never write the same
+/// `.partial` file concurrently and corrupt it. Downloads are rare and large, so
+/// one global lock is the simplest correct guard.
+fn download_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 /// Returns the local path for `spec` under `models_dir`, downloading and
 /// verifying it first if missing.
 pub async fn ensure_model(spec: &ModelSpec, models_dir: &Path) -> Result<PathBuf, SpeechError> {
@@ -90,6 +100,13 @@ pub async fn download_verified_with_progress<F: Fn(u64, u64)>(
     name: &str,
     on_progress: F,
 ) -> Result<(), SpeechError> {
+    // Single-flight: hold the download lock for the whole fetch so a second
+    // caller waits and then finds the file already in place, instead of
+    // interleaving writes to the same `.partial` and corrupting it.
+    let _guard = download_lock().lock().await;
+    if target.exists() {
+        return Ok(());
+    }
     let partial = target.with_extension("partial");
     let response = reqwest::get(url)
         .await
@@ -226,6 +243,27 @@ mod tests {
         };
         assert_ne!(actual, "deadbeef");
         // Cleanup.
+        tokio::fs::remove_dir_all(&dir).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_target_skips_download_without_network() {
+        let dir =
+            std::env::temp_dir().join(format!("arya-speech-singleflight-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        let target = dir.join("model.bin");
+        tokio::fs::write(&target, b"already here").await.unwrap();
+        // An unreachable URL: the single-flight re-check must return Ok without
+        // ever touching the network when the file is already in place.
+        download_verified_with_progress(
+            "http://127.0.0.1:1/nonexistent",
+            &target,
+            "deadbeef",
+            "model",
+            |_, _| {},
+        )
+        .await
+        .unwrap();
         tokio::fs::remove_dir_all(&dir).await.unwrap();
     }
 }

@@ -385,11 +385,14 @@ pub async fn agent_delete_session_inner(
         runtime.clear_session_state(&session_id);
     }
     sqlx::query("DELETE FROM agent_sessions WHERE id = ?1")
-        .bind(session_id)
+        .bind(&session_id)
         .execute(pool)
         .await
         .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // The privacy guarantee: deleting a chat also deletes its semantic index
+    // rows, so its text and embedding stop being searchable.
+    crate::rag::commands::delete_for_node(pool, "session", &session_id).await
 }
 
 async fn session_mode(pool: &SqlitePool, session_id: &str) -> Result<WriteMode, String> {

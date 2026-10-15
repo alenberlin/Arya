@@ -28,7 +28,14 @@ pub async fn init_pool(path: &Path) -> Result<SqlitePool, DbError> {
         // SQLITE_BUSY: several blocking paths (dictation history, processing
         // status, RAG reindex) can write concurrently under WAL.
         .busy_timeout(std::time::Duration::from_secs(5))
-        .foreign_keys(true);
+        .foreign_keys(true)
+        // WAL already gives crash safety, so NORMAL synchronous avoids an fsync
+        // on every commit (FULL is redundant with WAL). A modest page cache and
+        // memory-mapped I/O — both caps, not reservations — keep KB/RAG scans
+        // fast without a fixed memory tax.
+        .pragma("synchronous", "NORMAL")
+        .pragma("cache_size", "-64000")
+        .pragma("mmap_size", "268435456");
     let pool = SqlitePoolOptions::new().connect_with(options).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
     Ok(pool)

@@ -1,4 +1,3 @@
-mod account;
 pub mod agent;
 mod attachments;
 pub mod audio;
@@ -121,7 +120,6 @@ pub fn run() {
             app.manage(Recorder::spawn());
             app.manage(recording::commands::SystemCaptureSlot::default());
             app.manage(agent::AgentRuntime::default());
-            app.manage(account::commands::AccountState::default());
             spawn_agent_scheduler(app.handle().clone());
             #[cfg(target_os = "macos")]
             meeting_detect::macos::spawn_poller(app.handle().clone());
@@ -250,15 +248,6 @@ pub fn run() {
             mindmaps::get_mindmap,
             mindmaps::update_mindmap,
             mindmaps::delete_mindmap,
-            account::commands::account_signin_state,
-            account::commands::account_begin_signin,
-            // Dev-only token backdoor; compiled out of release builds (must be
-            // gated here too, or `generate_handler!` references a symbol that
-            // does not exist in release).
-            #[cfg(debug_assertions)]
-            account::commands::account_set_token,
-            account::commands::account_sign_out,
-            account::commands::account_snapshot,
             keys::keys_status,
             keys::keys_set,
             keys::keys_clear,

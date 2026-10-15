@@ -43,7 +43,7 @@ local models cover most of it.
 - **Routines** — scheduled agent tasks that run on an interval.
 - **MCP servers** — connect external tools via the Model Context Protocol.
 - **Local-first, cloud-optional** — free local models (via Ollama) are
-  first-class; cloud providers are a clearly-labeled, metered upgrade.
+  first-class; cloud providers are optional, called directly with your own key.
 
 ## Screenshots
 
@@ -64,11 +64,10 @@ app, and speech never leaves your Mac:
 | Desktop shell  | `src-tauri/` | Tauri 2 + Rust (audio, ASR, storage, agent host)   |
 | Frontend       | `src/`       | React 18 + TypeScript + Vite                       |
 | Agent sidecar  | `sidecar/`   | TypeScript on the AI SDK (spawned per write-mode)  |
-| API proxy      | `arya-api/`  | Rust — metered, OpenAI-compatible provider proxy   |
 
-On-device speech uses whisper; local LLMs run through Ollama. The `arya-api`
-crate is an optional server-side proxy that keeps provider keys off the client
-and meters cloud usage.
+On-device speech uses whisper; local LLMs run through Ollama. Cloud models are
+optional and use your own API key, called directly from your Mac — there is no
+server in between.
 
 ## Building from source
 
@@ -80,16 +79,15 @@ pnpm tauri:dev          # run the app in development
 pnpm package:mac        # build a distributable .app / .dmg
 ```
 
-Verify the full workspace (frontend, Rust core, sidecar, arya-api):
+Verify the full workspace (frontend, Rust core, sidecar):
 
 ```bash
 make verify
 ```
 
-Configure the optional API proxy by copying `arya-api/.env.example` to
-`arya-api/.env` and filling in your own values. **No secrets or provider keys
-are committed to this repository** — the example file contains placeholders
-only.
+To use cloud models, paste your own OpenAI or Anthropic API key in
+Account → Cloud API keys (stored in the macOS Keychain). **No secrets or
+provider keys are committed to this repository.**
 
 ## License
 

@@ -54,6 +54,32 @@ pub async fn rag_status(pool: State<'_, SqlitePool>) -> Result<RagStatus, String
     })
 }
 
+/// Removes the semantic-index rows for one deleted node (kind ∈ `note` |
+/// `dictation` | `session`) and invalidates the in-memory search cache so the
+/// next query reflects the deletion. Every delete path must call this so a
+/// deleted note/dictation/chat is truly gone, not still searchable.
+pub async fn delete_for_node(pool: &SqlitePool, kind: &str, id: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM rag_chunks WHERE source_kind = ?1 AND source_id = ?2")
+        .bind(kind)
+        .bind(id)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    invalidate_cache();
+    Ok(())
+}
+
+/// Removes every semantic-index row of a kind (delete-all flows).
+pub async fn delete_for_kind(pool: &SqlitePool, kind: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM rag_chunks WHERE source_kind = ?1")
+        .bind(kind)
+        .execute(pool)
+        .await
+        .map_err(|e| e.to_string())?;
+    invalidate_cache();
+    Ok(())
+}
+
 /// Rebuilds the index from all current notes, transcripts, dictation, and
 /// agent sessions. Emits `rag:progress` as it goes.
 #[tauri::command]
@@ -372,5 +398,35 @@ mod tests {
                 .unwrap()
         });
         assert_eq!(rows, vec![("existing".into(), "keep me".into())]);
+    }
+
+    #[test]
+    fn delete_for_node_removes_its_chunks() {
+        let pool = tauri::async_runtime::block_on(test_pool());
+        tauri::async_runtime::block_on(async {
+            let note = crate::notes::insert_note(&pool, "Delete me").await.unwrap();
+            sqlx::query(
+                "INSERT INTO rag_chunks
+                     (id, source_kind, source_id, title, content, embedding, model, updated_at)
+                 VALUES ('c1', 'note', ?1, 'Delete me', 'secret text', ?2, 'm',
+                         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+            )
+            .bind(&note.id)
+            .bind(f32_to_blob(&[1.0, 0.0]))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            delete_for_node(&pool, "note", &note.id).await.unwrap();
+
+            let remaining: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM rag_chunks WHERE source_kind = 'note' AND source_id = ?1",
+            )
+            .bind(&note.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(remaining, 0, "deleting a note must delete its rag chunks");
+        });
     }
 }

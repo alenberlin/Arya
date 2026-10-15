@@ -34,7 +34,7 @@ export function BrainDumpDialog({
   folders: Folder[];
   seedText?: string;
   sourceNoteId?: string | null;
-  onCreated: (count: number) => void;
+  onCreated: (count: number, deletedSourceNoteId: string | null) => void;
 }) {
   const [input, setInput] = useState("");
   const [proposed, setProposed] = useState<ProposedNote[] | null>(null);
@@ -121,7 +121,7 @@ export function BrainDumpDialog({
       }
       await createNotesFromSplit(accepted, folderId);
       if (deleteSource && sourceNoteId) await deleteNote(sourceNoteId);
-      onCreated(accepted.length);
+      onCreated(accepted.length, deleteSource && sourceNoteId ? sourceNoteId : null);
       onClose();
     } catch (e) {
       setError(String(e));

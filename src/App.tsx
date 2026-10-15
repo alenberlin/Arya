@@ -1,13 +1,11 @@
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
 import brand from "../brand.json";
-import { AccountGate } from "./account/AccountGate";
 import { AccountPanel } from "./account/AccountPanel";
 import { AgentSection } from "./agent/AgentSection";
 import { DictationPanel } from "./dictation/DictationPanel";
 import { GalaxyPanel } from "./galaxy/GalaxyPanel";
 import { KnowledgeBasePanel } from "./knowledge/KnowledgeBasePanel";
-import { type AccountSnapshot, accountSnapshot } from "./lib/account";
 import { disableAutostart, enableAutostart, isAutostartEnabled } from "./lib/autostart";
 import { useFormFieldDictation } from "./lib/dictationInsert";
 import { loadTheme, saveTheme, type Theme } from "./lib/theme";
@@ -58,7 +56,6 @@ export function App() {
   const [tab, setTab] = useState<Tab>("notes");
   const [onboarded, setOnboarded] = useState(onboardingComplete);
   const [theme, setThemeState] = useState<Theme>(loadTheme);
-  const [account, setAccount] = useState<AccountSnapshot | null>(null);
   const [autostart, setAutostart] = useState(false);
   const [autostartPrompt, setAutostartPrompt] = useState(false);
   const [pendingNote, setPendingNote] = useState<string | null>(null);
@@ -116,25 +113,6 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    // Best-effort: the sidebar shows plan + credits when a backend answers;
-    // in local mode it stays quiet rather than erroring. Re-fetch whenever auth
-    // changes anywhere (sign-in via the loopback callback, sign-out from the
-    // account panel) so the sidebar never shows a stale balance until reload.
-    const refresh = () => {
-      void accountSnapshot()
-        .then(setAccount)
-        .catch(() => setAccount(null));
-    };
-    refresh();
-    const unlistenIn = listen("account:signed-in", refresh);
-    const unlistenOut = listen("account:signed-out", refresh);
-    return () => {
-      void unlistenIn.then((fn) => fn());
-      void unlistenOut.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
     // Reflect the current launch-at-login state, and offer it once on first run.
     void isAutostartEnabled()
       .then((on) => {
@@ -162,7 +140,7 @@ export function App() {
   }[tab];
 
   return (
-    <AccountGate>
+    <>
       <div className="app">
         <aside className="sidebar">
           <div className="sidebar-brand">
@@ -203,9 +181,7 @@ export function App() {
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>
               <span className="account-name">Account</span>
-              <span className="account-sub">
-                {account ? `${account.remainingCredits.toLocaleString()} credits` : "Local mode"}
-              </span>
+              <span className="account-sub">Local-first · your keys</span>
             </span>
           </button>
 
@@ -257,7 +233,7 @@ export function App() {
           localStorage.setItem("arya-autostart-decided", "true");
         }}
       />
-    </AccountGate>
+    </>
   );
 }
 

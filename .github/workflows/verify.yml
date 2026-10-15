@@ -22,7 +22,6 @@ jobs:
         with:
           workspaces: |
             src-tauri
-            arya-api
           # sherpa-rs-sys downloads a prebuilt onnxruntime/sherpa-onnx library
           # here at build time; it lives outside target/, so without this it's
           # absent on a fresh runner even when the target/ fingerprint cache
@@ -32,7 +31,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter arya-sidecar build
       # Full gate: brand + key scan, lint, typecheck, TS tests, Rust shell,
-      # sidecar, and arya-api. Mirrors `make verify`.
+      # and sidecar. Mirrors `make verify`.
       - run: make verify
 
   # `verify` compiles in debug only, so release-only code — anything behind
@@ -56,8 +55,7 @@ jobs:
         with:
           workspaces: |
             src-tauri
-            arya-api
       - run: pnpm install --frozen-lockfile
       # Compiles the frontend (../dist for generate_context!) then release-builds
-      # both Rust workspaces. Mirrors `make verify-release`.
+      # the Rust shell. Mirrors `make verify-release`.
       - run: make verify-release

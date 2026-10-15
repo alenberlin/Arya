@@ -64,7 +64,7 @@ export interface SessionConfig {
   sessionId: string;
   /** Provider-qualified model id, e.g. "anthropic:claude-sonnet-5". */
   model: string;
-  mode: "sandboxed" | "unrestricted";
+  mode: "sandboxed";
   workspace: string;
   system?: string;
   /** Restore point: prior conversation as (role, text) pairs. */
