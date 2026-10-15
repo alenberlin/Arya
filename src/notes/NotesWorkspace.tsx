@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWindowFileDrop } from "../lib/fileDrop";
 import { TRANSLATE_LANGUAGES, translateInstruction } from "../lib/languages";
 import { type NodeKind, reconcileLinks } from "../lib/links";
@@ -771,18 +771,29 @@ export function NotesWorkspace({
 
   // Nodes offered in the editor's `@`-mention menu (notes for now; other node
   // kinds join as those surfaces land). The open note can't mention itself.
-  const mentionItems: MentionItem[] = notes
-    .filter((n) => n.id !== detail?.id)
-    .map((n) => ({ kind: "note" as const, id: n.id, label: n.title }));
+  const mentionItems = useMemo<MentionItem[]>(
+    () =>
+      notes
+        .filter((n) => n.id !== detail?.id)
+        .map((n) => ({ kind: "note" as const, id: n.id, label: n.title })),
+    [notes, detail?.id],
+  );
 
   const baseNotes = filter.trim() ? searchResults : notes;
   // "All notes" is the unfiled bucket: a note lives in exactly one place —
   // there, or in a single folder. Moving it to a folder removes it from here.
-  const visibleNotes = baseNotes
-    .filter((n) => (activeFolder ? n.folderId === activeFolder : !n.folderId))
-    .slice()
-    // Guarantee newest-first regardless of source ordering.
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  // Memoized: every keystroke re-renders the workspace, and re-filtering +
+  // re-sorting the whole list each time is the dominant per-keystroke cost for
+  // a large note collection.
+  const visibleNotes = useMemo(
+    () =>
+      baseNotes
+        .filter((n) => (activeFolder ? n.folderId === activeFolder : !n.folderId))
+        .slice()
+        // Guarantee newest-first regardless of source ordering.
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [baseNotes, activeFolder],
+  );
 
   // F3 nesting: a page tree for browse mode (no filter). Roots are the
   // folder-visible notes with no visible parent; children nest beneath them
@@ -793,16 +804,22 @@ export function NotesWorkspace({
     activeFolder,
   );
   const sortAccepted = sortReview?.filter((s) => !sortRejected.has(s.noteId)) ?? [];
-  const noteIds = new Set(notes.map((n) => n.id));
-  const childrenByParent = new Map<string, NoteSummary[]>();
-  for (const n of notes) {
-    if (n.parentNoteId && noteIds.has(n.parentNoteId)) {
-      const siblings = childrenByParent.get(n.parentNoteId) ?? [];
-      siblings.push(n);
-      childrenByParent.set(n.parentNoteId, siblings);
+  const { noteIds, childrenByParent } = useMemo(() => {
+    const noteIds = new Set(notes.map((n) => n.id));
+    const childrenByParent = new Map<string, NoteSummary[]>();
+    for (const n of notes) {
+      if (n.parentNoteId && noteIds.has(n.parentNoteId)) {
+        const siblings = childrenByParent.get(n.parentNoteId) ?? [];
+        siblings.push(n);
+        childrenByParent.set(n.parentNoteId, siblings);
+      }
     }
-  }
-  const rootNotes = visibleNotes.filter((n) => !n.parentNoteId || !noteIds.has(n.parentNoteId));
+    return { noteIds, childrenByParent };
+  }, [notes]);
+  const rootNotes = useMemo(
+    () => visibleNotes.filter((n) => !n.parentNoteId || !noteIds.has(n.parentNoteId)),
+    [visibleNotes, noteIds],
+  );
 
   const toggleExpand = (id: string) =>
     setExpanded((s) => {
