@@ -225,7 +225,8 @@ impl DictationService {
             }
             None => {
                 *self.active_stream.lock().expect("stream lock") = None;
-                self.spawn_whisper_ticker(app.clone(), generation, settings.clone());
+                let handle = self.spawn_whisper_ticker(app.clone(), generation, settings.clone());
+                *self.partial_handle.lock().expect("handle lock") = Some(handle);
                 if settings.streaming {
                     spawn_streaming_prepare(app.clone());
                 }
@@ -248,23 +249,24 @@ impl DictationService {
             .expect("spawn streaming ticker")
     }
 
-    /// Spawn the whisper re-transcribe ticker (fallback preview). Detached: it
-    /// shares no mutable state with finalize, so it needn't be joined.
+    /// Spawn the whisper re-transcribe ticker (fallback preview). The handle is
+    /// stored and joined before finalize so the partial never races the final
+    /// transcribe on the shared engine.
     fn spawn_whisper_ticker(
         self: &Arc<Self>,
         app: AppHandle,
         generation: u64,
         settings: DictationSettings,
-    ) {
+    ) -> JoinHandle<()> {
         let service = Arc::clone(self);
         std::thread::Builder::new()
             .name("arya-dictation-partial".into())
             .spawn(move || service.run_whisper_partials(&app, generation, &settings))
-            .expect("spawn whisper ticker");
+            .expect("spawn whisper ticker")
     }
 
-    /// Join and clear the streaming feed ticker so nothing is still touching the
-    /// shared engine. No-op for the whisper path (its handle is never stored).
+    /// Join and clear the feed ticker (streaming or whisper) so nothing is still
+    /// touching the shared engine before finalize.
     fn join_partial_ticker(&self) {
         let handle = self.partial_handle.lock().expect("handle lock").take();
         if let Some(handle) = handle {
