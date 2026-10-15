@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 import {
@@ -9,6 +8,7 @@ import {
   dictationUnpinApp,
   type Polish,
 } from "../lib/dictation";
+import { commands } from "../lib/ipc";
 import { applyTheme, type Theme } from "../lib/theme";
 import "./hud.css";
 
@@ -152,7 +152,7 @@ export function HudApp() {
       if (width !== lastW || height !== lastH) {
         lastW = width;
         lastH = height;
-        void invoke("hud_resize", { width, height });
+        void commands.hudResize(width, height);
       }
     };
     const observer = new ResizeObserver(send);

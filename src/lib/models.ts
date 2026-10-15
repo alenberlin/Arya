@@ -3,7 +3,6 @@ import { commands, run } from "./ipc";
 //! (Whisper) model downloads. Keys never round-trip to the UI — only "set /
 //! not set" — so a stored secret can't leak through the frontend.
 
-import { invoke } from "@tauri-apps/api/core";
 import { type Event, listen } from "@tauri-apps/api/event";
 
 // ---- Cloud API keys -------------------------------------------------------
@@ -22,12 +21,12 @@ export function keysStatus(): Promise<KeysStatus> {
 
 /** Store or replace a key. A blank value removes it. Returns fresh status. */
 export function keysSet(provider: KeyProvider, key: string): Promise<KeysStatus> {
-  return invoke<KeysStatus>("keys_set", { provider, key });
+  return run<KeysStatus>(commands.keysSet(provider, key));
 }
 
 /** Remove a provider key. Returns fresh status. */
 export function keysClear(provider: KeyProvider): Promise<KeysStatus> {
-  return invoke<KeysStatus>("keys_clear", { provider });
+  return run<KeysStatus>(commands.keysClear(provider));
 }
 
 // ---- Ollama (local models) ------------------------------------------------
@@ -52,15 +51,15 @@ export type SpeechModelStatus = {
 };
 
 export function speechModelsStatus(): Promise<SpeechModelStatus[]> {
-  return invoke<SpeechModelStatus[]>("speech_models_status");
+  return run<SpeechModelStatus[]>(commands.speechModelsStatus());
 }
 
 export function downloadSpeechModel(id: string): Promise<void> {
-  return invoke("download_speech_model", { id });
+  return run<void>(commands.downloadSpeechModel(id));
 }
 
 export function deleteSpeechModel(id: string): Promise<void> {
-  return invoke("delete_speech_model", { id });
+  return run<void>(commands.deleteSpeechModel(id));
 }
 
 export type SpeechDownloadProgress = {
