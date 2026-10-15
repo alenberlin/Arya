@@ -232,6 +232,10 @@ export function NotesWorkspace({
   const [filter, setFilter] = useState("");
   const [searchResults, setSearchResults] = useState<NoteSummary[]>([]);
   const [sortPreview, setSortPreview] = useState<string | null>(null);
+  // Render a bounded prefix of a very long note list and let the user expand —
+  // avoids building thousands of DOM rows for the pathological "10k notes" case
+  // without a full virtualization dependency or risking drag-drop/menu wiring.
+  const [showAllNotes, setShowAllNotes] = useState(false);
   const [sorting, setSorting] = useState(false);
   // Brain-dump → coherent notes. Open with an optional seed (a note's body) and
   // source note id (offer to delete the original after splitting).
@@ -822,6 +826,8 @@ export function NotesWorkspace({
     () => visibleNotes.filter((n) => !n.parentNoteId || !noteIds.has(n.parentNoteId)),
     [visibleNotes, noteIds],
   );
+  const listSource = treeMode ? rootNotes : visibleNotes;
+  const NOTE_LIST_CAP = 300;
 
   const toggleExpand = (id: string) =>
     setExpanded((s) => {
@@ -1182,9 +1188,11 @@ export function NotesWorkspace({
 
           <ul aria-label="notes" className="plain">
             {treeMode
-              ? renderTree(rootNotes, 0)
-              : visibleNotes.map((note) => renderNoteRow(note, 0))}
-            {(treeMode ? rootNotes : visibleNotes).length === 0 ? (
+              ? renderTree(showAllNotes ? rootNotes : rootNotes.slice(0, NOTE_LIST_CAP), 0)
+              : (showAllNotes ? visibleNotes : visibleNotes.slice(0, NOTE_LIST_CAP)).map((note) =>
+                  renderNoteRow(note, 0),
+                )}
+            {listSource.length === 0 ? (
               <li className="empty">
                 {filter.trim()
                   ? "No notes match your filter."
@@ -1192,6 +1200,11 @@ export function NotesWorkspace({
               </li>
             ) : null}
           </ul>
+          {listSource.length > NOTE_LIST_CAP && !showAllNotes ? (
+            <button type="button" className="btn-sm" onClick={() => setShowAllNotes(true)}>
+              Show all {listSource.length} notes
+            </button>
+          ) : null}
         </div>
       </div>
 
