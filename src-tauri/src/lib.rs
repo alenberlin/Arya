@@ -76,6 +76,24 @@ pub fn run() {
     // race-free.
     std::env::set_var("GGML_METAL_NO_RESIDENCY", "1");
 
+    // Lazy-unload the speech engines after a period of non-use: an idle app
+    // releases its Metal/GPU residency (important on limited-GPU Macs), and the
+    // model reloads on the next ASR call. A detached sleeper is fine — it only
+    // drops Arc handles nobody else holds.
+    std::thread::Builder::new()
+        .name("arya-engine-evict".into())
+        .spawn(|| {
+            const IDLE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+            loop {
+                std::thread::sleep(IDLE);
+                let dropped = crate::speech::engine_cache::evict_idle(IDLE);
+                if dropped > 0 {
+                    eprintln!("engine cache: evicted {dropped} idle engine(s)");
+                }
+            }
+        })
+        .expect("spawn engine evictor");
+
     tauri::Builder::default()
         // Must be the first plugin registered (per its own docs): a second
         // launch (autostart-at-login racing a manual open, a stray dock
