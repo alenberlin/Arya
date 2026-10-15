@@ -16,6 +16,13 @@
       "index.html"
     ]
   },
+  "overrides": [
+    {
+      "includes": ["src/lib/bindings.ts"],
+      "formatter": { "enabled": false },
+      "linter": { "enabled": false }
+    }
+  ],
   "formatter": {
     "enabled": true,
     "indentStyle": "space",
