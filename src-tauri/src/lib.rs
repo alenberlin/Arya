@@ -19,6 +19,7 @@ mod mindmaps;
 mod notes;
 mod notion_import;
 mod paste;
+mod provider;
 mod rag;
 mod recording;
 mod search;

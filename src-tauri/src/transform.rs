@@ -21,10 +21,6 @@ fn user_message(instruction: &str, text: &str) -> String {
     format!("Instruction: {instruction}\n\nText:\n{text}")
 }
 
-pub(crate) fn ollama_url() -> String {
-    std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into())
-}
-
 /// Run the transform on a blocking thread. `Err` carries a user-facing reason;
 /// the caller keeps the source text either way, so nothing is ever lost.
 fn run(
@@ -33,49 +29,24 @@ fn run(
     text: &str,
     instruction: &str,
 ) -> Result<String, String> {
-    let client = crate::http::blocking_client();
     let user = user_message(instruction, text);
-    match provider {
+    let qualified = match provider {
         TranslateProvider::Local => {
-            let model = model.unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string());
-            run_local(&client, &ollama_url(), &model, &user)
+            format!(
+                "ollama:{}",
+                model.unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string())
+            )
         }
-        TranslateProvider::Cloud => run_cloud(model, &user),
-    }
-}
-
-/// Local transform via Ollama's chat endpoint (extracted so it's testable with
-/// an injected URL).
-fn run_local(
-    client: &reqwest::blocking::Client,
-    url: &str,
-    model: &str,
-    user: &str,
-) -> Result<String, String> {
-    crate::http::ollama_chat(
-        client,
-        url,
-        model,
-        SYSTEM_PROMPT,
-        user,
-        0.3,
-        Duration::from_secs(45),
-    )
-    .ok_or_else(|| "the local model did not respond — is Ollama running?".to_string())
-}
-
-/// Cloud transform via the provider directly with the user's own key. A
-/// provider-qualified model from the UI wins; otherwise pick the default for
-/// whichever key is set.
-fn run_cloud(model: Option<String>, user: &str) -> Result<String, String> {
-    let qualified = model
-        .filter(|m| m.contains(':'))
-        .or_else(crate::cloud::default_model)
-        .ok_or_else(|| "no cloud API key set — add one in Account.".to_string())?;
-    crate::cloud::chat(
+        TranslateProvider::Cloud => model
+            .filter(|m| m.contains(':'))
+            .or_else(crate::provider::default_model)
+            .ok_or_else(|| "no cloud API key set — add one in Account.".to_string())?,
+    };
+    crate::provider::chat(
         &qualified,
+        &crate::provider::default_ollama_url(),
         SYSTEM_PROMPT,
-        user,
+        &user,
         0.3,
         Duration::from_secs(45),
     )
@@ -118,8 +89,14 @@ mod tests {
     fn local_transform_errors_cleanly_when_ollama_is_down() {
         // Port 1 is never an Ollama server: the call must fail with a clear
         // message (not panic) so the caller keeps the source text.
-        let client = crate::http::blocking_client();
-        let out = run_local(&client, "http://127.0.0.1:1", "nope", "some text");
+        let out = crate::provider::chat(
+            "ollama:nope",
+            "http://127.0.0.1:1",
+            SYSTEM_PROMPT,
+            "some text",
+            0.3,
+            Duration::from_secs(45),
+        );
         assert!(out.is_err());
     }
 

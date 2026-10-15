@@ -42,14 +42,19 @@ pub fn chat(
     }
 }
 
+/// Default cloud models by provider. Single source of truth for the shell's
+/// cloud defaults; the sidecar's `providers.ts` mirrors these ids.
+pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-sonnet-5";
+pub const DEFAULT_OPENAI_MODEL: &str = "gpt-5.2";
+
 /// A sensible default cloud model for whichever key the user has (Anthropic
 /// preferred). `None` when no key is set. Used by the dictation/notes cloud
 /// features, which don't expose a model picker of their own.
 pub fn default_model() -> Option<String> {
     if keys::get(Provider::Anthropic).is_some() {
-        Some("anthropic:claude-sonnet-5".to_string())
+        Some(format!("anthropic:{DEFAULT_ANTHROPIC_MODEL}"))
     } else if keys::get(Provider::OpenAi).is_some() {
-        Some("openai:gpt-5.2".to_string())
+        Some(format!("openai:{DEFAULT_OPENAI_MODEL}"))
     } else {
         None
     }

@@ -108,7 +108,7 @@ fn ingest_inner(
     stored_path: &str,
     app_data_dir: &std::path::Path,
 ) -> Result<(), String> {
-    let embedder = OllamaEmbedder::new(crate::transform::ollama_url());
+    let embedder = OllamaEmbedder::new(crate::provider::default_ollama_url());
     if !embedder.is_available() {
         return Err("the local embedding model (Ollama) isn't running".into());
     }

@@ -149,7 +149,7 @@ pub struct KbStatus {
 
 #[tauri::command]
 pub async fn kb_status() -> Result<KbStatus, String> {
-    let url = crate::transform::ollama_url();
+    let url = crate::provider::default_ollama_url();
     let embedder_available =
         tauri::async_runtime::spawn_blocking(move || OllamaEmbedder::new(url).is_available())
             .await

@@ -235,7 +235,7 @@ pub async fn classify_notes_into_folders(
     }
 
     let model = model.unwrap_or_else(|| DEFAULT_LOCAL_MODEL.to_string());
-    let base_url = crate::transform::ollama_url();
+    let base_url = crate::provider::default_ollama_url();
     tokio::task::spawn_blocking(move || run_classify(&base_url, &model, &folders, &notes))
         .await
         .map_err(|e| e.to_string())

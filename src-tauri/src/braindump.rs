@@ -96,7 +96,7 @@ fn run_split(text: &str, model: Option<String>) -> Result<Vec<ProposedNote>, Str
     });
     let reply = crate::http::ollama_chat_ex(
         &crate::http::blocking_client(),
-        &crate::transform::ollama_url(),
+        &crate::provider::default_ollama_url(),
         &model,
         SYSTEM_PROMPT,
         &format!("Brain dump:\n\n{text}"),

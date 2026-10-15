@@ -21,7 +21,7 @@ pub enum TranslateProvider {
     /// Local Ollama — private, on-device.
     #[default]
     Local,
-    /// Cloud via the Arya API (Claude).
+    /// Cloud via the user's own provider key.
     Cloud,
 }
 
@@ -60,12 +60,11 @@ fn system_prompt(target: &str) -> String {
     )
 }
 
-/// Local translation via Ollama's chat endpoint.
+/// Local translation via the unified provider router (Ollama).
 pub struct OllamaTranslator {
     base_url: String,
     model: String,
     timeout: Duration,
-    client: reqwest::blocking::Client,
 }
 
 impl OllamaTranslator {
@@ -74,23 +73,22 @@ impl OllamaTranslator {
             base_url: base_url.into(),
             model: model.into(),
             timeout,
-            client: crate::http::blocking_client(),
         }
     }
 }
 
 impl Translator for OllamaTranslator {
     fn translate(&self, text: &str, target: &str) -> Option<String> {
-        // ollama_chat already trims + drops empty, matching non_empty().
-        crate::http::ollama_chat(
-            &self.client,
+        crate::provider::chat(
+            &format!("ollama:{}", self.model),
             &self.base_url,
-            &self.model,
             &system_prompt(target),
             text,
             0.2,
             self.timeout,
         )
+        .ok()
+        .and_then(non_empty)
     }
 }
 
@@ -107,8 +105,15 @@ impl AryaTranslator {
 
 impl Translator for AryaTranslator {
     fn translate(&self, text: &str, target: &str) -> Option<String> {
-        let qualified = crate::cloud::default_model()?;
-        match crate::cloud::chat(&qualified, &system_prompt(target), text, 0.2, self.timeout) {
+        let qualified = crate::provider::default_model()?;
+        match crate::provider::chat(
+            &qualified,
+            &crate::provider::default_ollama_url(),
+            &system_prompt(target),
+            text,
+            0.2,
+            self.timeout,
+        ) {
             Ok(content) => non_empty(content),
             Err(e) => {
                 // The source text is still kept (never lost), but surface the
