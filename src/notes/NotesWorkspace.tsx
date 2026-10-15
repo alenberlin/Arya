@@ -684,7 +684,9 @@ export function NotesWorkspace({
           // Reconcile the note's mention edges only when the body changed. A
           // link-graph failure must never roll back the saved note, so it's
           // best-effort (matches the fault-isolated reconcile on the Rust side).
-          if (fields.documentJson !== undefined) {
+          // The revision guard also prevents a save that lands after a delete
+          // from re-creating orphan edges (ghost "Untitled" backlinks).
+          if (fields.documentJson !== undefined && revision === editRevisionRef.current) {
             await reconcileLinks(
               "note",
               next.id,
@@ -1561,6 +1563,14 @@ export function NotesWorkspace({
           const id = deleteTargetId;
           setDeleteTargetId(null);
           if (id) {
+            // Cancel any pending debounced save and invalidate in-flight ones
+            // so a save that lands after the delete can't re-create orphan
+            // link edges (ghost "Untitled" backlinks).
+            if (saveTimer.current) {
+              clearTimeout(saveTimer.current);
+              saveTimer.current = null;
+            }
+            editRevisionRef.current += 1;
             void deleteNote(id).then(() => {
               closeTab(id);
               return refreshNotes();
@@ -1577,6 +1587,11 @@ export function NotesWorkspace({
         confirmLabel="Delete all notes"
         onConfirm={() => {
           setClearAllOpen(false);
+          if (saveTimer.current) {
+            clearTimeout(saveTimer.current);
+            saveTimer.current = null;
+          }
+          editRevisionRef.current += 1;
           void deleteAllNotes()
             .then(() => {
               // Everything the editor and list referenced is gone — reset it,
@@ -1678,9 +1693,25 @@ export function NotesWorkspace({
                 className="btn-primary"
                 onClick={() => {
                   const sorted = sortPreview;
-                  setDetail((d) => (d ? { ...d, documentJson: "", bodyMd: sorted } : d));
-                  setEditorEpoch((e) => e + 1);
                   setSortPreview(null);
+                  if (!sorted || !detail) return;
+                  const next = { ...detail, documentJson: "", bodyMd: sorted };
+                  setDetail(next);
+                  setEditorEpoch((e) => e + 1);
+                  // Persist explicitly: relying on the remount side-effect alone
+                  // leaves a 600ms loss window and a stale savedDetailRef (so a
+                  // later save-failure rollback would silently discard the sort).
+                  void updateNote(detail.id, {
+                    title: next.title,
+                    bodyMd: sorted,
+                    manualNotes: next.manualNotes,
+                    documentJson: "",
+                  })
+                    .then(() => {
+                      savedDetailRef.current = next;
+                      return refreshNotes();
+                    })
+                    .catch((e) => setError(String(e)));
                 }}
               >
                 Accept &amp; replace

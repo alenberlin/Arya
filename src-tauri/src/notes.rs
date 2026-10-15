@@ -107,7 +107,12 @@ pub async fn insert_note_under(
 }
 
 /// All descendant note ids of `id` (its subtree, excluding `id` itself).
-async fn descendant_ids(pool: &SqlitePool, id: &str) -> Result<Vec<String>, sqlx::Error> {
+/// Generic over the executor so the same CTE runs against a pool or (inside
+/// `set_note_parent`) a transaction.
+async fn descendant_ids<'e, E>(executor: E, id: &str) -> Result<Vec<String>, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     sqlx::query_scalar::<_, String>(
         "WITH RECURSIVE subtree(id) AS (
              SELECT id FROM notes WHERE parent_note_id = ?1
@@ -117,7 +122,7 @@ async fn descendant_ids(pool: &SqlitePool, id: &str) -> Result<Vec<String>, sqlx
          SELECT id FROM subtree",
     )
     .bind(id)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await
 }
 
@@ -183,11 +188,23 @@ pub async fn set_note_parent(
     note_id: String,
     parent_id: Option<String>,
 ) -> Result<(), String> {
-    if let Some(pid) = &parent_id {
-        if pid == &note_id {
+    set_note_parent_inner(&pool, &note_id, parent_id.as_deref()).await
+}
+
+/// The cycle-safe move, run in one transaction so a concurrent move can't slip
+/// between the check and the write. Split out for a deterministic test (the
+/// command wrapper only adapts the Tauri `State`).
+pub async fn set_note_parent_inner(
+    pool: &SqlitePool,
+    note_id: &str,
+    parent_id: Option<&str>,
+) -> Result<(), String> {
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    if let Some(pid) = parent_id {
+        if pid == note_id {
             return Err("a page cannot be its own parent".into());
         }
-        let descendants = descendant_ids(&pool, &note_id)
+        let descendants = descendant_ids(&mut *tx, note_id)
             .await
             .map_err(|e| e.to_string())?;
         if descendants.iter().any(|d| d == pid) {
@@ -195,12 +212,12 @@ pub async fn set_note_parent(
         }
     }
     sqlx::query("UPDATE notes SET parent_note_id = ?2 WHERE id = ?1")
-        .bind(&note_id)
-        .bind(&parent_id)
-        .execute(&*pool)
+        .bind(note_id)
+        .bind(parent_id)
+        .execute(&mut *tx)
         .await
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -616,6 +633,25 @@ mod tests {
         expected.sort();
         assert_eq!(desc, expected);
         assert!(!desc.contains(&d.id));
+    }
+
+    #[tokio::test]
+    async fn moving_a_page_into_its_own_subtree_is_rejected() {
+        let pool = test_pool().await;
+        let a = insert_note(&pool, "A").await.unwrap();
+        let b = insert_note_under(&pool, "B", Some(&a.id)).await.unwrap();
+        let c = insert_note_under(&pool, "C", Some(&b.id)).await.unwrap();
+
+        // A -> B -> C: making A a child of C would create a cycle.
+        let err = set_note_parent_inner(&pool, &a.id, Some(&c.id))
+            .await
+            .unwrap_err();
+        assert!(err.contains("own subtree"), "unexpected error: {err}");
+
+        // The move was rejected: A is still a root.
+        let notes = fetch_notes(&pool).await.unwrap();
+        let a_row = notes.iter().find(|n| n.id == a.id).unwrap();
+        assert_eq!(a_row.parent_note_id, None);
     }
 
     #[tokio::test]
