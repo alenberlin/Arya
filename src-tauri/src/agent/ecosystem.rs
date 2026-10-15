@@ -22,15 +22,56 @@ pub struct McpServerRow {
     pub created_at: String,
 }
 
+/// Keychain service for MCP env blobs (they often carry API tokens, so they
+/// must not sit in SQLite as plaintext — same posture as provider keys).
+const MCP_ENV_SERVICE: &str = "dev.arya.app.mcp-env";
+
+fn mcp_env_entry(name: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(MCP_ENV_SERVICE, name).map_err(|e| e.to_string())
+}
+
+/// Store an MCP server's env JSON in the Keychain. Returns false when the
+/// Keychain is unavailable, so the caller can keep a plaintext fallback instead
+/// of silently dropping the user's config.
+fn mcp_env_store(name: &str, env_json: &str) -> bool {
+    mcp_env_entry(name)
+        .and_then(|e| e.set_password(env_json).map_err(|e| e.to_string()))
+        .is_ok()
+}
+
+fn mcp_env_load(name: &str) -> Option<String> {
+    mcp_env_entry(name)
+        .ok()?
+        .get_password()
+        .ok()
+        .filter(|s| !s.is_empty())
+}
+
+fn mcp_env_delete(name: &str) {
+    if let Ok(entry) = mcp_env_entry(name) {
+        let _ = entry.delete_credential();
+    }
+}
+
 #[tauri::command]
 pub async fn mcp_list_servers(pool: State<'_, SqlitePool>) -> Result<Vec<McpServerRow>, String> {
-    sqlx::query_as::<_, McpServerRow>(
+    let mut servers = sqlx::query_as::<_, McpServerRow>(
         "SELECT id, name, command, args_json, env_json, enabled, created_at
          FROM mcp_servers ORDER BY name",
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    // Env stored in the Keychain is returned decrypted so the UI can edit it;
+    // a legacy/fallback plaintext row is used as-is.
+    for server in &mut servers {
+        if server.env_json.is_empty() {
+            if let Some(env) = mcp_env_load(&server.name) {
+                server.env_json = env;
+            }
+        }
+    }
+    Ok(servers)
 }
 
 #[tauri::command]
@@ -49,6 +90,15 @@ pub async fn mcp_add_server(
     }
     let args_json = serde_json::to_string(&args).map_err(|e| e.to_string())?;
     let env_json = serde_json::to_string(&env).map_err(|e| e.to_string())?;
+    // Keep the env (which often carries API tokens) in the Keychain, not SQLite
+    // plaintext. If the Keychain is unavailable, fall back to plaintext rather
+    // than dropping the user's config.
+    let stored_secure = mcp_env_store(&name, &env_json);
+    let db_env = if stored_secure {
+        String::new()
+    } else {
+        env_json.clone()
+    };
     sqlx::query(
         "INSERT INTO mcp_servers (id, name, command, args_json, env_json, enabled, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, 1, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -59,7 +109,7 @@ pub async fn mcp_add_server(
     .bind(&name)
     .bind(&command)
     .bind(&args_json)
-    .bind(&env_json)
+    .bind(&db_env)
     .execute(&*pool)
     .await
     .map_err(|e| e.to_string())?;
@@ -95,6 +145,9 @@ pub async fn mcp_remove_server(
         .execute(&*pool)
         .await
         .map_err(|e| e.to_string())?;
+    if let Some(name) = &name {
+        mcp_env_delete(name);
+    }
     if let Some(name) = name {
         let params = json!({ "name": name });
         let _ = runtime.request(&app, WriteMode::Sandboxed, "mcp.disconnect", params);
@@ -113,8 +166,15 @@ pub async fn reconnect_all(app: &AppHandle, pool: &SqlitePool, runtime: &AgentRu
     .unwrap_or_default();
     for server in servers {
         let args: Vec<String> = serde_json::from_str(&server.args_json).unwrap_or_default();
+        // Env lives in the Keychain when set; a legacy plaintext row is the
+        // fallback for servers added before this change (or a failed Keychain).
+        let env_json = if server.env_json.is_empty() {
+            mcp_env_load(&server.name).unwrap_or_default()
+        } else {
+            server.env_json
+        };
         let env: std::collections::HashMap<String, String> =
-            serde_json::from_str(&server.env_json).unwrap_or_default();
+            serde_json::from_str(&env_json).unwrap_or_default();
         let params =
             json!({ "name": server.name, "command": server.command, "args": args, "env": env });
         let _ = runtime.request(app, WriteMode::Sandboxed, "mcp.connect", params);

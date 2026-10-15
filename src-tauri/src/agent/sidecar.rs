@@ -60,6 +60,10 @@ pub fn seatbelt_profile(workspace: &Path) -> String {
         r#"(version 1)
 (allow default)
 (deny file-write*)
+;; The sidecar is a stdio client; it never accepts connections, so listening is
+;; denied outright. (Outbound is still allowed: it must reach Ollama and the
+;; user's cloud providers, and the tool layer + approvals gate the rest.)
+(deny network-inbound)
 (allow file-write*
     (subpath "{workspace}")
     (literal "/dev/null")
