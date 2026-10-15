@@ -124,20 +124,31 @@ export function App() {
       .catch(() => {});
   }, []);
 
+  // Tabs are lazily mounted on first visit and kept mounted (hidden) after, so
+  // switching tabs preserves each workspace's state without paying for every
+  // panel's data fetch + render on startup.
+  const [mountedTabs, setMountedTabs] = useState<Partial<Record<Tab, boolean>>>({ notes: true });
+  useEffect(() => {
+    setMountedTabs((m) => (m[tab] ? m : { ...m, [tab]: true }));
+  }, [tab]);
+
   if (!onboarded) {
     return <Onboarding onFinish={() => setOnboarded(true)} />;
   }
 
-  const panel = {
-    notes: <NotesWorkspace openNoteId={pendingNote} onOpenConsumed={clearPendingNote} />,
-    agent: <AgentSection />,
-    search: <SearchPanel />,
-    galaxy: <GalaxyPanel />,
-    knowledge: <KnowledgeBasePanel />,
-    mindmap: <MindMapPanel />,
-    dictation: <DictationPanel />,
-    account: <AccountPanel />,
-  }[tab];
+  const panels: { id: Tab; node: React.JSX.Element }[] = [
+    {
+      id: "notes",
+      node: <NotesWorkspace openNoteId={pendingNote} onOpenConsumed={clearPendingNote} />,
+    },
+    { id: "agent", node: <AgentSection /> },
+    { id: "search", node: <SearchPanel /> },
+    { id: "galaxy", node: <GalaxyPanel /> },
+    { id: "knowledge", node: <KnowledgeBasePanel /> },
+    { id: "mindmap", node: <MindMapPanel /> },
+    { id: "dictation", node: <DictationPanel /> },
+    { id: "account", node: <AccountPanel /> },
+  ];
 
   return (
     <>
@@ -216,7 +227,15 @@ export function App() {
             />
           </div>
         </aside>
-        <main className="content">{panel}</main>
+        <main className="content">
+          {panels
+            .filter(({ id }) => mountedTabs[id])
+            .map(({ id, node }) => (
+              <div key={id} style={{ display: tab === id ? "contents" : "none" }}>
+                {node}
+              </div>
+            ))}
+        </main>
       </div>
       <ConfirmDialog
         open={autostartPrompt}

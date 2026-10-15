@@ -230,7 +230,25 @@ async fn add_semantic_edges(
         .map(|(id, (sum, n))| (id, sum.iter().map(|x| x / n as f32).collect()))
         .collect();
 
-    // Link each node to its top-K nearest neighbours (undirected, deduped).
+    // The O(N²) cosine scoring is CPU-bound; run it on a blocking thread so a
+    // large workspace never stalls the async runtime's other commands.
+    let candidates = tokio::task::spawn_blocking(move || semantic_edge_candidates(&vectors))
+        .await
+        .map_err(|e| sqlx::Error::Protocol(format!("semantic edge worker panicked: {e}")))?;
+    for e in candidates {
+        if seen.insert((e.source.clone(), e.target.clone(), e.relation.clone())) {
+            edges.push(e);
+        }
+    }
+    Ok(())
+}
+
+/// Pure CPU-bound cosine scoring: link each note to its top-K nearest
+/// neighbours (undirected, deduped). Extracted so the O(N²) loop can run off
+/// the async runtime.
+fn semantic_edge_candidates(vectors: &[(String, Vec<f32>)]) -> Vec<GraphEdge> {
+    let mut seen: HashSet<(String, String, String)> = HashSet::new();
+    let mut out = Vec::new();
     for (i, (id_a, va)) in vectors.iter().enumerate() {
         let mut sims: Vec<(f32, &String)> = vectors
             .iter()
@@ -247,7 +265,7 @@ async fn add_semantic_edges(
                 (id_b.clone(), id_a.clone())
             };
             if seen.insert((s.clone(), t.clone(), "semantic".to_string())) {
-                edges.push(GraphEdge {
+                out.push(GraphEdge {
                     source: s,
                     target: t,
                     relation: "semantic".into(),
@@ -255,7 +273,7 @@ async fn add_semantic_edges(
             }
         }
     }
-    Ok(())
+    out
 }
 
 /// Assemble the Galaxy graph for the whole workspace (F10).
