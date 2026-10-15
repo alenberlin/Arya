@@ -157,7 +157,8 @@ fn docx_xml_to_text(xml: &str) -> String {
 fn extract_spreadsheet(bytes: &[u8]) -> Result<Extracted, String> {
     use calamine::Reader;
 
-    let mut wb = calamine::open_workbook_auto_from_rs(Cursor::new(bytes.to_vec()))
+    // Cursor over the borrow reads directly — no full-file copy for the parser.
+    let mut wb = calamine::open_workbook_auto_from_rs(Cursor::new(bytes))
         .map_err(|e| format!("could not read spreadsheet: {e}"))?;
     let mut text = String::new();
     for name in wb.sheet_names() {

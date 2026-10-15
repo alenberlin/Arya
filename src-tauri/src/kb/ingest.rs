@@ -111,6 +111,9 @@ fn ingest_inner(
 
     let bytes = std::fs::read(stored_path).map_err(|e| format!("could not read file: {e}"))?;
     let extracted = extract_with_ocr(ext, &bytes, app_data_dir)?;
+    // The raw bytes (often a large PDF/image) are no longer needed once the text
+    // is extracted — release them before the embedding loop holds chunks + rows.
+    drop(bytes);
 
     let chunks = chunk_pages(&extracted);
     if chunks.is_empty() {
