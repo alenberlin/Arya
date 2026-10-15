@@ -43,18 +43,75 @@ export function resolveModel(qualified: string): LanguageModel {
   }
 }
 
+const OPENAI_BASE = process.env.ARYA_OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+const ANTHROPIC_BASE = process.env.ARYA_ANTHROPIC_BASE_URL ?? "https://api.anthropic.com";
+
+/** GET a JSON endpoint with a timeout; undefined on any failure (offline, 401, …). */
+async function fetchJson(url: string, headers: Record<string, string>): Promise<unknown> {
+  try {
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5_000) });
+    if (!res.ok) return undefined;
+    return await res.json();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Static fallback when the provider's list can't be fetched. */
+const ANTHROPIC_FALLBACK = ["claude-sonnet-5", "claude-opus-4-8"];
+const OPENAI_FALLBACK = ["gpt-5.2", "gpt-5-mini"];
+
+/** Chat models only — drop embedding / image / audio / realtime / old completions. */
+function isOpenAiChatModel(id: string): boolean {
+  return (
+    /^(gpt-|o1|o3|o4)/i.test(id) &&
+    !/-(embedding|audio|image|tts|whisper|realtime|davinci|babbage)/i.test(id)
+  );
+}
+
+function isAnthropicChatModel(id: string): boolean {
+  return /^claude-/i.test(id) && !/-embedding/i.test(id);
+}
+
+async function anthropicModels(key: string): Promise<string[]> {
+  const data = await fetchJson(`${ANTHROPIC_BASE}/v1/models`, {
+    "x-api-key": key,
+    "anthropic-version": "2023-06-01",
+  });
+  const list = (data as { data?: Array<{ id?: string }> } | undefined)?.data ?? [];
+  const models = list
+    .map((m) => m.id)
+    .filter((id): id is string => !!id && isAnthropicChatModel(id));
+  return models.length ? models : ANTHROPIC_FALLBACK;
+}
+
+async function openaiModels(key: string): Promise<string[]> {
+  const data = await fetchJson(`${OPENAI_BASE}/models`, {
+    authorization: `Bearer ${key}`,
+  });
+  const list = (data as { data?: Array<{ id?: string }> } | undefined)?.data ?? [];
+  const models = list
+    .map((m) => m.id)
+    .filter((id): id is string => !!id && isOpenAiChatModel(id));
+  return models.length ? models : OPENAI_FALLBACK;
+}
+
 /**
- * Cloud models available to the desktop, from the provider keys in the env.
+ * Cloud models available to the desktop, fetched live from each provider whose
+ * key is set (so the picker shows the user's actual models, not a stale list),
+ * with a static fallback when the provider is unreachable.
  */
 export async function listCloudModels(): Promise<string[]> {
-  const cloud: string[] = [];
-  if (process.env.ANTHROPIC_API_KEY) {
-    cloud.push("anthropic:claude-sonnet-5", "anthropic:claude-opus-4-8");
-  }
-  if (process.env.OPENAI_API_KEY) {
-    cloud.push("openai:gpt-5.2", "openai:gpt-5-mini");
-  }
-  return cloud;
+  const [anthropic, openai] = await Promise.all([
+    process.env.ANTHROPIC_API_KEY
+      ? anthropicModels(process.env.ANTHROPIC_API_KEY)
+      : Promise.resolve([]),
+    process.env.OPENAI_API_KEY ? openaiModels(process.env.OPENAI_API_KEY) : Promise.resolve([]),
+  ]);
+  return [
+    ...anthropic.map((m) => `anthropic:${m}`),
+    ...openai.map((m) => `openai:${m}`),
+  ];
 }
 
 // Ollama lists embedding-only models (e.g. nomic-embed-text) alongside chat

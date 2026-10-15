@@ -1,13 +1,34 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<!--
+  Hardened-runtime entitlements. Each is the narrowest available for the feature
+  it unlocks; none are "nice to have", and each carries a residual risk that the
+  rest of the design mitigates elsewhere.
+
+  - device.audio-input        Mic capture (dictation, meeting recording).
+  - calendars                 EventKit read for titling a meeting from the live
+                              event. Read-only; the app never writes calendars.
+  - allow-unsigned-executable-memory
+                              Node/V8 and the in-process ASR/embedding runtimes
+                              need W^X-off memory for JIT. Without this the
+                              sidecar and speech engines crash at startup.
+  - disable-library-validation
+                              The bundled whisper.cpp / sherpa-onnx / onnxruntime
+                              dylibs are ad-hoc signed (not notarized as their
+                              own units), so the hardened runtime would refuse
+                              to load them. Narrowing path: sign each dylib with
+                              the app's signing identity so this can be dropped;
+                              tracked as a release-signing task (not code).
+-->
 <dict>
     <!-- Microphone for dictation and meeting recording. -->
     <key>com.apple.security.device.audio-input</key>
     <true/>
-    <!-- The agent sidecar (node) is spawned as a child process. -->
+    <!-- The agent sidecar (node) and in-process ASR runtimes need JIT memory. -->
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
+    <!-- Bundled ML dylibs are ad-hoc signed; see the block comment above. -->
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
     <!-- Calendar (EventKit) read access for meeting context. -->
