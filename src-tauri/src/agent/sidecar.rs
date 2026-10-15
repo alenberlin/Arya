@@ -42,12 +42,20 @@ impl WriteMode {
 /// another process consumes. node's scratch is redirected into the workspace
 /// via TMPDIR (see spawn), so it needs nothing outside.
 ///
-/// Threat model: this is a WRITE jail, not a network jail. `(allow default)`
-/// still permits network and process-exec, and reads are unrestricted — the
-/// sidecar needs network to reach the cloud providers/Ollama. Exfiltration is
-/// therefore contained at the tool layer instead: the sidecar confines
-/// `read_file`/`list_dir` to the workspace (out-of-workspace reads require user
-/// approval) and runs `run_command` without a shell, approved per program.
+/// Threat model: this is a WRITE jail plus an inbound-network deny, and by
+/// design NOT a kernel network-outbound/process-exec jail. `(allow default)`
+/// still permits outbound network, process-exec, and reads, because the sidecar
+/// needs network to reach the cloud providers/Ollama and exec to run its
+/// (approved) `run_command` tool. Outbound network and exec are governed at the
+/// tool layer by human-in-the-loop approval instead — the agent has no ungated
+/// network/exec tool: `read_file`/`list_dir` are confined to the workspace
+/// (out-of-workspace reads require approval), `run_command` is approved per
+/// program with no shell, and MCP tools are approved per tool. The only ungated
+/// network use is the model's own inference (the user's chosen cloud provider,
+/// or local Ollama on loopback), which cannot be per-call-approved without
+/// prompting on every token. Decision (owner, recorded): keep the tool-layer
+/// approval + write jail as the boundary; do NOT add a kernel network/exec deny,
+/// since no shipped feature requires ungated outbound calls.
 pub fn seatbelt_profile(workspace: &Path) -> String {
     // The kernel matches subpaths against the REAL path, so canonicalize
     // (resolves symlinks like /var -> /private/var on macOS); otherwise a

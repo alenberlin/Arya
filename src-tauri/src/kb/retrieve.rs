@@ -176,10 +176,21 @@ fn chunk_cache() -> &'static Mutex<HashMap<String, Vec<ChunkRow>>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Drop every cached collection. Call after ingest/delete/reindex so a stale
-/// cache can never serve deleted or outdated chunks.
-pub fn invalidate_chunk_cache() {
-    chunk_cache().lock().expect("chunk cache lock").clear();
+/// Drop cached chunks for one database. Call after ingest/delete/reindex so a
+/// stale cache can never serve deleted or outdated chunks. Scoped to the
+/// database (not a global clear) so concurrent tests — each on its own in-memory
+/// DB — or a future multi-DB setup can't clear each other's caches.
+pub fn invalidate_chunk_cache(pool: &SqlitePool) {
+    let db = pool
+        .connect_options()
+        .get_filename()
+        .to_string_lossy()
+        .into_owned();
+    let prefix = format!("{db}:");
+    chunk_cache()
+        .lock()
+        .expect("chunk cache lock")
+        .retain(|key, _| !key.starts_with(&prefix));
 }
 
 fn cache_key(pool: &SqlitePool, collection_id: &str) -> String {
@@ -423,7 +434,7 @@ mod tests {
         let stale = tauri::async_runtime::block_on(load_chunks(&pool, "c1")).unwrap();
         assert_eq!(stale.len(), 1, "cache serves the pre-invalidation view");
 
-        invalidate_chunk_cache();
+        invalidate_chunk_cache(&pool);
         let fresh = tauri::async_runtime::block_on(load_chunks(&pool, "c1")).unwrap();
         assert_eq!(fresh.len(), 2, "invalidation must force a reload");
     }

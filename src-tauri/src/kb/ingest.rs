@@ -276,7 +276,7 @@ fn write_chunks(
     })?;
     // New chunks landed — drop the retrieval cache so the next query reloads
     // (and can never serve the pre-ingest view of this collection).
-    super::retrieve::invalidate_chunk_cache();
+    super::retrieve::invalidate_chunk_cache(pool);
     Ok(())
 }
 
