@@ -112,6 +112,17 @@ pub async fn start_recording_inner(
                     let slot = app.state::<SystemCaptureSlot>();
                     *slot.0.lock().expect("system capture slot") = Some(capture);
                     system_started = true;
+                    // The system tap starts this many ms after the mic; record
+                    // it so its turn timestamps shift onto the mic timeline.
+                    let offset = recorder.elapsed_ms() as i64;
+                    let _ = sqlx::query(
+                        "UPDATE audio_artifacts SET offset_ms = ?1
+                         WHERE session_id = ?2 AND source = 'system'",
+                    )
+                    .bind(offset)
+                    .bind(&session_id)
+                    .execute(pool)
+                    .await;
                 }
                 Err(message) => {
                     let _ = app.emit("recording:system-audio-unavailable", message.clone());

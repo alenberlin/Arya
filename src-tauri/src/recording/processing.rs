@@ -82,8 +82,8 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> 
         let mut turns: Vec<TurnText> = Vec::new();
         let mut samples_by_turn: Vec<Vec<f32>> = Vec::new();
         let mut errors: Vec<String> = Vec::new();
-        for (source, path) in &artifacts.files {
-            match transcribe_artifact(app, Path::new(path), source) {
+        for (source, path, offset_ms) in &artifacts.files {
+            match transcribe_artifact(app, Path::new(path), source, *offset_ms) {
                 Ok(source_turns) => {
                     for (turn, samples) in source_turns {
                         turns.push(turn);
@@ -105,7 +105,12 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> 
         // Speaker labels are a meeting feature. Keep the user intent even when
         // system audio was blank and removed: the mic may still contain more
         // than one voice, and unknown voices must not collapse to "Me".
-        if meeting_intent || artifacts.files.iter().any(|(source, _)| source == "system") {
+        if meeting_intent
+            || artifacts
+                .files
+                .iter()
+                .any(|(source, _, _)| source == "system")
+        {
             if let Err(message) = assign_speakers(app, pool, &mut turns, &samples_by_turn) {
                 eprintln!("processing: diarization skipped: {message}");
             }
@@ -158,6 +163,7 @@ fn transcribe_artifact(
     app: &AppHandle,
     wav_path: &Path,
     source: &str,
+    offset_ms: i64,
 ) -> Result<Vec<TurnWithSamples>, String> {
     let clip = wav_file::load_normalized(wav_path).map_err(|e| e.to_string())?;
     let spans = detect_turns(&clip, &TurnConfig::default());
@@ -192,8 +198,9 @@ fn transcribe_artifact(
         if !text.is_empty() {
             turns.push((
                 TurnText {
-                    start_ms: span.start_ms,
-                    end_ms: span.end_ms,
+                    // Shift onto the mic timeline (the system tap starts later).
+                    start_ms: span.start_ms + offset_ms as u64,
+                    end_ms: span.end_ms + offset_ms as u64,
                     source: source.to_string(),
                     speaker: None,
                     text,
@@ -366,7 +373,12 @@ fn refresh_existing_speaker_labels(
 ) -> Result<(), String> {
     let artifacts = final_artifacts(pool, note_id)?;
     let meeting_intent = artifacts.source_mode == "microphone-and-system";
-    if !meeting_intent && !artifacts.files.iter().any(|(source, _)| source == "system") {
+    if !meeting_intent
+        && !artifacts
+            .files
+            .iter()
+            .any(|(source, _, _)| source == "system")
+    {
         return Ok(());
     }
     if artifacts.files.is_empty() {
@@ -379,26 +391,28 @@ fn refresh_existing_speaker_labels(
 }
 
 fn samples_for_existing_turns(
-    artifact_files: &[(String, String)],
+    artifact_files: &[(String, String, i64)],
     turns: &[TurnText],
 ) -> Result<Vec<Vec<f32>>, String> {
     let mut clips = HashMap::new();
-    for (source, path) in artifact_files {
+    for (source, path, offset_ms) in artifact_files {
         let clip = wav_file::load_normalized(Path::new(path)).map_err(|e| e.to_string())?;
-        clips.insert(source.as_str(), clip);
+        clips.insert(source.clone(), (clip, *offset_ms));
     }
 
     Ok(turns
         .iter()
         .map(|turn| {
             clips
-                .get(turn.source.as_str())
-                .map(|clip| {
+                .get(&turn.source)
+                .map(|(clip, offset_ms)| {
+                    // Turn times are on the mic timeline; slice the artifact at
+                    // its local time by undoing the capture offset.
                     slice_turn(
                         clip,
                         &TurnSpan {
-                            start_ms: turn.start_ms,
-                            end_ms: turn.end_ms,
+                            start_ms: turn.start_ms.saturating_sub(*offset_ms as u64),
+                            end_ms: turn.end_ms.saturating_sub(*offset_ms as u64),
                         },
                         150,
                     )
@@ -425,7 +439,7 @@ pub fn set_status_blocking(pool: &SqlitePool, note_id: &str, status: &str, error
 
 struct FinalArtifacts {
     source_mode: String,
-    files: Vec<(String, String)>,
+    files: Vec<(String, String, i64)>, // (source, path, offset_ms)
 }
 
 fn final_artifacts(pool: &SqlitePool, note_id: &str) -> Result<FinalArtifacts, String> {
@@ -445,8 +459,8 @@ fn final_artifacts(pool: &SqlitePool, note_id: &str) -> Result<FinalArtifacts, S
                 files: Vec::new(),
             });
         };
-        let files = sqlx::query_as::<_, (String, String)>(
-            "SELECT source, path FROM audio_artifacts
+        let files = sqlx::query_as::<_, (String, String, i64)>(
+            "SELECT source, path, offset_ms FROM audio_artifacts
              WHERE session_id = ?1 AND status = 'final'
              ORDER BY source",
         )
@@ -608,7 +622,7 @@ mod tests {
         assert_eq!(artifacts.source_mode, "microphone-and-system");
         assert_eq!(
             artifacts.files,
-            vec![("microphone".to_string(), mic_path.to_string())]
+            vec![("microphone".to_string(), mic_path.to_string(), 0)]
         );
     }
 
