@@ -171,6 +171,23 @@ mod macos {
         }
     }
 
+    /// Restores the previous pasteboard string on drop, so every exit path from
+    /// the clipboard fallback (including a failed Cmd+V synthesis) returns the
+    /// user's clipboard instead of leaking the dictated text.
+    struct ClipboardRestore(Option<objc2::rc::Retained<NSString>>);
+
+    impl Drop for ClipboardRestore {
+        fn drop(&mut self) {
+            if let Some(previous) = self.0.take() {
+                unsafe {
+                    let pasteboard = NSPasteboard::generalPasteboard();
+                    pasteboard.clearContents();
+                    pasteboard.setString_forType(&previous, NSPasteboardTypeString);
+                }
+            }
+        }
+    }
+
     pub fn paste_text(text: &str) -> Result<(), PasteError> {
         if !accessibility_trusted() {
             return Err(PasteError::AccessibilityDenied);
@@ -185,6 +202,7 @@ mod macos {
         unsafe {
             let pasteboard = NSPasteboard::generalPasteboard();
             let previous = pasteboard.stringForType(NSPasteboardTypeString);
+            let _restore = ClipboardRestore(previous);
 
             pasteboard.clearContents();
             let ok =
@@ -195,13 +213,9 @@ mod macos {
 
             synthesize_cmd_v()?;
 
-            // Give the target app time to read the pasteboard before
-            // restoring what the user had on it.
+            // Give the target app time to read the pasteboard before the guard
+            // restores what the user had on it.
             std::thread::sleep(std::time::Duration::from_millis(300));
-            if let Some(previous) = previous {
-                pasteboard.clearContents();
-                pasteboard.setString_forType(&previous, NSPasteboardTypeString);
-            }
         }
         Ok(())
     }

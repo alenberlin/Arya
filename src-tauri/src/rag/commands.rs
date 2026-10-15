@@ -1,15 +1,16 @@
 //! RAG commands: reindex the workspace, semantic search, and the status the
 //! settings UI shows.
 
-use std::sync::{Mutex, OnceLock};
+use std::{
+    collections::HashMap,
+    sync::{Mutex, OnceLock},
+};
 
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, State};
 
 use super::embed::{Embedder, OllamaEmbedder};
 use super::{blob_to_f32, chunk_text, cosine, f32_to_blob, SearchHit};
-
-const OLLAMA_URL: &str = "http://127.0.0.1:11434";
 
 /// In-memory cache of parsed chunk embeddings so search doesn't re-load and
 /// re-deserialize every blob from SQLite on each query. Invalidated on
@@ -44,10 +45,11 @@ pub async fn rag_status(pool: State<'_, SqlitePool>) -> Result<RagStatus, String
         .fetch_one(&*pool)
         .await
         .map_err(|e| e.to_string())?;
-    let available =
-        tauri::async_runtime::spawn_blocking(|| OllamaEmbedder::new(OLLAMA_URL).is_available())
-            .await
-            .unwrap_or(false);
+    let available = tauri::async_runtime::spawn_blocking(|| {
+        OllamaEmbedder::new(crate::provider::ollama_url()).is_available()
+    })
+    .await
+    .unwrap_or(false);
     Ok(RagStatus {
         embedder_available: available,
         indexed_chunks: count,
@@ -98,7 +100,7 @@ pub fn reindex_blocking_public(app: &AppHandle, pool: &SqlitePool) -> Result<i64
 }
 
 fn reindex_blocking(app: &AppHandle, pool: &SqlitePool) -> Result<i64, String> {
-    let embedder = OllamaEmbedder::new(OLLAMA_URL);
+    let embedder = OllamaEmbedder::new(crate::provider::ollama_url());
     if !embedder.is_available() {
         return Err("local embedding model (Ollama) is not running".into());
     }
@@ -211,7 +213,7 @@ pub fn search_blocking(
     query: &str,
     limit: usize,
 ) -> Result<Vec<SearchHit>, String> {
-    let embedder = OllamaEmbedder::new(OLLAMA_URL);
+    let embedder = OllamaEmbedder::new(crate::provider::ollama_url());
     let query_embedding = embedder
         .embed(&[query.to_string()])?
         .into_iter()
@@ -343,6 +345,35 @@ async fn collect_documents(pool: &SqlitePool) -> Result<Vec<Document>, String> {
                 content,
             });
         }
+    }
+
+    // Meeting transcripts: the raw turn text (distinct from the generated note
+    // summary) so the full meeting content is semantically searchable, not just
+    // the summary. Grouped per note; the note id is the source_id so deleting a
+    // note also drops its transcript chunks.
+    let mut by_note: HashMap<String, (String, Vec<String>)> = HashMap::new();
+    let turns = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT t.note_id, n.title, t.text
+         FROM transcript_turns t JOIN notes n ON n.id = t.note_id
+         WHERE length(t.text) > 3
+         ORDER BY t.note_id, t.turn_index",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| e.to_string())?;
+    for (note_id, title, text) in turns {
+        let entry = by_note
+            .entry(note_id)
+            .or_insert_with(|| (title, Vec::new()));
+        entry.1.push(text);
+    }
+    for (note_id, (title, texts)) in by_note {
+        docs.push(Document {
+            kind: "transcript".into(),
+            id: note_id,
+            title,
+            content: texts.join("\n"),
+        });
     }
 
     Ok(docs)

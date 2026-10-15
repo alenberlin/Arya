@@ -447,6 +447,10 @@ function MindMapCanvas({ mapId }: { mapId: string }) {
     };
   }, [mapId, setNodes, setEdges]);
 
+  // Latest document snapshot so the unmount flush can save the newest values.
+  const latestDocRef = useRef({ nodes, edges });
+  latestDocRef.current = { nodes, edges };
+
   // Debounced autosave once the initial document has loaded.
   useEffect(() => {
     if (!loaded.current) return;
@@ -454,10 +458,22 @@ function MindMapCanvas({ mapId }: { mapId: string }) {
     saveTimer.current = setTimeout(() => {
       void updateMindmap(mapId, { docJson: JSON.stringify({ nodes, edges }) }).catch(() => {});
     }, 600);
-    return () => {
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-    };
   }, [nodes, edges, mapId]);
+
+  // Flush a pending save on unmount (map switch) so the last edits aren't lost:
+  // the old cleanup cleared the timer and dropped whatever hadn't been saved.
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+        const { nodes: n, edges: e } = latestDocRef.current;
+        void updateMindmap(mapId, { docJson: JSON.stringify({ nodes: n, edges: e }) }).catch(
+          () => {},
+        );
+      }
+    };
+  }, [mapId]);
 
   // Close the context menu on any outside interaction.
   useEffect(() => {

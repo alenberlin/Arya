@@ -394,8 +394,10 @@ pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> Result<(), String
     for node_id in &subtree_ids {
         let _ = crate::links::delete_for_node(pool, "note", node_id).await;
         // The privacy guarantee: deleting a note also deletes its semantic
-        // index rows, so its text and embedding stop being searchable.
+        // index rows (body and transcript), so its text and embedding stop
+        // being searchable.
         let _ = crate::rag::commands::delete_for_node(pool, "note", node_id).await;
+        let _ = crate::rag::commands::delete_for_node(pool, "transcript", node_id).await;
     }
 
     remove_files(audio_paths.into_iter().chain(attachment_paths));
@@ -433,6 +435,7 @@ pub async fn delete_all_notes_inner(pool: &SqlitePool) -> Result<(), String> {
     // every semantic-index row so deleted text is no longer searchable.
     let _ = crate::links::delete_for_kind(pool, "note").await;
     let _ = crate::rag::commands::delete_for_kind(pool, "note").await;
+    let _ = crate::rag::commands::delete_for_kind(pool, "transcript").await;
 
     remove_files(audio_paths.into_iter().chain(attachment_paths));
     Ok(())
