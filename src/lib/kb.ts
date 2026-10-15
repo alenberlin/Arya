@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { commands, run } from "./ipc";
 
 /**
  * Knowledge Base IPC wrappers. The KB is an on-device RAG surface: uploaded
@@ -22,7 +23,7 @@ export interface KbStatus {
   embedderAvailable: boolean;
 }
 
-export const kbStatus = () => invoke<KbStatus>("kb_status");
+export const kbStatus = () => run<KbStatus>(commands.kbStatus());
 
 export const kbListCollections = () => invoke<KbCollection[]>("kb_list_collections");
 

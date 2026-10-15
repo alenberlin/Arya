@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { commands, run } from "./ipc";
 
 /** Where an AI transform runs. Local (Ollama) is private and offline. */
 export type TransformProvider = "local" | "cloud";
@@ -14,10 +14,4 @@ export const aiTransform = (
   instruction: string,
   provider: TransformProvider = "local",
   model?: string,
-) =>
-  invoke<string>("ai_transform", {
-    sourceText,
-    instruction,
-    provider,
-    model: model ?? null,
-  });
+) => run<string>(commands.aiTransform(sourceText, instruction, provider, model ?? null));

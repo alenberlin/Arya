@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { commands, run } from "./ipc";
 
 export interface AgentSession {
   id: string;
@@ -40,7 +41,7 @@ export type AgentEvent =
   | { kind: "steered"; text: string }
   | { kind: "error"; message: string };
 
-export const agentListModels = () => invoke<string[]>("agent_list_models");
+export const agentListModels = () => run<string[]>(commands.agentListModels());
 export const agentCreateSession = (model: string, mode?: string) =>
   invoke<AgentSession>("agent_create_session", { model, mode: mode ?? null });
 export const agentListSessions = () => invoke<AgentSession[]>("agent_list_sessions");

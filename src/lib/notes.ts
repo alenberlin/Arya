@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { commands, run } from "./ipc";
 
 /** A note as returned by create_note. */
 export interface Note {
@@ -69,9 +70,9 @@ export const createNote = (title: string, parentId?: string) =>
 /** Re-parent a note, or move it to top level with `parentId = null` (F3). */
 export const setNoteParent = (noteId: string, parentId: string | null) =>
   invoke<void>("set_note_parent", { noteId, parentId });
-export const listNotes = () => invoke<NoteSummary[]>("list_notes");
+export const listNotes = () => run<NoteSummary[]>(commands.listNotes());
 export const searchNotes = (query: string) => invoke<NoteSummary[]>("search_notes", { query });
-export const getNote = (id: string) => invoke<NoteDetail>("get_note", { id });
+export const getNote = (id: string) => run<NoteDetail>(commands.getNote(id));
 export const getNoteTurns = (id: string) => invoke<TranscriptTurn[]>("get_note_turns", { id });
 export const updateNote = (
   id: string,
@@ -84,9 +85,9 @@ export const updateNote = (
     manualNotes: fields.manualNotes ?? null,
     documentJson: fields.documentJson ?? null,
   });
-export const deleteNote = (id: string) => invoke<void>("delete_note", { id });
+export const deleteNote = (id: string) => run<void>(commands.deleteNote(id));
 /** Permanently deletes every note and its recordings/attachments. */
-export const deleteAllNotes = () => invoke<void>("delete_all_notes");
+export const deleteAllNotes = () => run<void>(commands.deleteAllNotes());
 
 /** A file attached to a note, copied into the app workspace. */
 export interface Attachment {
@@ -145,7 +146,7 @@ export const createNotesFromSplit = (notes: ProposedNote[], folderId?: string | 
 export const readTextFiles = (paths: string[]) => invoke<string>("read_text_files", { paths });
 
 export const createFolder = (name: string) => invoke<Folder>("create_folder", { name });
-export const listFolders = () => invoke<Folder[]>("list_folders");
+export const listFolders = () => run<Folder[]>(commands.listFolders());
 export const deleteFolder = (id: string) => invoke<void>("delete_folder", { id });
 export const assignNoteToFolder = (noteId: string, folderId: string | null) =>
   invoke<void>("assign_note_to_folder", { noteId, folderId });
@@ -169,10 +170,10 @@ export const startRecording = (noteId?: string, sourceMode?: SourceMode) =>
     noteId: noteId ?? null,
     sourceMode: sourceMode ?? null,
   });
-export const pauseRecording = () => invoke<void>("pause_recording");
-export const resumeRecording = () => invoke<void>("resume_recording");
-export const finishRecording = () => invoke<string>("finish_recording");
-export const recordingStatus = () => invoke<RecorderStatus>("recording_status");
+export const pauseRecording = () => run<void>(commands.pauseRecording());
+export const resumeRecording = () => run<void>(commands.resumeRecording());
+export const finishRecording = () => run<string>(commands.finishRecording());
+export const recordingStatus = () => commands.recordingStatus();
 export const retryProcessing = (noteId: string) => invoke<void>("retry_processing", { noteId });
 export const scanRecoverableRecordings = () =>
   invoke<RecoverableRecording[]>("scan_recoverable_recordings");

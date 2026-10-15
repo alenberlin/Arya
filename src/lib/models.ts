@@ -1,3 +1,4 @@
+import { commands, run } from "./ipc";
 //! Client wrappers for model setup: cloud API keys, Ollama status, and speech
 //! (Whisper) model downloads. Keys never round-trip to the UI — only "set /
 //! not set" — so a stored secret can't leak through the frontend.
@@ -16,7 +17,7 @@ export type KeysStatus = {
 };
 
 export function keysStatus(): Promise<KeysStatus> {
-  return invoke<KeysStatus>("keys_status");
+  return commands.keysStatus();
 }
 
 /** Store or replace a key. A blank value removes it. Returns fresh status. */
@@ -38,7 +39,7 @@ export type OllamaStatus = {
 };
 
 export function ollamaStatus(): Promise<OllamaStatus> {
-  return invoke<OllamaStatus>("ollama_status");
+  return run<OllamaStatus>(commands.ollamaStatus());
 }
 
 // ---- Speech (Whisper) models ----------------------------------------------

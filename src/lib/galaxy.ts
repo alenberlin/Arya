@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { commands, run } from "./ipc";
 
 /** A node in the connected-brain graph (F10). Composite id `"<kind>:<uuid>"`. */
 export interface GraphNode {
@@ -20,4 +20,4 @@ export interface Graph {
 }
 
 /** Assemble the Galaxy graph for the whole workspace. */
-export const galaxyGraph = () => invoke<Graph>("galaxy_graph");
+export const galaxyGraph = () => run<Graph>(commands.galaxyGraph());

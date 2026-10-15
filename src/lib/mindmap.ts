@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { commands, run } from "./ipc";
 
 export interface MindmapSummary {
   id: string;
@@ -16,8 +17,8 @@ export interface Mindmap {
 }
 
 export const createMindmap = (title = "") => invoke<Mindmap>("create_mindmap", { title });
-export const listMindmaps = () => invoke<MindmapSummary[]>("list_mindmaps");
-export const getMindmap = (id: string) => invoke<Mindmap>("get_mindmap", { id });
+export const listMindmaps = () => run<MindmapSummary[]>(commands.listMindmaps());
+export const getMindmap = (id: string) => run<Mindmap>(commands.getMindmap(id));
 export const updateMindmap = (id: string, fields: { title?: string; docJson?: string }) =>
   invoke<void>("update_mindmap", {
     id,

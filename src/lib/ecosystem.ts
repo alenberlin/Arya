@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { AgentSession } from "./agent";
+import { commands, run } from "./ipc";
 
 export interface McpServer {
   id: string;
@@ -32,7 +33,7 @@ export interface RoutineRun {
   startedAt: string;
 }
 
-export const mcpListServers = () => invoke<McpServer[]>("mcp_list_servers");
+export const mcpListServers = () => run<McpServer[]>(commands.mcpListServers());
 export const mcpAddServer = (
   name: string,
   command: string,
@@ -41,7 +42,7 @@ export const mcpAddServer = (
 ) => invoke<string[]>("mcp_add_server", { name, command, args, env });
 export const mcpRemoveServer = (id: string) => invoke<void>("mcp_remove_server", { id });
 
-export const routineList = () => invoke<Routine[]>("routine_list");
+export const routineList = () => run<Routine[]>(commands.routineList());
 export const routineCreate = (
   title: string,
   prompt: string,

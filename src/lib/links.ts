@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { commands, run } from "./ipc";
 
 /**
  * The connected-brain graph (F1). Every first-class item — a note, dictation,
@@ -54,7 +55,7 @@ export const listLinksTo = (kind: NodeKind, id: string) =>
   invoke<Link[]>("list_links_to", { kind, id });
 
 /** Delete one edge by id. */
-export const deleteLink = (id: string) => invoke<void>("delete_link", { id });
+export const deleteLink = (id: string) => run<void>(commands.deleteLink(id));
 
 /**
  * Replace a node's outbound edges of a relation (default `mention`) with exactly

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { commands, run } from "./ipc";
 
 export type ActivationMode = "push-to-talk" | "toggle";
 export type DictationStyle = "standard" | "casual-lowercase" | "formal";
@@ -54,13 +55,14 @@ export interface DictionaryItem {
   replacement: string;
 }
 
-export const getDictationSettings = () => invoke<DictationSettings>("get_dictation_settings");
+export const getDictationSettings = async (): Promise<DictationSettings> =>
+  (await commands.getDictationSettings()) as DictationSettings;
 export const setDictationSettings = (settings: DictationSettings) =>
   invoke<void>("set_dictation_settings", { settings });
 /** Installed Ollama model names, for the translation-model picker. */
-export const listOllamaModels = () => invoke<string[]>("list_ollama_models");
-export const getDictationStatus = () => invoke<DictationStatus>("dictation_status");
-export const openAccessibilitySettings = () => invoke<void>("open_accessibility_settings");
+export const listOllamaModels = () => run<string[]>(commands.listOllamaModels());
+export const getDictationStatus = () => commands.dictationStatus();
+export const openAccessibilitySettings = () => commands.openAccessibilitySettings();
 export const listDictationHistory = () => invoke<HistoryItem[]>("list_dictation_history");
 
 /** An on-demand translation of a saved dictation (F8), stored non-destructively. */
@@ -85,16 +87,16 @@ export const deleteDictationHistoryItem = (id: string) =>
   invoke<void>("delete_dictation_history_item", { id });
 export const clearDictationHistory = () => invoke<void>("clear_dictation_history");
 /** Stops a hands-free dictation (the pill's Stop button): transcribe + insert. */
-export const dictationStop = () => invoke<void>("dictation_stop");
+export const dictationStop = () => commands.dictationStop();
 /** Cancels the current dictation (the pill's ✕): discard, no insert. */
-export const dictationCancel = () => invoke<void>("dictation_cancel");
+export const dictationCancel = () => commands.dictationCancel();
 /** Sets a one-off polish level for the current dictation (not persisted). */
 export const dictationSetSessionPolish = (polish: Polish) =>
   invoke<void>("dictation_set_session_polish", { polish });
 /** Pins the given polish as the default for the app the dictation targets. */
 export const dictationPinApp = (polish: Polish) => invoke<void>("dictation_pin_app", { polish });
 /** Removes the pin for the app the current dictation targets. */
-export const dictationUnpinApp = () => invoke<void>("dictation_unpin_app");
+export const dictationUnpinApp = () => run<void>(commands.dictationUnpinApp());
 /** Downloads and loads the streaming model so the live preview is ready. */
 export const dictationPrepareStreaming = () => invoke<void>("dictation_prepare_streaming");
 /** Copies text to the system clipboard. */
