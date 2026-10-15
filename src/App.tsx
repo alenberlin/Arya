@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import brand from "../brand.json";
 import { AccountPanel } from "./account/AccountPanel";
 import { AgentSection } from "./agent/AgentSection";
@@ -13,13 +13,15 @@ import { MindMapPanel } from "./mindmap/MindMapPanel";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
 import { Onboarding, onboardingComplete } from "./onboarding/Onboarding";
 import { SearchPanel } from "./search/SearchPanel";
-import { ConfirmDialog } from "./ui/dialogs";
+import { ConfirmDialog, Modal } from "./ui/dialogs";
 import {
   AccountIcon,
   AgentIcon,
+  ChevronDownIcon,
   DictationIcon,
   GalaxyIcon,
   KnowledgeIcon,
+  LabsIcon,
   LockIcon,
   MindMapIcon,
   NotesIcon,
@@ -38,13 +40,21 @@ type Tab =
   | "dictation"
   | "account";
 
-const NAV: { id: Tab; label: string; icon: (p: { className?: string }) => React.JSX.Element }[] = [
+type NavItem = { id: Tab; label: string; icon: (p: { className?: string }) => React.JSX.Element };
+
+// The default surface is the five everyday pillars; the experimental visual
+// surfaces (Galaxy, Mind Map) live behind "Labs" so a first-time user sees a
+// short, legible sidebar.
+const MAIN_NAV: NavItem[] = [
   { id: "notes", label: "Notes", icon: NotesIcon },
   { id: "agent", label: "Agent", icon: AgentIcon },
   { id: "dictation", label: "Dictation", icon: DictationIcon },
   { id: "search", label: "Search", icon: SearchIcon },
-  { id: "galaxy", label: "Galaxy", icon: GalaxyIcon },
   { id: "knowledge", label: "Knowledge", icon: KnowledgeIcon },
+];
+
+const LABS_NAV: NavItem[] = [
+  { id: "galaxy", label: "Galaxy", icon: GalaxyIcon },
   { id: "mindmap", label: "Mind Map", icon: MindMapIcon },
 ];
 
@@ -59,8 +69,67 @@ export function App() {
   const [autostart, setAutostart] = useState(false);
   const [autostartPrompt, setAutostartPrompt] = useState(false);
   const [pendingNote, setPendingNote] = useState<string | null>(null);
+  const [labsOpen, setLabsOpen] = useState(() => localStorage.getItem("arya-labs-open") === "true");
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [cheatSheetOpen, setCheatSheetOpen] = useState(false);
+  const gTimer = useRef<number | null>(null);
 
   const clearPendingNote = useCallback(() => setPendingNote(null), []);
+
+  const toggleLabs = () => {
+    const next = !labsOpen;
+    setLabsOpen(next);
+    localStorage.setItem("arya-labs-open", String(next));
+  };
+
+  // Keyboard map: `?` opens the cheat sheet; a `g` prefix then a letter jumps
+  // straight to a surface (g n = Notes, g d = Dictation, …). Ignored while
+  // typing in a field so normal input is never swallowed.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement | null;
+      const typing =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "SELECT" ||
+        target?.isContentEditable;
+      if (typing) return;
+
+      if (e.key === "?") {
+        e.preventDefault();
+        setCheatSheetOpen((v) => !v);
+        return;
+      }
+      if (e.key.toLowerCase() === "g") {
+        if (gTimer.current !== null) window.clearTimeout(gTimer.current);
+        gTimer.current = window.setTimeout(() => {
+          gTimer.current = null;
+        }, 800);
+        return;
+      }
+      if (gTimer.current !== null) {
+        window.clearTimeout(gTimer.current);
+        gTimer.current = null;
+        const jump: Record<string, Tab> = {
+          n: "notes",
+          d: "dictation",
+          a: "agent",
+          s: "search",
+          k: "knowledge",
+          g: "galaxy",
+          m: "mindmap",
+        };
+        const to = jump[e.key.toLowerCase()];
+        if (to) {
+          e.preventDefault();
+          setTab(to);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // In-app dictation lands in whatever form field is focused (title, composer,
   // search); the note body is handled by BlockEditor itself.
@@ -161,7 +230,7 @@ export function App() {
             <span className="brand-name">{brand.name}</span>
           </div>
 
-          {NAV.map(({ id, label, icon: Icon }) => (
+          {MAIN_NAV.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               type="button"
@@ -174,6 +243,31 @@ export function App() {
             </button>
           ))}
 
+          <button
+            type="button"
+            className="nav-item labs-toggle"
+            aria-expanded={labsOpen}
+            onClick={toggleLabs}
+          >
+            <LabsIcon />
+            <span className="nav-label">Labs</span>
+            <ChevronDownIcon className={`labs-chevron${labsOpen ? " open" : ""}`} />
+          </button>
+          {labsOpen
+            ? LABS_NAV.map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  className="nav-item nav-item-nested"
+                  aria-current={tab === id ? "page" : undefined}
+                  onClick={() => setTab(id)}
+                >
+                  <Icon />
+                  <span className="nav-label">{label}</span>
+                </button>
+              ))
+            : null}
+
           <div className="sidebar-spacer" />
 
           <div className="sidebar-privacy">
@@ -181,50 +275,67 @@ export function App() {
             <span>On-device · private</span>
           </div>
 
-          <button
-            type="button"
-            className="sidebar-account"
-            aria-current={tab === "account" ? "page" : undefined}
-            onClick={() => setTab("account")}
-          >
-            <span className="avatar">
-              <AccountIcon />
-            </span>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span className="account-name">Account</span>
-              <span className="account-sub">Local-first · your keys</span>
-            </span>
-          </button>
-
-          <label className="sidebar-theme">
-            <span className="hstack">
-              <ThemeIcon />
-              Theme
-            </span>
-            <select
-              aria-label="theme"
-              value={theme}
-              onChange={(e) => setTheme(e.target.value as Theme)}
-            >
-              <option value="system">System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-            </select>
-          </label>
-
-          <div className="sidebar-theme" style={{ cursor: "default" }}>
-            <span className="hstack">
-              <StartupIcon />
-              Start at login
-            </span>
+          <div className="sidebar-account-wrap">
             <button
               type="button"
-              role="switch"
-              aria-checked={autostart}
-              aria-label="Start Arya at login"
-              className="switch bare"
-              onClick={() => void toggleAutostart(!autostart)}
-            />
+              className="sidebar-account"
+              aria-current={tab === "account" ? "page" : undefined}
+              aria-expanded={userMenuOpen}
+              onClick={() => setUserMenuOpen((v) => !v)}
+            >
+              <span className="avatar">
+                <AccountIcon />
+              </span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span className="account-name">Account</span>
+                <span className="account-sub">Local-first · your keys</span>
+              </span>
+            </button>
+
+            {userMenuOpen ? (
+              <>
+                <button
+                  type="button"
+                  className="menu-backdrop"
+                  aria-label="Close menu"
+                  onClick={() => setUserMenuOpen(false)}
+                />
+                <div className="context-menu user-menu">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTab("account");
+                      setUserMenuOpen(false);
+                    }}
+                  >
+                    <AccountIcon />
+                    Account &amp; models
+                  </button>
+                  <div className="context-menu-sep" />
+                  <div className="context-menu-label">Theme</div>
+                  <div className="user-menu-row">
+                    <ThemeIcon />
+                    <select
+                      aria-label="theme"
+                      value={theme}
+                      onChange={(e) => setTheme(e.target.value as Theme)}
+                    >
+                      <option value="system">System</option>
+                      <option value="light">Light</option>
+                      <option value="dark">Dark</option>
+                    </select>
+                  </div>
+                  <div className="context-menu-sep" />
+                  <button type="button" onClick={() => void toggleAutostart(!autostart)}>
+                    <StartupIcon />
+                    <span style={{ flex: 1 }}>Start at login</span>
+                    <span className={`menu-check${autostart ? " on" : ""}`}>
+                      {autostart ? "On" : "Off"}
+                    </span>
+                  </button>
+                </div>
+              </>
+            ) : null}
           </div>
         </aside>
         <main className="content">
@@ -252,7 +363,35 @@ export function App() {
           localStorage.setItem("arya-autostart-decided", "true");
         }}
       />
+      <Modal
+        open={cheatSheetOpen}
+        onClose={() => setCheatSheetOpen(false)}
+        labelledBy="cheat-title"
+      >
+        <h3 id="cheat-title" className="modal-title">
+          Keyboard shortcuts
+        </h3>
+        <div className="cheat-grid">
+          <Shortcut keys="g n" label="Notes" />
+          <Shortcut keys="g d" label="Dictation" />
+          <Shortcut keys="g a" label="Agent" />
+          <Shortcut keys="g s" label="Search" />
+          <Shortcut keys="g k" label="Knowledge" />
+          <Shortcut keys="g g" label="Galaxy" />
+          <Shortcut keys="g m" label="Mind Map" />
+          <Shortcut keys="?" label="Toggle this sheet" />
+        </div>
+      </Modal>
     </>
+  );
+}
+
+function Shortcut({ keys, label }: { keys: string; label: string }) {
+  return (
+    <div className="cheat-row">
+      <span className="cheat-keys">{keys}</span>
+      <span className="cheat-label">{label}</span>
+    </div>
   );
 }
 

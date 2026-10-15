@@ -481,6 +481,105 @@ legend {
   box-shadow: none;
   outline: none;
 }
+
+/* --- Labs (collapsed experimental surfaces) --------------------------- */
+.labs-toggle {
+  margin-top: 2px;
+}
+.labs-toggle .labs-chevron {
+  width: 13px;
+  height: 13px;
+  margin-left: auto;
+  color: var(--text-muted);
+  transition: transform 140ms ease;
+}
+.labs-toggle .labs-chevron.open {
+  transform: rotate(180deg);
+}
+.nav-item-nested {
+  padding-left: 26px;
+  font-size: 12.5px;
+}
+
+/* --- User menu (account / theme / start-at-login) --------------------- */
+.sidebar-account-wrap {
+  position: relative;
+}
+.user-menu {
+  position: fixed;
+  z-index: 901;
+  bottom: 12px;
+  left: 10px;
+  width: 224px;
+}
+.user-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--sp-2) 10px;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+.user-menu-row svg {
+  width: 15px;
+  height: 15px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.user-menu-row select {
+  flex: 1;
+  width: auto;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+  text-transform: capitalize;
+  cursor: pointer;
+}
+.user-menu-row select:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+.menu-check {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-muted);
+}
+.menu-check.on {
+  color: var(--success);
+}
+
+/* --- Keyboard cheat sheet --------------------------------------------- */
+.cheat-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+}
+.cheat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 6px 2px;
+  font-size: var(--fs-md);
+}
+.cheat-keys {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--accent);
+  background: var(--accent-ghost);
+  border: 1px solid var(--accent-soft);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.cheat-label {
+  color: var(--text-secondary);
+}
 .content {
   display: flex;
   min-width: 0;

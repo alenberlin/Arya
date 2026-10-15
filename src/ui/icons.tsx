@@ -78,6 +78,19 @@ export const McpIcon = (p: IconProps) => (
     <line x1="7.5" y1="17" x2="7.5" y2="17" />
   </svg>
 );
+export const LabsIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.7} {...p} aria-hidden="true">
+    <path d="M9 3h6" />
+    <path d="M10 3v6.2L4.8 18a2 2 0 0 0 1.8 3h10.8a2 2 0 0 0 1.8-3L14 9.2V3" />
+    <path d="M7.5 14h9" />
+  </svg>
+);
+export const KeyboardIcon = (p: IconProps) => (
+  <svg {...base} strokeWidth={1.6} {...p} aria-hidden="true">
+    <rect x="3" y="6" width="18" height="12" rx="2" />
+    <path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8" />
+  </svg>
+);
 export const DictationIcon = (p: IconProps) => (
   <svg {...base} strokeWidth={1.8} {...p} aria-hidden="true">
     <line x1="5" y1="10" x2="5" y2="14" />
