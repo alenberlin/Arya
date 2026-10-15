@@ -31,7 +31,7 @@ const FTS_WEIGHT: f32 = 0.3;
 const GUARANTEE_VECTOR: usize = 3;
 
 /// A retrieved chunk with its fused relevance and everything needed to cite it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KbHit {
     pub chunk_id: String,

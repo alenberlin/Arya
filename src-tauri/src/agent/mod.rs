@@ -148,16 +148,26 @@ pub fn agent_workspace(app: &AppHandle) -> crate::error::AryaResult<std::path::P
         .join("agent/workspace"))
 }
 
+/// Result of an image-generation request: the workspace-relative path of the
+/// generated file and its byte size.
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GeneratedImage {
+    pub path: String,
+    pub bytes: i64,
+}
+
 /// Generates an image via the sidecar and returns its workspace path.
+#[specta::specta]
 #[tauri::command]
 pub fn agent_generate_image(
     app: AppHandle,
     runtime: tauri::State<'_, AgentRuntime>,
     prompt: String,
     size: Option<String>,
-) -> crate::error::AryaResult<serde_json::Value> {
+) -> crate::error::AryaResult<GeneratedImage> {
     let workspace = agent_workspace(&app)?;
-    runtime.request(
+    let value = runtime.request(
         &app,
         sidecar::WriteMode::Sandboxed,
         "image.generate",
@@ -166,10 +176,18 @@ pub fn agent_generate_image(
             "prompt": prompt,
             "size": size,
         }),
-    )
+    )?;
+    let path = value
+        .get("path")
+        .and_then(|p| p.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let bytes = value.get("bytes").and_then(|b| b.as_i64()).unwrap_or(0);
+    Ok(GeneratedImage { path, bytes })
 }
 
 /// Reads a workspace file as base64 (for inline image rendering).
+#[specta::specta]
 #[tauri::command]
 pub fn agent_workspace_read_b64(app: AppHandle, path: String) -> crate::error::AryaResult<String> {
     let base = agent_workspace(&app)?;

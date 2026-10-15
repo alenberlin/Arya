@@ -34,7 +34,7 @@ const SYSTEM_PROMPT: &str = "You reorganize a brain dump into separate, coherent
     Output no prose, no explanation, and no code fences.";
 
 /// One proposed note from the split. Also the shape the UI sends back to create.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProposedNote {
     pub title: String,
@@ -43,6 +43,7 @@ pub struct ProposedNote {
 
 /// Read and concatenate the text of several files (UTF-8, lossy). Used when the
 /// user adds text files to a brain dump. Reading happens off the async runtime.
+#[specta::specta]
 #[tauri::command]
 pub async fn read_text_files(paths: Vec<String>) -> crate::error::AryaResult<String> {
     tokio::task::spawn_blocking(move || {
@@ -62,6 +63,7 @@ pub async fn read_text_files(paths: Vec<String>) -> crate::error::AryaResult<Str
 
 /// Split a brain dump into proposed single-topic notes using the local model.
 /// Suggestion only — writes nothing.
+#[specta::specta]
 #[tauri::command]
 pub async fn split_braindump_into_notes(
     source_text: String,
@@ -141,6 +143,7 @@ fn parse_notes(raw: &str) -> Option<Vec<ProposedNote>> {
 /// Each note carries its markdown body (the block editor renders it via the
 /// legacy `body_md` fallback, exactly like a dictation converted to a note).
 /// Returns the new note ids.
+#[specta::specta]
 #[tauri::command]
 pub async fn create_notes_from_split(
     pool: State<'_, SqlitePool>,

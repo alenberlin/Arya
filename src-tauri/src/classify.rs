@@ -36,21 +36,21 @@ const SYSTEM_PROMPT: &str = "You are a note classifier. You are given a list of 
     no prose, no explanation, and no code fences.";
 
 /// One proposed move: a note and the existing folder the model chose for it.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderSuggestion {
     pub note_id: String,
     pub folder_id: String,
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(sqlx::FromRow, specta::Type)]
 struct NoteRow {
     id: String,
     title: String,
     body_md: String,
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(sqlx::FromRow, specta::Type)]
 struct FolderRow {
     id: String,
     name: String,
@@ -58,7 +58,7 @@ struct FolderRow {
 
 /// One entry in the model's JSON reply: `n` is the 1-based index within the
 /// batch, `folder` the chosen folder name (or "none").
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 struct ClassifyItem {
     n: usize,
     folder: String,
@@ -191,6 +191,7 @@ fn run_classify(
 /// Suggest a folder for each of `note_ids` from the existing folder set, using
 /// the local model. Returns only confident matches; the caller (the review
 /// modal) decides what to actually apply. Never mutates anything.
+#[specta::specta]
 #[tauri::command]
 pub async fn classify_notes_into_folders(
     pool: State<'_, SqlitePool>,

@@ -6,7 +6,7 @@ use serde::Serialize;
 
 /// A user-facing error message. Commands return [`AryaResult`]; Tauri serializes
 /// the inner message as a plain string, identical to the previous `String` error.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, specta::Type)]
 pub struct AryaError(String);
 
 impl AryaError {

@@ -63,6 +63,27 @@ fn gate_hud(
     }
 }
 
+/// The two `tauri::ipc::Request` file-drop commands, on a plain generate_handler
+/// (their `Request` arg isn't covered by tauri's `specta` feature). The explicit
+/// return type pins the handler to `Invoke<Wry>`.
+fn request_drop_handler() -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static
+{
+    tauri::generate_handler![
+        attachments::attach_dropped_file,
+        kb::commands::kb_add_dropped_document,
+    ]
+}
+
+fn dispatch_app_commands(
+    specta: impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    let request = request_drop_handler();
+    move |invoke| match invoke.message.command() {
+        "attach_dropped_file" | "kb_add_dropped_document" => request(invoke),
+        _ => specta(invoke),
+    }
+}
+
 /// Builds and runs the Tauri application.
 pub fn run() {
     // whisper.cpp's Metal backend (macOS >= 15) registers every model buffer in
@@ -93,6 +114,143 @@ pub fn run() {
             }
         })
         .expect("spawn engine evictor");
+
+    let specta_builder =
+        tauri_specta::Builder::<tauri::Wry>::new().dangerously_cast_bigints_to_number().commands(tauri_specta::collect_commands![
+            notes::create_note,
+            notes::set_note_parent,
+            notes::list_notes,
+            notes::search_notes,
+            notes::get_note,
+            notes::get_note_turns,
+            notes::update_note,
+            notes::delete_note,
+            notes::delete_all_notes,
+            attachments::attach_file,
+            attachments::list_attachments,
+            attachments::remove_attachment,
+            attachments::open_attachment,
+            notes::create_folder,
+            notes::list_folders,
+            notes::rename_folder,
+            notes::delete_folder,
+            notes::assign_note_to_folder,
+            notes::assign_notes_to_folders,
+            classify::classify_notes_into_folders,
+            braindump::split_braindump_into_notes,
+            braindump::create_notes_from_split,
+            braindump::read_text_files,
+            notion_import::import_notion,
+            links::create_link,
+            links::list_links_from,
+            links::list_links_to,
+            links::delete_link,
+            links::reconcile_links,
+            transform::ai_transform,
+            recording::commands::start_recording,
+            recording::commands::pause_recording,
+            recording::commands::resume_recording,
+            recording::commands::finish_recording,
+            recording::commands::recording_status,
+            recording::commands::retry_processing,
+            recording::recovery::scan_recoverable_recordings,
+            recording::recovery::recover_recording,
+            recording::recovery::discard_recording,
+            recording::commands::get_generation_settings,
+            recording::commands::set_generation_settings,
+            recording::enroll::enroll_speaker_profile,
+            recording::enroll::list_speaker_profiles,
+            recording::enroll::delete_speaker_profile,
+            recording::commands::calendar_access_status,
+            recording::commands::request_calendar_access,
+            agent::commands::agent_list_models,
+            agent::commands::agent_create_session,
+            agent::commands::agent_list_sessions,
+            agent::commands::agent_get_messages,
+            agent::commands::agent_send,
+            agent::commands::agent_steer,
+            agent::commands::agent_cancel,
+            agent::commands::agent_resolve_approval,
+            agent::commands::agent_delete_session,
+            agent::commands::convert_session_to_note,
+            agent::agent_workspace_read_b64,
+            agent::agent_generate_image,
+            agent::ecosystem::mcp_list_servers,
+            agent::ecosystem::mcp_add_server,
+            agent::ecosystem::mcp_remove_server,
+            agent::ecosystem::routine_list,
+            agent::ecosystem::routine_create,
+            agent::ecosystem::routine_set_enabled,
+            agent::ecosystem::routine_delete,
+            agent::ecosystem::routine_runs,
+            agent::ecosystem::agent_branch_session,
+            rag::commands::rag_status,
+            rag::commands::rag_reindex,
+            rag::commands::rag_search,
+            kb::commands::kb_status,
+            kb::commands::kb_list_collections,
+            kb::commands::kb_create_collection,
+            kb::commands::kb_rename_collection,
+            kb::commands::kb_delete_collection,
+            kb::commands::kb_list_documents,
+            kb::commands::kb_add_documents,
+            kb::commands::kb_delete_document,
+            kb::commands::kb_reindex_document,
+            kb::commands::kb_search,
+            kb::chat::kb_list_sessions,
+            kb::chat::kb_create_session,
+            kb::chat::kb_delete_session,
+            kb::chat::kb_get_messages,
+            kb::chat::kb_ask,
+            search::search_all,
+            galaxy::galaxy_graph,
+            mindmaps::create_mindmap,
+            mindmaps::list_mindmaps,
+            mindmaps::get_mindmap,
+            mindmaps::update_mindmap,
+            mindmaps::delete_mindmap,
+            keys::keys_status,
+            keys::keys_set,
+            keys::keys_clear,
+            speech::commands::speech_models_status,
+            speech::commands::download_speech_model,
+            speech::commands::delete_speech_model,
+            dictation::commands::get_dictation_settings,
+            dictation::commands::list_ollama_models,
+            dictation::commands::ollama_status,
+            dictation::commands::set_dictation_settings,
+            dictation::commands::dictation_status,
+            dictation::commands::open_accessibility_settings,
+            dictation::commands::list_dictation_history,
+            dictation::commands::translate_dictation,
+            dictation::commands::list_dictation_translations,
+            dictation::commands::list_all_dictation_translations,
+            dictation::commands::delete_dictation_history_item,
+            dictation::commands::clear_dictation_history,
+            dictation::commands::convert_dictation_to_note,
+            dictation::commands::convert_dictation_to_plain_note,
+            dictation::commands::dictation_stop,
+            dictation::commands::dictation_cancel,
+            dictation::commands::dictation_set_session_polish,
+            dictation::commands::dictation_pin_app,
+            dictation::commands::dictation_unpin_app,
+            dictation::commands::dictation_prepare_streaming,
+            hud_resize,
+            copy_to_clipboard,
+            dictation::commands::list_dictionary_entries,
+            dictation::commands::create_dictionary_entry,
+            dictation::commands::delete_dictionary_entry,
+        ]);
+
+    #[cfg(debug_assertions)]
+    specta_builder
+        .export(
+            specta_typescript::Typescript::default(),
+            "../src/lib/bindings.ts",
+        )
+        .expect("failed to export TypeScript bindings");
+
+    let specta_handler = specta_builder.invoke_handler();
 
     tauri::Builder::default()
         // Must be the first plugin registered (per its own docs): a second
@@ -199,133 +357,7 @@ pub fn run() {
             dev_hooks::install(app.handle().clone());
             Ok(())
         })
-        .invoke_handler(gate_hud(tauri::generate_handler![
-            notes::create_note,
-            notes::set_note_parent,
-            notes::list_notes,
-            notes::search_notes,
-            notes::get_note,
-            notes::get_note_turns,
-            notes::update_note,
-            notes::delete_note,
-            notes::delete_all_notes,
-            attachments::attach_file,
-            attachments::attach_dropped_file,
-            attachments::list_attachments,
-            attachments::remove_attachment,
-            attachments::open_attachment,
-            notes::create_folder,
-            notes::list_folders,
-            notes::rename_folder,
-            notes::delete_folder,
-            notes::assign_note_to_folder,
-            notes::assign_notes_to_folders,
-            classify::classify_notes_into_folders,
-            braindump::split_braindump_into_notes,
-            braindump::create_notes_from_split,
-            braindump::read_text_files,
-            notion_import::import_notion,
-            links::create_link,
-            links::list_links_from,
-            links::list_links_to,
-            links::delete_link,
-            links::reconcile_links,
-            transform::ai_transform,
-            recording::commands::start_recording,
-            recording::commands::pause_recording,
-            recording::commands::resume_recording,
-            recording::commands::finish_recording,
-            recording::commands::recording_status,
-            recording::commands::retry_processing,
-            recording::recovery::scan_recoverable_recordings,
-            recording::recovery::recover_recording,
-            recording::recovery::discard_recording,
-            recording::commands::get_generation_settings,
-            recording::commands::set_generation_settings,
-            recording::enroll::enroll_speaker_profile,
-            recording::enroll::list_speaker_profiles,
-            recording::enroll::delete_speaker_profile,
-            recording::commands::calendar_access_status,
-            recording::commands::request_calendar_access,
-            agent::commands::agent_list_models,
-            agent::commands::agent_create_session,
-            agent::commands::agent_list_sessions,
-            agent::commands::agent_get_messages,
-            agent::commands::agent_send,
-            agent::commands::agent_steer,
-            agent::commands::agent_cancel,
-            agent::commands::agent_resolve_approval,
-            agent::commands::agent_delete_session,
-            agent::commands::convert_session_to_note,
-            agent::agent_workspace_read_b64,
-            agent::agent_generate_image,
-            agent::ecosystem::mcp_list_servers,
-            agent::ecosystem::mcp_add_server,
-            agent::ecosystem::mcp_remove_server,
-            agent::ecosystem::routine_list,
-            agent::ecosystem::routine_create,
-            agent::ecosystem::routine_set_enabled,
-            agent::ecosystem::routine_delete,
-            agent::ecosystem::routine_runs,
-            agent::ecosystem::agent_branch_session,
-            rag::commands::rag_status,
-            rag::commands::rag_reindex,
-            rag::commands::rag_search,
-            kb::commands::kb_status,
-            kb::commands::kb_list_collections,
-            kb::commands::kb_create_collection,
-            kb::commands::kb_rename_collection,
-            kb::commands::kb_delete_collection,
-            kb::commands::kb_list_documents,
-            kb::commands::kb_add_documents,
-            kb::commands::kb_add_dropped_document,
-            kb::commands::kb_delete_document,
-            kb::commands::kb_reindex_document,
-            kb::commands::kb_search,
-            kb::chat::kb_list_sessions,
-            kb::chat::kb_create_session,
-            kb::chat::kb_delete_session,
-            kb::chat::kb_get_messages,
-            kb::chat::kb_ask,
-            search::search_all,
-            galaxy::galaxy_graph,
-            mindmaps::create_mindmap,
-            mindmaps::list_mindmaps,
-            mindmaps::get_mindmap,
-            mindmaps::update_mindmap,
-            mindmaps::delete_mindmap,
-            keys::keys_status,
-            keys::keys_set,
-            keys::keys_clear,
-            speech::commands::speech_models_status,
-            speech::commands::download_speech_model,
-            speech::commands::delete_speech_model,
-            dictation::commands::get_dictation_settings,
-            dictation::commands::list_ollama_models,
-            dictation::commands::ollama_status,
-            dictation::commands::set_dictation_settings,
-            dictation::commands::dictation_status,
-            dictation::commands::open_accessibility_settings,
-            dictation::commands::list_dictation_history,
-            dictation::commands::translate_dictation,
-            dictation::commands::list_dictation_translations,
-            dictation::commands::list_all_dictation_translations,
-            dictation::commands::delete_dictation_history_item,
-            dictation::commands::clear_dictation_history,
-            dictation::commands::convert_dictation_to_note,
-            dictation::commands::convert_dictation_to_plain_note,
-            dictation::commands::dictation_stop,
-            dictation::commands::dictation_cancel,
-            dictation::commands::dictation_set_session_polish,
-            dictation::commands::dictation_pin_app,
-            dictation::commands::dictation_unpin_app,
-            dictation::commands::dictation_prepare_streaming,
-            hud_resize,
-            copy_to_clipboard,
-            dictation::commands::list_dictionary_entries,
-            dictation::commands::create_dictionary_entry,
-            dictation::commands::delete_dictionary_entry,
-        ]))
+        .invoke_handler(gate_hud(dispatch_app_commands(specta_handler)))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
@@ -449,6 +481,7 @@ fn position_hud_bottom_center(app: &tauri::AppHandle) {
 /// Resizes the HUD to fit the content the webview reports (logical px), keeping
 /// its bottom edge and horizontal center fixed — so the pill grows upward like
 /// a card and stays wherever the user dragged it.
+#[specta::specta]
 #[tauri::command]
 fn hud_resize(app: tauri::AppHandle, width: f64, height: f64) {
     let Some(hud) = app.get_webview_window("hud") else {
@@ -470,6 +503,7 @@ fn hud_resize(app: tauri::AppHandle, width: f64, height: f64) {
 }
 
 /// Copies text to the system clipboard (the dictation-history copy button).
+#[specta::specta]
 #[tauri::command]
 fn copy_to_clipboard(text: String) -> crate::error::AryaResult<()> {
     paste::set_clipboard(&text).map_err(crate::error::AryaError::from_display)
@@ -479,3 +513,155 @@ fn copy_to_clipboard(text: String) -> crate::error::AryaResult<()> {
 /// compiled out of release builds entirely.
 #[cfg(debug_assertions)]
 mod dev_hooks;
+
+
+#[cfg(test)]
+mod bindings_test {
+    /// Generates src/lib/bindings.ts. Run: `cargo test generate_bindings`.
+    /// Runs on a large-stack thread — collecting 120+ command types overflows
+    /// the default test-thread stack.
+    #[test]
+    fn generate_bindings() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(|| {
+                let builder = tauri_specta::Builder::<tauri::Wry>::new().dangerously_cast_bigints_to_number()
+                    .commands(tauri_specta::collect_commands![
+
+            super::notes::create_note,
+            super::notes::set_note_parent,
+            super::notes::list_notes,
+            super::notes::search_notes,
+            super::notes::get_note,
+            super::notes::get_note_turns,
+            super::notes::update_note,
+            super::notes::delete_note,
+            super::notes::delete_all_notes,
+            super::attachments::attach_file,
+            super::attachments::list_attachments,
+            super::attachments::remove_attachment,
+            super::attachments::open_attachment,
+            super::notes::create_folder,
+            super::notes::list_folders,
+            super::notes::rename_folder,
+            super::notes::delete_folder,
+            super::notes::assign_note_to_folder,
+            super::notes::assign_notes_to_folders,
+            super::classify::classify_notes_into_folders,
+            super::braindump::split_braindump_into_notes,
+            super::braindump::create_notes_from_split,
+            super::braindump::read_text_files,
+            super::notion_import::import_notion,
+            super::links::create_link,
+            super::links::list_links_from,
+            super::links::list_links_to,
+            super::links::delete_link,
+            super::links::reconcile_links,
+            super::transform::ai_transform,
+            super::recording::commands::start_recording,
+            super::recording::commands::pause_recording,
+            super::recording::commands::resume_recording,
+            super::recording::commands::finish_recording,
+            super::recording::commands::recording_status,
+            super::recording::commands::retry_processing,
+            super::recording::recovery::scan_recoverable_recordings,
+            super::recording::recovery::recover_recording,
+            super::recording::recovery::discard_recording,
+            super::recording::commands::get_generation_settings,
+            super::recording::commands::set_generation_settings,
+            super::recording::enroll::enroll_speaker_profile,
+            super::recording::enroll::list_speaker_profiles,
+            super::recording::enroll::delete_speaker_profile,
+            super::recording::commands::calendar_access_status,
+            super::recording::commands::request_calendar_access,
+            super::agent::commands::agent_list_models,
+            super::agent::commands::agent_create_session,
+            super::agent::commands::agent_list_sessions,
+            super::agent::commands::agent_get_messages,
+            super::agent::commands::agent_send,
+            super::agent::commands::agent_steer,
+            super::agent::commands::agent_cancel,
+            super::agent::commands::agent_resolve_approval,
+            super::agent::commands::agent_delete_session,
+            super::agent::commands::convert_session_to_note,
+            super::agent::agent_workspace_read_b64,
+            super::agent::agent_generate_image,
+            super::agent::ecosystem::mcp_list_servers,
+            super::agent::ecosystem::mcp_add_server,
+            super::agent::ecosystem::mcp_remove_server,
+            super::agent::ecosystem::routine_list,
+            super::agent::ecosystem::routine_create,
+            super::agent::ecosystem::routine_set_enabled,
+            super::agent::ecosystem::routine_delete,
+            super::agent::ecosystem::routine_runs,
+            super::agent::ecosystem::agent_branch_session,
+            super::rag::commands::rag_status,
+            super::rag::commands::rag_reindex,
+            super::rag::commands::rag_search,
+            super::kb::commands::kb_status,
+            super::kb::commands::kb_list_collections,
+            super::kb::commands::kb_create_collection,
+            super::kb::commands::kb_rename_collection,
+            super::kb::commands::kb_delete_collection,
+            super::kb::commands::kb_list_documents,
+            super::kb::commands::kb_add_documents,
+            super::kb::commands::kb_delete_document,
+            super::kb::commands::kb_reindex_document,
+            super::kb::commands::kb_search,
+            super::kb::chat::kb_list_sessions,
+            super::kb::chat::kb_create_session,
+            super::kb::chat::kb_delete_session,
+            super::kb::chat::kb_get_messages,
+            super::kb::chat::kb_ask,
+            super::search::search_all,
+            super::galaxy::galaxy_graph,
+            super::mindmaps::create_mindmap,
+            super::mindmaps::list_mindmaps,
+            super::mindmaps::get_mindmap,
+            super::mindmaps::update_mindmap,
+            super::mindmaps::delete_mindmap,
+            super::keys::keys_status,
+            super::keys::keys_set,
+            super::keys::keys_clear,
+            super::speech::commands::speech_models_status,
+            super::speech::commands::download_speech_model,
+            super::speech::commands::delete_speech_model,
+            super::dictation::commands::get_dictation_settings,
+            super::dictation::commands::list_ollama_models,
+            super::dictation::commands::ollama_status,
+            super::dictation::commands::set_dictation_settings,
+            super::dictation::commands::dictation_status,
+            super::dictation::commands::open_accessibility_settings,
+            super::dictation::commands::list_dictation_history,
+            super::dictation::commands::translate_dictation,
+            super::dictation::commands::list_dictation_translations,
+            super::dictation::commands::list_all_dictation_translations,
+            super::dictation::commands::delete_dictation_history_item,
+            super::dictation::commands::clear_dictation_history,
+            super::dictation::commands::convert_dictation_to_note,
+            super::dictation::commands::convert_dictation_to_plain_note,
+            super::dictation::commands::dictation_stop,
+            super::dictation::commands::dictation_cancel,
+            super::dictation::commands::dictation_set_session_polish,
+            super::dictation::commands::dictation_pin_app,
+            super::dictation::commands::dictation_unpin_app,
+            super::dictation::commands::dictation_prepare_streaming,
+            super::hud_resize,
+            super::copy_to_clipboard,
+            super::dictation::commands::list_dictionary_entries,
+            super::dictation::commands::create_dictionary_entry,
+            super::dictation::commands::delete_dictionary_entry,
+        
+                    ]);
+                let result = builder.export(
+                    specta_typescript::Typescript::default(),
+                    "../src/lib/bindings.ts",
+                );
+                eprintln!("export result: {result:?}");
+                result.unwrap();
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+}

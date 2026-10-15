@@ -9,7 +9,7 @@ use crate::translate::TranslateProvider;
 
 pub const DEFAULT_SPEECH_MODEL: &str = "whisper-large-v3-turbo-q5_0";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum ActivationMode {
     #[default]
@@ -17,7 +17,7 @@ pub enum ActivationMode {
     Toggle,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", default)]
 pub struct DictationSettings {
     /// Hotkey in tauri-plugin-global-shortcut syntax, e.g. "ctrl+alt+d".

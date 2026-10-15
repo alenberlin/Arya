@@ -3,7 +3,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 
 /// A note row as created (walking-skeleton shape, still used by inserts).
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Note {
     pub id: String,
@@ -12,7 +12,7 @@ pub struct Note {
 }
 
 /// Summary row for lists.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteSummary {
     pub id: String,
@@ -26,7 +26,7 @@ pub struct NoteSummary {
 }
 
 /// Full note payload for the editor.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct NoteDetail {
     pub id: String,
@@ -43,7 +43,7 @@ pub struct NoteDetail {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptTurn {
     pub turn_index: i64,
@@ -54,7 +54,7 @@ pub struct TranscriptTurn {
     pub text: String,
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Folder {
     pub id: String,
@@ -168,6 +168,7 @@ pub async fn search_notes_query(
     .await
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn create_note(
     pool: State<'_, SqlitePool>,
@@ -182,6 +183,7 @@ pub async fn create_note(
 /// Re-parent a note (or move it to top level with `parentId = null`). Guards
 /// against cycles: a page cannot become its own parent or a child of one of its
 /// own descendants.
+#[specta::specta]
 #[tauri::command]
 pub async fn set_note_parent(
     pool: State<'_, SqlitePool>,
@@ -225,6 +227,7 @@ pub async fn set_note_parent_inner(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn list_notes(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<Vec<NoteSummary>> {
     fetch_notes(&pool)
@@ -234,6 +237,7 @@ pub async fn list_notes(pool: State<'_, SqlitePool>) -> crate::error::AryaResult
 
 /// Filters the notes list by a keyword found in the title or content. An empty
 /// query returns the full list.
+#[specta::specta]
 #[tauri::command]
 pub async fn search_notes(
     pool: State<'_, SqlitePool>,
@@ -262,6 +266,7 @@ pub async fn fetch_note_detail(pool: &SqlitePool, id: &str) -> Result<NoteDetail
     .await
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn get_note(
     pool: State<'_, SqlitePool>,
@@ -272,6 +277,7 @@ pub async fn get_note(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn get_note_turns(
     pool: State<'_, SqlitePool>,
@@ -318,6 +324,7 @@ pub async fn update_note_fields(
     .map(|_| ())
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn update_note(
     pool: State<'_, SqlitePool>,
@@ -340,6 +347,7 @@ pub async fn update_note(
 }
 
 /// Deletes a note and its recordings/attachments from disk (rows cascade).
+#[specta::specta]
 #[tauri::command]
 pub async fn delete_note(pool: State<'_, SqlitePool>, id: String) -> crate::error::AryaResult<()> {
     delete_note_inner(&pool, &id).await
@@ -418,6 +426,7 @@ pub async fn delete_note_inner(pool: &SqlitePool, id: &str) -> crate::error::Ary
 
 /// Deletes every note, and its recordings/attachments from disk. Backs the
 /// "Delete all" action in the notes list.
+#[specta::specta]
 #[tauri::command]
 pub async fn delete_all_notes(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<()> {
     delete_all_notes_inner(&pool).await
@@ -467,6 +476,7 @@ fn remove_files(paths: impl IntoIterator<Item = String>) {
     }
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn create_folder(
     pool: State<'_, SqlitePool>,
@@ -488,6 +498,7 @@ pub async fn create_folder(
     .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn list_folders(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<Vec<Folder>> {
     sqlx::query_as::<_, Folder>("SELECT id, name, created_at FROM folders ORDER BY name")
@@ -496,6 +507,7 @@ pub async fn list_folders(pool: State<'_, SqlitePool>) -> crate::error::AryaResu
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn rename_folder(
     pool: State<'_, SqlitePool>,
@@ -514,6 +526,7 @@ pub async fn rename_folder(
 /// Deletes a folder; notes inside revert to no folder. The detach + delete run
 /// in one transaction so a crash between them can't leave dangling folder ids
 /// (the FK's ON DELETE SET NULL is a second, row-level backstop).
+#[specta::specta]
 #[tauri::command]
 pub async fn delete_folder(
     pool: State<'_, SqlitePool>,
@@ -538,6 +551,7 @@ pub async fn delete_folder(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn assign_note_to_folder(
     pool: State<'_, SqlitePool>,
@@ -554,7 +568,7 @@ pub async fn assign_note_to_folder(
 }
 
 /// One confirmed move from the AI-sort review: a note into an existing folder.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderAssignment {
     pub note_id: String,
@@ -563,6 +577,7 @@ pub struct FolderAssignment {
 
 /// Apply several folder moves in one transaction — the confirmed output of AI
 /// sort. All-or-nothing, so a mid-apply failure can't leave notes half-moved.
+#[specta::specta]
 #[tauri::command]
 pub async fn assign_notes_to_folders(
     pool: State<'_, SqlitePool>,

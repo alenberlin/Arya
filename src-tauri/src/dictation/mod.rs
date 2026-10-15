@@ -17,7 +17,7 @@ pub mod settings;
 use serde::Serialize;
 
 /// UI-facing dictation lifecycle states, emitted as `dictation:state`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum DictationState {
     Idle,
@@ -29,7 +29,7 @@ pub enum DictationState {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DictationEvent {
     pub state: DictationState,

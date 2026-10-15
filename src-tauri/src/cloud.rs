@@ -82,15 +82,15 @@ fn resolve(qualified: &str) -> crate::error::AryaResult<(Provider, String)> {
 
 // ---- OpenAI (chat/completions) --------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 struct OpenAiResponse {
     choices: Vec<OpenAiChoice>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 struct OpenAiChoice {
     message: OpenAiMessage,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 struct OpenAiMessage {
     content: String,
 }
@@ -135,11 +135,11 @@ fn openai_chat(
 
 // ---- Anthropic (messages) -------------------------------------------------
 
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 struct AnthropicResponse {
     content: Vec<AnthropicBlock>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 struct AnthropicBlock {
     #[serde(default)]
     text: String,

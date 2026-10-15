@@ -40,7 +40,7 @@ const QUOTE_CHARS: usize = 280;
 const PASSAGE_CHARS: usize = 2000;
 
 /// A source backing an assistant answer, keyed by its inline `[D#]` tag.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Citation {
     pub key: String,
@@ -51,7 +51,7 @@ pub struct Citation {
 }
 
 /// A chat session scoped to one collection.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KbSession {
     pub id: String,
@@ -62,7 +62,7 @@ pub struct KbSession {
 }
 
 /// A persisted message with its parsed citations.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KbMessage {
     pub id: String,
@@ -73,7 +73,7 @@ pub struct KbMessage {
     pub created_at: String,
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(sqlx::FromRow, specta::Type)]
 struct KbMessageRow {
     id: String,
     session_id: String,
@@ -98,13 +98,14 @@ impl From<KbMessageRow> for KbMessage {
 
 /// The pair of messages produced by one question, returned so the UI can append
 /// them directly.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KbAnswer {
     pub user_message: KbMessage,
     pub assistant_message: KbMessage,
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_list_sessions(
     pool: State<'_, SqlitePool>,
@@ -120,6 +121,7 @@ pub async fn kb_list_sessions(
     .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_create_session(
     pool: State<'_, SqlitePool>,
@@ -141,6 +143,7 @@ pub async fn kb_create_session(
     .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_delete_session(
     pool: State<'_, SqlitePool>,
@@ -155,6 +158,7 @@ pub async fn kb_delete_session(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_get_messages(
     pool: State<'_, SqlitePool>,
@@ -173,6 +177,7 @@ pub async fn kb_get_messages(
 
 /// Ask a grounded question in a session: retrieve, answer from the passages
 /// only, and persist the exchange. Returns both messages.
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_ask(
     pool: State<'_, SqlitePool>,

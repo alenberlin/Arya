@@ -7,7 +7,7 @@ use tauri::{AppHandle, State};
 use super::sidecar::WriteMode;
 use super::AgentRuntime;
 
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[derive(Debug, serde::Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSession {
     pub id: String,
@@ -18,7 +18,7 @@ pub struct AgentSession {
     pub updated_at: String,
 }
 
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[derive(Debug, serde::Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentMessage {
     pub id: String,
@@ -27,6 +27,7 @@ pub struct AgentMessage {
     pub created_at: String,
 }
 
+#[specta::specta]
 #[tauri::command]
 pub fn agent_list_models(
     app: AppHandle,
@@ -44,6 +45,7 @@ pub fn agent_list_models(
         .unwrap_or_default())
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn agent_create_session(
     app: AppHandle,
@@ -92,6 +94,7 @@ pub async fn agent_create_session_inner(
     Ok(session)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn agent_list_sessions(
     pool: State<'_, SqlitePool>,
@@ -105,6 +108,7 @@ pub async fn agent_list_sessions(
     .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn agent_get_messages(
     pool: State<'_, SqlitePool>,
@@ -148,6 +152,7 @@ fn transcript_markdown(messages: &[AgentMessage]) -> String {
 /// transcript, titled from the session (or its first line). The note then joins
 /// the connected brain like any other. Returns the new note id. Translating a
 /// chat is this plus a side-by-side note translation, composed on the frontend.
+#[specta::specta]
 #[tauri::command]
 pub async fn convert_session_to_note(
     pool: State<'_, SqlitePool>,
@@ -198,6 +203,7 @@ pub async fn convert_session_to_note(
 
 /// Sends a user message; ensures the sidecar session exists (restores
 /// history after an app restart), persists the user turn, and starts the run.
+#[specta::specta]
 #[tauri::command]
 pub async fn agent_send(
     app: AppHandle,
@@ -308,6 +314,7 @@ async fn restore_history(
     .collect())
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn agent_steer(
     app: AppHandle,
@@ -326,6 +333,7 @@ pub async fn agent_steer(
     Ok(())
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn agent_cancel(
     app: AppHandle,
@@ -343,6 +351,7 @@ pub async fn agent_cancel(
     Ok(())
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn agent_resolve_approval(
     app: AppHandle,
@@ -362,6 +371,7 @@ pub async fn agent_resolve_approval(
     Ok(())
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn agent_delete_session(
     pool: State<'_, SqlitePool>,

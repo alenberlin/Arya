@@ -52,7 +52,7 @@ impl Embedder for OllamaEmbedder {
             .map_err(crate::error::AryaError::from_display)?
             .error_for_status()
             .map_err(crate::error::AryaError::from_display)?;
-        #[derive(serde::Deserialize)]
+        #[derive(serde::Deserialize, specta::Type)]
         struct EmbedResponse {
             embeddings: Vec<Vec<f32>>,
         }

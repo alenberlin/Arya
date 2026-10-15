@@ -52,7 +52,7 @@ fn validate_edge(
 }
 
 /// A directed edge between two nodes.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Link {
     pub id: String,
@@ -68,7 +68,7 @@ pub struct Link {
 
 /// A mention target `(kind, id)` sent by the client when reconciling a
 /// document's edges.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkTarget {
     pub kind: String,
@@ -223,6 +223,7 @@ pub async fn reconcile_source_links(
 /// Origin is always `user` and the weight is the default here; semantic and
 /// agent edges (other origins, weighted) are created server-side via
 /// [`insert_link`], never from the client.
+#[specta::specta]
 #[tauri::command]
 pub async fn create_link(
     pool: State<'_, SqlitePool>,
@@ -252,6 +253,7 @@ pub async fn create_link(
 }
 
 /// Outbound edges from a node.
+#[specta::specta]
 #[tauri::command]
 pub async fn list_links_from(
     pool: State<'_, SqlitePool>,
@@ -269,6 +271,7 @@ pub async fn list_links_from(
 }
 
 /// Inbound edges to a node — its backlinks.
+#[specta::specta]
 #[tauri::command]
 pub async fn list_links_to(
     pool: State<'_, SqlitePool>,
@@ -286,6 +289,7 @@ pub async fn list_links_to(
 }
 
 /// Delete one edge by id.
+#[specta::specta]
 #[tauri::command]
 pub async fn delete_link(pool: State<'_, SqlitePool>, id: String) -> crate::error::AryaResult<()> {
     delete_link_by_id(&pool, &id)
@@ -295,6 +299,7 @@ pub async fn delete_link(pool: State<'_, SqlitePool>, id: String) -> crate::erro
 
 /// Reconcile a source node's outbound edges of one relation (default `mention`)
 /// to exactly `targets`. Called on note save so the graph mirrors the document.
+#[specta::specta]
 #[tauri::command]
 pub async fn reconcile_links(
     pool: State<'_, SqlitePool>,

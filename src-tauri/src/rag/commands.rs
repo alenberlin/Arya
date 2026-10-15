@@ -32,13 +32,14 @@ fn invalidate_cache() {
     *cache().lock().expect("rag cache lock") = None;
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RagStatus {
     pub embedder_available: bool,
     pub indexed_chunks: i64,
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn rag_status(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<RagStatus> {
     let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM rag_chunks")
@@ -88,6 +89,7 @@ pub async fn delete_for_kind(pool: &SqlitePool, kind: &str) -> crate::error::Ary
 
 /// Rebuilds the index from all current notes, transcripts, dictation, and
 /// agent sessions. Emits `rag:progress` as it goes.
+#[specta::specta]
 #[tauri::command]
 pub async fn rag_reindex(
     app: AppHandle,
@@ -210,6 +212,7 @@ fn replace_index(
 }
 
 /// Semantic search over the index. Returns the top `limit` chunks.
+#[specta::specta]
 #[tauri::command]
 pub async fn rag_search(
     pool: State<'_, SqlitePool>,

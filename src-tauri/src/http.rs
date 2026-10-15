@@ -12,11 +12,11 @@ pub fn blocking_client() -> reqwest::blocking::Client {
     CLIENT.get_or_init(reqwest::blocking::Client::new).clone()
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, specta::Type)]
 struct OllamaChatResponse {
     message: OllamaChatMessage,
 }
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, specta::Type)]
 struct OllamaChatMessage {
     content: String,
 }

@@ -56,6 +56,7 @@ fn run(
 
 /// Apply an instruction to `source_text` and return the result. Local by default
 /// (private); pass `provider: "cloud"` to route to the cloud provider.
+#[specta::specta]
 #[tauri::command]
 pub async fn ai_transform(
     source_text: String,

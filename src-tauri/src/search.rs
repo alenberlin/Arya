@@ -11,7 +11,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 
 /// One literal search hit. `snippet` is a leading slice of the matched content.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TextHit {
     pub source_kind: String,
@@ -99,6 +99,7 @@ pub async fn search_all_query(
 }
 
 /// Literal title+content search across all node kinds (F14). Works offline.
+#[specta::specta]
 #[tauri::command]
 pub async fn search_all(
     pool: State<'_, SqlitePool>,

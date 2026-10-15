@@ -7,7 +7,7 @@ use tauri::{AppHandle, State};
 
 use crate::audio::wav_file;
 
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[derive(Debug, serde::Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RecoverableRecording {
     pub session_id: String,
@@ -20,6 +20,7 @@ pub struct RecoverableRecording {
 
 /// Sessions that were live when the app died, with recoverable bytes on disk.
 /// Disk wins: a session only counts when its partial file has audio data.
+#[specta::specta]
 #[tauri::command]
 pub async fn scan_recoverable_recordings(
     pool: State<'_, SqlitePool>,
@@ -69,6 +70,7 @@ pub async fn scan_recoverable_inner(
 }
 
 /// Repairs the partial WAV, promotes it to final, and processes the note.
+#[specta::specta]
 #[tauri::command]
 pub async fn recover_recording(
     app: AppHandle,
@@ -164,6 +166,7 @@ pub async fn recover_artifacts(
 }
 
 /// Discards a crashed session's audio and marks it discarded.
+#[specta::specta]
 #[tauri::command]
 pub async fn discard_recording(
     pool: State<'_, SqlitePool>,

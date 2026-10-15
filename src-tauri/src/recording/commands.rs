@@ -35,6 +35,7 @@ fn recordings_dir(
 
 /// Starts recording into `note_id` (creating a fresh note when omitted).
 /// Returns the note id.
+#[specta::specta]
 #[tauri::command]
 pub async fn start_recording(
     app: AppHandle,
@@ -197,6 +198,7 @@ pub async fn start_recording_inner(
     Ok(note_id)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn pause_recording(
     app: AppHandle,
@@ -220,6 +222,7 @@ pub async fn pause_recording(
     Ok(())
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn resume_recording(
     app: AppHandle,
@@ -243,6 +246,7 @@ pub async fn resume_recording(
 }
 
 /// Stops recording, finalizes the WAV, and kicks off processing.
+#[specta::specta]
 #[tauri::command]
 pub async fn finish_recording(
     app: AppHandle,
@@ -429,12 +433,14 @@ async fn cleanup_failed_start(pool: &SqlitePool, session_id: &str, dir: &std::pa
     let _ = std::fs::remove_dir_all(dir);
 }
 
+#[specta::specta]
 #[tauri::command]
 pub fn recording_status(recorder: State<'_, Recorder>) -> RecorderStatus {
     recorder.status()
 }
 
 /// Re-runs processing for a failed note from its saved artifacts.
+#[specta::specta]
 #[tauri::command]
 pub fn retry_processing(
     app: AppHandle,
@@ -445,11 +451,13 @@ pub fn retry_processing(
     Ok(())
 }
 
+#[specta::specta]
 #[tauri::command]
 pub fn get_generation_settings(app: AppHandle) -> GenerationSettings {
     super::settings::load_generation_settings(&app)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub fn set_generation_settings(
     app: AppHandle,
@@ -467,11 +475,13 @@ pub(super) fn spawn_processing(app: AppHandle, pool: SqlitePool, note_id: String
         .expect("spawn processing thread");
 }
 
+#[specta::specta]
 #[tauri::command]
 pub fn calendar_access_status() -> crate::calendar::CalendarAccess {
     crate::calendar::access_status()
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn request_calendar_access() -> crate::error::AryaResult<crate::calendar::CalendarAccess>
 {

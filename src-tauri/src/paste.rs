@@ -20,7 +20,7 @@ pub enum PasteError {
 }
 
 /// Info about the app that will receive the paste.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct TargetApp {
     pub bundle_id: Option<String>,

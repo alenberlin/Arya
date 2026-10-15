@@ -22,7 +22,7 @@ use serde::Serialize;
 /// A named knowledge base: a set of uploaded documents the user chats against in
 /// isolation. `document_count` / `ready_count` are derived per query so the UI
 /// can show ingestion progress without a second round-trip.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Collection {
     pub id: String,

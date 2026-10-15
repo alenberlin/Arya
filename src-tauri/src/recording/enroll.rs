@@ -4,7 +4,7 @@
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Manager, State};
 
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[derive(Debug, serde::Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeakerProfileInfo {
     pub id: String,
@@ -13,6 +13,7 @@ pub struct SpeakerProfileInfo {
 }
 
 /// Records `seconds` of mic audio and enrolls it as a named voice profile.
+#[specta::specta]
 #[tauri::command]
 pub async fn enroll_speaker_profile(
     app: AppHandle,
@@ -112,6 +113,7 @@ pub fn enroll_blocking(
     }
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn list_speaker_profiles(
     pool: State<'_, SqlitePool>,
@@ -124,6 +126,7 @@ pub async fn list_speaker_profiles(
     .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn delete_speaker_profile(
     pool: State<'_, SqlitePool>,

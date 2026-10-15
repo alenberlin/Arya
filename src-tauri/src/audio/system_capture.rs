@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, specta::Type)]
 #[serde(tag = "event", rename_all = "lowercase")]
 pub enum HelperEvent {
     Ready {

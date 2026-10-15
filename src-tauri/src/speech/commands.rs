@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use super::models;
 
 /// One catalog model plus whether it's already on disk.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SpeechModelStatus {
     pub id: String,
@@ -32,6 +32,7 @@ fn models_dir(app: &AppHandle) -> crate::error::AryaResult<std::path::PathBuf> {
 
 /// The speech-model catalog with per-model download state, so the picker can
 /// mark which are ready and offer a Download button for the rest.
+#[specta::specta]
 #[tauri::command]
 pub fn speech_models_status(app: AppHandle) -> crate::error::AryaResult<Vec<SpeechModelStatus>> {
     let dir = models_dir(&app)?;
@@ -49,6 +50,7 @@ pub fn speech_models_status(app: AppHandle) -> crate::error::AryaResult<Vec<Spee
 /// Download one catalog model, emitting `speech:download-progress`
 /// `{ id, received, total, done }` as it streams. Idempotent: an already-present
 /// model returns immediately with a `done` event.
+#[specta::specta]
 #[tauri::command]
 pub async fn download_speech_model(app: AppHandle, id: String) -> crate::error::AryaResult<()> {
     let spec = models::find(&id).ok_or_else(|| format!("unknown model: {id}"))?;
@@ -88,6 +90,7 @@ pub async fn download_speech_model(app: AppHandle, id: String) -> crate::error::
 }
 
 /// Delete a downloaded model to reclaim disk. Idempotent.
+#[specta::specta]
 #[tauri::command]
 pub async fn delete_speech_model(app: AppHandle, id: String) -> crate::error::AryaResult<()> {
     let spec = models::find(&id).ok_or_else(|| format!("unknown model: {id}"))?;

@@ -54,6 +54,9 @@ ocrs = "0.12.2"
 image = "0.25.10"
 rten = "0.24"
 lopdf = { version = "0.42", features = ["embed_image"] }
+specta = { version = "2.0.0-rc.25" }
+specta-typescript = "0.0.12"
+tauri-specta = { version = "2.0.0-rc.25", features = ["derive", "typescript"] }
 
 [profile.release]
 strip = true

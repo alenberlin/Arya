@@ -20,7 +20,7 @@ use tauri::State;
 
 use crate::vecmath::{blob_to_f32, cosine};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphNode {
     pub id: String,
@@ -28,7 +28,7 @@ pub struct GraphNode {
     pub label: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphEdge {
     pub source: String,
@@ -36,7 +36,7 @@ pub struct GraphEdge {
     pub relation: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Graph {
     pub nodes: Vec<GraphNode>,
@@ -277,6 +277,7 @@ fn semantic_edge_candidates(vectors: &[(String, Vec<f32>)]) -> Vec<GraphEdge> {
 }
 
 /// Assemble the Galaxy graph for the whole workspace (F10).
+#[specta::specta]
 #[tauri::command]
 pub async fn galaxy_graph(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<Graph> {
     assemble_graph(&pool)

@@ -47,7 +47,7 @@ impl Provider {
 
 /// Which providers currently have a key stored. Booleans only — never the
 /// secret itself, so this is safe to serialize to the frontend.
-#[derive(Debug, Clone, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KeysStatus {
     pub openai: bool,
@@ -98,6 +98,7 @@ pub fn clear(provider: Provider) -> crate::error::AryaResult<()> {
 // ---------------------------------------------------------------------------
 
 /// Which providers have a key stored (booleans only).
+#[specta::specta]
 #[tauri::command]
 pub fn keys_status() -> KeysStatus {
     KeysStatus {
@@ -109,6 +110,7 @@ pub fn keys_status() -> KeysStatus {
 /// Store or replace a provider key. A blank `key` removes it. Returns the
 /// refreshed status so the UI updates in one round-trip. Resets the agent
 /// sidecars so the new key is picked up on the next message, no restart needed.
+#[specta::specta]
 #[tauri::command]
 pub fn keys_set(
     runtime: tauri::State<'_, crate::agent::AgentRuntime>,
@@ -124,6 +126,7 @@ pub fn keys_set(
 
 /// Remove a provider key. Returns the refreshed status and resets the sidecars
 /// so the agent stops offering that provider's models.
+#[specta::specta]
 #[tauri::command]
 pub fn keys_clear(
     runtime: tauri::State<'_, crate::agent::AgentRuntime>,

@@ -10,7 +10,7 @@ use super::AgentRuntime;
 
 // ---- MCP servers --------------------------------------------------------
 
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[derive(Debug, serde::Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerRow {
     pub id: String,
@@ -56,6 +56,7 @@ fn mcp_env_delete(name: &str) {
     }
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn mcp_list_servers(
     pool: State<'_, SqlitePool>,
@@ -79,6 +80,7 @@ pub async fn mcp_list_servers(
     Ok(servers)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn mcp_add_server(
     app: AppHandle,
@@ -133,6 +135,7 @@ pub async fn mcp_add_server(
     Ok(tools)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn mcp_remove_server(
     app: AppHandle,
@@ -188,7 +191,7 @@ pub async fn reconnect_all(app: &AppHandle, pool: &SqlitePool, runtime: &AgentRu
 
 // ---- Routines -----------------------------------------------------------
 
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[derive(Debug, serde::Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RoutineRow {
     pub id: String,
@@ -203,7 +206,7 @@ pub struct RoutineRow {
     pub created_at: String,
 }
 
-#[derive(Debug, serde::Serialize, sqlx::FromRow)]
+#[derive(Debug, serde::Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RoutineRunRow {
     pub id: String,
@@ -213,6 +216,7 @@ pub struct RoutineRunRow {
     pub started_at: String,
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn routine_list(
     pool: State<'_, SqlitePool>,
@@ -227,6 +231,7 @@ pub async fn routine_list(
     .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn routine_create(
     pool: State<'_, SqlitePool>,
@@ -260,6 +265,7 @@ pub async fn routine_create(
     .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn routine_set_enabled(
     pool: State<'_, SqlitePool>,
@@ -275,6 +281,7 @@ pub async fn routine_set_enabled(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn routine_delete(
     pool: State<'_, SqlitePool>,
@@ -288,6 +295,7 @@ pub async fn routine_delete(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn routine_runs(
     pool: State<'_, SqlitePool>,
@@ -414,6 +422,7 @@ async fn record_run(
 
 /// Forks a session into a new one carrying its history up to (and including)
 /// `through_message_id`, so the user can explore an alternative from a point.
+#[specta::specta]
 #[tauri::command]
 pub async fn agent_branch_session(
     pool: State<'_, SqlitePool>,

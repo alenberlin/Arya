@@ -8,7 +8,7 @@ use sqlx::SqlitePool;
 use tauri::State;
 
 /// Row for the map list.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MindmapSummary {
     pub id: String,
@@ -17,7 +17,7 @@ pub struct MindmapSummary {
 }
 
 /// A full mind map, including its canvas document.
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Mindmap {
     pub id: String,
@@ -79,6 +79,7 @@ pub async fn update_mindmap_fields(
     .map(|_| ())
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn create_mindmap(
     pool: State<'_, SqlitePool>,
@@ -94,6 +95,7 @@ pub async fn create_mindmap(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn list_mindmaps(
     pool: State<'_, SqlitePool>,
@@ -103,6 +105,7 @@ pub async fn list_mindmaps(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn get_mindmap(
     pool: State<'_, SqlitePool>,
@@ -113,6 +116,7 @@ pub async fn get_mindmap(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn update_mindmap(
     pool: State<'_, SqlitePool>,
@@ -125,6 +129,7 @@ pub async fn update_mindmap(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn delete_mindmap(
     pool: State<'_, SqlitePool>,

@@ -19,7 +19,7 @@ use tauri::State;
 use crate::notes::{insert_note_under, update_note_fields};
 
 /// What an import did — surfaced to the user afterward.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ImportReport {
     pub pages_created: usize,
@@ -155,6 +155,7 @@ pub async fn import_notion_folder(
 }
 
 /// Import an unzipped Notion export folder chosen by the user.
+#[specta::specta]
 #[tauri::command]
 pub async fn import_notion(
     pool: State<'_, SqlitePool>,

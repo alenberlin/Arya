@@ -21,7 +21,7 @@ use crate::speech::{engine_cache, models, SpeechEngine, TranscribeOptions};
 /// turn cannot blow up memory or model context.
 const MAX_CHUNK_SAMPLES: usize = 16_000 * 480;
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessingEvent {
     pub note_id: String,

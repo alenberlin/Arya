@@ -16,7 +16,7 @@ pub mod ollama;
 use serde::{Deserialize, Serialize};
 
 /// Writing style applied during cleanup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum DictationStyle {
     #[default]
@@ -28,7 +28,7 @@ pub enum DictationStyle {
 /// How much cleanup a dictation gets. Orthogonal to [`DictationStyle`]: this
 /// picks the *engine* (verbatim / deterministic / local-LLM), style picks the
 /// *voice*. Surfaced on the dictation pill as Raw / Clean / Polished.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum Polish {
     /// Verbatim: dictionary replacements only, no filler/casing/punctuation
@@ -46,7 +46,7 @@ pub enum Polish {
 /// The interpersonal register of the Polished rewrite (F6). Orthogonal to
 /// [`DictationStyle`] (casing/format) — this shapes *voice*, and only the
 /// local-LLM Polished level uses it; Raw/Clean ignore it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum PolishedTone {
     #[default]
@@ -58,7 +58,7 @@ pub enum PolishedTone {
 
 /// Where the text is going, so layout can adapt (email greeting/sign-off
 /// spacing, for example). Detected from the frontmost app at paste time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum TargetContext {
     #[default]
@@ -68,7 +68,7 @@ pub enum TargetContext {
 
 /// A user dictionary entry: replace `pattern` (case-insensitive whole word)
 /// with `replacement`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct DictionaryEntry {
     pub pattern: String,
     pub replacement: String,

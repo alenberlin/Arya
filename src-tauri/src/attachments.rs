@@ -17,7 +17,7 @@ use tauri::{
 
 use crate::filestage::{header, safe_file_name, stage, FileSource};
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Attachment {
     pub id: String,
@@ -117,6 +117,7 @@ fn open_path(path: &str) -> crate::error::AryaResult<()> {
     }
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn attach_file(
     app: AppHandle,
@@ -140,6 +141,7 @@ pub async fn attach_file(
 /// The window keeps the OS drag handler off so in-page dragging still works,
 /// which leaves the frontend holding the file's *contents* rather than a path:
 /// the bytes arrive as the raw IPC body, with the note and filename in headers.
+#[specta::specta]
 #[tauri::command]
 pub async fn attach_dropped_file(
     app: AppHandle,
@@ -165,6 +167,7 @@ pub async fn attach_dropped_file(
     .await
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn list_attachments(
     pool: State<'_, SqlitePool>,
@@ -173,6 +176,7 @@ pub async fn list_attachments(
     list_for_note(&pool, &note_id).await
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn remove_attachment(
     pool: State<'_, SqlitePool>,
@@ -181,6 +185,7 @@ pub async fn remove_attachment(
     delete_attachment(&pool, &id).await
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn open_attachment(
     pool: State<'_, SqlitePool>,

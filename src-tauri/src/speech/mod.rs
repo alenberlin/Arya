@@ -30,7 +30,7 @@ impl AudioClip {
 }
 
 /// One recognized segment with millisecond timestamps.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Segment {
     pub start_ms: i64,
@@ -39,7 +39,7 @@ pub struct Segment {
 }
 
 /// A full transcription result.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Transcript {
     pub text: String,

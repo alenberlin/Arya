@@ -12,7 +12,7 @@ use super::settings::{self, DictationSettings};
 use crate::cleanup::Polish;
 use crate::paste;
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryItem {
     pub id: String,
@@ -27,7 +27,7 @@ pub struct HistoryItem {
     pub created_at: String,
 }
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DictionaryItem {
     pub id: String,
@@ -35,7 +35,7 @@ pub struct DictionaryItem {
     pub replacement: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DictationStatus {
     pub accessibility_trusted: bool,
@@ -43,6 +43,7 @@ pub struct DictationStatus {
     pub input_devices: Vec<String>,
 }
 
+#[specta::specta]
 #[tauri::command]
 pub fn get_dictation_settings(service: State<'_, Arc<DictationService>>) -> DictationSettings {
     service.settings()
@@ -50,6 +51,7 @@ pub fn get_dictation_settings(service: State<'_, Arc<DictationService>>) -> Dict
 
 /// Lists the models installed in the user's Ollama, so settings can offer a
 /// translation-model picker. Best-effort: an empty list if Ollama isn't up.
+#[specta::specta]
 #[tauri::command]
 pub async fn list_ollama_models(
     service: State<'_, Arc<DictationService>>,
@@ -58,7 +60,7 @@ pub async fn list_ollama_models(
     struct Tags {
         models: Vec<TagModel>,
     }
-    #[derive(serde::Deserialize)]
+    #[derive(serde::Deserialize, specta::Type)]
     struct TagModel {
         name: String,
     }
@@ -78,7 +80,7 @@ pub async fn list_ollama_models(
 /// Reachability of the user's Ollama, for the setup UI's "Local models" card.
 /// A fresh install with no Ollama gets `reachable: false` so the UI can show
 /// install guidance instead of a silently empty model list.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct OllamaStatus {
     pub reachable: bool,
@@ -88,6 +90,7 @@ pub struct OllamaStatus {
 
 /// Ping Ollama's `/api/tags`. Never errors — an unreachable Ollama is a normal
 /// state (the user just hasn't installed it yet), reported as `reachable:false`.
+#[specta::specta]
 #[tauri::command]
 pub async fn ollama_status(
     service: State<'_, Arc<DictationService>>,
@@ -126,6 +129,7 @@ pub async fn ollama_status(
     }
 }
 
+#[specta::specta]
 #[tauri::command]
 pub fn set_dictation_settings(
     app: AppHandle,
@@ -147,6 +151,7 @@ pub fn set_dictation_settings(
     Ok(())
 }
 
+#[specta::specta]
 #[tauri::command]
 pub fn dictation_status(service: State<'_, Arc<DictationService>>) -> DictationStatus {
     DictationStatus {
@@ -156,6 +161,7 @@ pub fn dictation_status(service: State<'_, Arc<DictationService>>) -> DictationS
     }
 }
 
+#[specta::specta]
 #[tauri::command]
 pub fn open_accessibility_settings() {
     #[cfg(target_os = "macos")]
@@ -163,7 +169,7 @@ pub fn open_accessibility_settings() {
 }
 
 /// An on-demand translation of a saved dictation (F8/M9).
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct DictationTranslation {
     pub id: String,
@@ -215,6 +221,7 @@ async fn fetch_dictation_translations(
 /// Translate a saved dictation into `target_lang` and store it alongside the
 /// original (non-destructive; one row per language). Uses the same local/cloud
 /// translator as capture-time translation.
+#[specta::specta]
 #[tauri::command]
 pub async fn translate_dictation(
     pool: State<'_, SqlitePool>,
@@ -257,6 +264,7 @@ pub async fn translate_dictation(
 }
 
 /// List a dictation's on-demand translations (F8/M9).
+#[specta::specta]
 #[tauri::command]
 pub async fn list_dictation_translations(
     pool: State<'_, SqlitePool>,
@@ -268,6 +276,7 @@ pub async fn list_dictation_translations(
 }
 
 /// Every on-demand dictation translation, so the history renders in one load.
+#[specta::specta]
 #[tauri::command]
 pub async fn list_all_dictation_translations(
     pool: State<'_, SqlitePool>,
@@ -281,6 +290,7 @@ pub async fn list_all_dictation_translations(
     .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn list_dictation_history(
     pool: State<'_, SqlitePool>,
@@ -295,6 +305,7 @@ pub async fn list_dictation_history(
     .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn delete_dictation_history_item(
     pool: State<'_, SqlitePool>,
@@ -311,6 +322,7 @@ pub async fn delete_dictation_history_item(
     crate::rag::commands::delete_for_node(&pool, "dictation", &id).await
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn clear_dictation_history(pool: State<'_, SqlitePool>) -> crate::error::AryaResult<()> {
     sqlx::query("DELETE FROM dictation_history")
@@ -324,6 +336,7 @@ pub async fn clear_dictation_history(pool: State<'_, SqlitePool>) -> crate::erro
 /// Turns a dictation into a meeting-minutes note: creates a note whose
 /// transcript is the dictation text and whose body is generated by the same
 /// on-device pipeline the meeting recorder uses. Returns the new note id.
+#[specta::specta]
 #[tauri::command]
 pub async fn convert_dictation_to_note(
     app: AppHandle,
@@ -399,6 +412,7 @@ pub async fn convert_dictation_to_note(
 /// note body verbatim, titled from the first line — no meeting-minutes model
 /// pass (fast, offline). The note then joins the connected brain like any other.
 /// Returns the new note id.
+#[specta::specta]
 #[tauri::command]
 pub async fn convert_dictation_to_plain_note(
     pool: State<'_, SqlitePool>,
@@ -435,6 +449,7 @@ pub async fn convert_dictation_to_plain_note(
 
 /// Stops a hands-free dictation (invoked from the pill's Stop button) and
 /// resets the right-Shift gesture state machine.
+#[specta::specta]
 #[tauri::command]
 pub fn dictation_stop(
     app: AppHandle,
@@ -452,6 +467,7 @@ pub fn dictation_stop(
 
 /// Cancels the current dictation (the pill's ✕): discards the capture without
 /// transcribing or pasting, and resets the right-Shift gesture state machine.
+#[specta::specta]
 #[tauri::command]
 pub fn dictation_cancel(
     app: AppHandle,
@@ -467,6 +483,7 @@ pub fn dictation_cancel(
 
 /// Sets a one-off polish level for the current dictation (the pill's polish
 /// chip). Not persisted; consumed by the next transcription.
+#[specta::specta]
 #[tauri::command]
 pub fn dictation_set_session_polish(service: State<'_, Arc<DictationService>>, polish: Polish) {
     service.set_session_polish(polish);
@@ -474,6 +491,7 @@ pub fn dictation_set_session_polish(service: State<'_, Arc<DictationService>>, p
 
 /// Pins the given polish (with the current tone) as the default for the app the
 /// current dictation is targeting.
+#[specta::specta]
 #[tauri::command]
 pub fn dictation_pin_app(
     app: AppHandle,
@@ -491,6 +509,7 @@ pub fn dictation_pin_app(
 }
 
 /// Removes the pin for the app the current dictation is targeting.
+#[specta::specta]
 #[tauri::command]
 pub fn dictation_unpin_app(
     app: AppHandle,
@@ -509,6 +528,7 @@ pub fn dictation_unpin_app(
 /// Downloads (if needed) and loads the streaming model so the live preview is
 /// ready. Long-running: the download awaits and the model load runs on a
 /// blocking thread.
+#[specta::specta]
 #[tauri::command]
 pub async fn dictation_prepare_streaming(app: AppHandle) -> crate::error::AryaResult<()> {
     let models_dir = app
@@ -533,6 +553,7 @@ pub async fn dictation_prepare_streaming(app: AppHandle) -> crate::error::AryaRe
     .map_err(crate::error::AryaError::from_display)?
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn list_dictionary_entries(
     pool: State<'_, SqlitePool>,
@@ -545,6 +566,7 @@ pub async fn list_dictionary_entries(
     .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn create_dictionary_entry(
     pool: State<'_, SqlitePool>,
@@ -574,6 +596,7 @@ pub async fn create_dictionary_entry(
     })
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn delete_dictionary_entry(
     pool: State<'_, SqlitePool>,

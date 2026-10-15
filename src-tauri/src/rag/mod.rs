@@ -13,7 +13,7 @@ pub mod embed;
 use serde::Serialize;
 
 /// A retrievable chunk with its similarity to a query.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchHit {
     pub source_kind: String,

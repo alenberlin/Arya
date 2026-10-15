@@ -15,7 +15,7 @@ use crate::cleanup::{DictationStyle, Polish};
 use crate::paste;
 
 /// The polish level and writing tone for one app.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AppProfile {
     pub polish: Polish,

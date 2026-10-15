@@ -26,7 +26,7 @@ use crate::translate;
 
 /// Emitted to the pill at `begin`: where the text will land and the resolved
 /// profile (polish + tone) for that app, plus whether it's pinned.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 struct TargetEvent {
     name: Option<String>,

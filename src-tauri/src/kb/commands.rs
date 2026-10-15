@@ -42,6 +42,7 @@ async fn fetch_collection(pool: &SqlitePool, id: &str) -> crate::error::AryaResu
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_list_collections(
     pool: State<'_, SqlitePool>,
@@ -52,6 +53,7 @@ pub async fn kb_list_collections(
         .map_err(crate::error::AryaError::from_display)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_create_collection(
     pool: State<'_, SqlitePool>,
@@ -73,6 +75,7 @@ pub async fn kb_create_collection(
     fetch_collection(&pool, &id).await
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_rename_collection(
     pool: State<'_, SqlitePool>,
@@ -129,6 +132,7 @@ async fn delete_collection_inner(
     Ok(paths)
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_delete_collection(
     app: AppHandle,
@@ -145,7 +149,7 @@ pub async fn kb_delete_collection(
     Ok(())
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KbStatus {
     /// Whether the local Ollama embedding model is reachable. Ingestion and
@@ -153,6 +157,7 @@ pub struct KbStatus {
     pub embedder_available: bool,
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_status() -> crate::error::AryaResult<KbStatus> {
     let url = crate::provider::ollama_url();
@@ -164,7 +169,7 @@ pub async fn kb_status() -> crate::error::AryaResult<KbStatus> {
 }
 
 /// A document in a collection as shown in the detail pane.
-#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct KbDocument {
     pub id: String,
@@ -184,6 +189,7 @@ pub struct KbDocument {
 const DOCUMENT_SELECT: &str = "SELECT id, collection_id, filename, ext, byte_size, status, \
      extractor, page_count, chunk_count, error, created_at, updated_at FROM kb_documents";
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_list_documents(
     pool: State<'_, SqlitePool>,
@@ -270,6 +276,7 @@ async fn add_documents(
 }
 
 /// Copy each file picked in the OS dialog into the collection and ingest it.
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_add_documents(
     app: AppHandle,
@@ -291,6 +298,7 @@ pub async fn kb_add_documents(
 /// the bytes arrive as the raw IPC body, with the collection and filename in
 /// headers. Takes one file per call so a partly-unreadable batch still reports
 /// per-file errors.
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_add_dropped_document(
     app: AppHandle,
@@ -316,6 +324,7 @@ pub async fn kb_add_dropped_document(
     .ok_or_else(|| crate::error::AryaError::message("document was not created"))
 }
 
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_delete_document(
     pool: State<'_, SqlitePool>,
@@ -349,6 +358,7 @@ pub async fn kb_delete_document(
 
 /// Hybrid search over one collection (vector + keyword, RRF-fused). Returns the
 /// top cited chunks; powers the grounded chat.
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_search(
     pool: State<'_, SqlitePool>,
@@ -366,6 +376,7 @@ pub async fn kb_search(
 }
 
 /// Re-run extraction + embedding for one document (e.g. after starting Ollama).
+#[specta::specta]
 #[tauri::command]
 pub async fn kb_reindex_document(
     app: AppHandle,
