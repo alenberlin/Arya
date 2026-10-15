@@ -141,7 +141,7 @@ fn replace_index(
     // Ollama failure leaves the existing index intact instead of emptying search.
     let mut staged: Vec<Staged> = Vec::new();
     for doc in documents {
-        let chunks = chunk_text(&doc.content, 180, 40);
+        let chunks = chunk_text(&doc.content, super::CHUNK_WORDS, super::CHUNK_OVERLAP);
         if chunks.is_empty() {
             continue;
         }

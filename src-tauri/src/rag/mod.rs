@@ -27,6 +27,11 @@ pub struct SearchHit {
 // diarizer, so the metric and encoding can't drift between the two indexes.
 pub use crate::vecmath::{blob_to_f32, cosine, f32_to_blob};
 
+/// Chunking window shared by the workspace RAG index and the KB index, so the
+/// two retrievers split text identically.
+pub const CHUNK_WORDS: usize = 180;
+pub const CHUNK_OVERLAP: usize = 40;
+
 /// Splits text into overlapping word-window chunks for indexing.
 pub fn chunk_text(text: &str, words_per_chunk: usize, overlap: usize) -> Vec<String> {
     let words: Vec<&str> = text.split_whitespace().collect();

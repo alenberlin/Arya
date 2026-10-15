@@ -14,10 +14,6 @@ use super::{extract, ocr};
 use crate::rag::embed::{Embedder, OllamaEmbedder};
 use crate::vecmath::f32_to_blob;
 
-/// Chunking mirrors the workspace RAG index (word windows with overlap) so the
-/// two behave alike; page structure from the extractor is preserved per chunk.
-const WORDS_PER_CHUNK: usize = 180;
-const CHUNK_OVERLAP: usize = 40;
 /// Embed in bounded batches so one huge document doesn't build a single massive
 /// request; each batch gets the embedder's own 120s window.
 const EMBED_BATCH: usize = 48;
@@ -181,7 +177,11 @@ fn extract_with_ocr(
 fn chunk_pages(extracted: &extract::Extracted) -> Vec<(Option<i64>, String)> {
     let mut out = Vec::new();
     for page in &extracted.pages {
-        for content in crate::rag::chunk_text(&page.text, WORDS_PER_CHUNK, CHUNK_OVERLAP) {
+        for content in crate::rag::chunk_text(
+            &page.text,
+            crate::rag::CHUNK_WORDS,
+            crate::rag::CHUNK_OVERLAP,
+        ) {
             out.push((page.page, content));
         }
     }
