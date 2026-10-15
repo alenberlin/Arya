@@ -35,6 +35,7 @@ import {
 import { MessageView, toolSummary } from "./MessageView";
 
 interface PendingApproval {
+  sessionId: string;
   callId: string;
   name: string;
   description: string;
@@ -178,6 +179,27 @@ export function AgentPanel() {
 
     const unlisten = listen<{ sessionId: string; event: AgentEvent }>("agent:event", (raw) => {
       const { sessionId, event } = raw.payload;
+      // Tool approvals must surface for background routine sessions too — they
+      // would otherwise be dropped and auto-deny after 5 minutes.
+      if (event.kind === "tool-approval-required") {
+        setApprovals((list) => [
+          ...list,
+          { sessionId, callId: event.callId, name: event.name, description: event.description },
+        ]);
+        return;
+      }
+      // A finished turn (active or background) clears its pending approvals.
+      if (event.kind === "turn-finished") {
+        setApprovals((list) => list.filter((a) => a.sessionId !== sessionId));
+        if (sessionId !== activeRef.current) return;
+        setRunning(false);
+        setLive(null);
+        if (activeRef.current) {
+          void agentGetMessages(activeRef.current).then(setMessages);
+        }
+        void refreshSessions();
+        return;
+      }
       if (sessionId !== activeRef.current) return;
       switch (event.kind) {
         case "turn-started":
@@ -211,21 +233,6 @@ export function AgentPanel() {
                 }
               : t,
           );
-          break;
-        case "tool-approval-required":
-          setApprovals((list) => [
-            ...list,
-            { callId: event.callId, name: event.name, description: event.description },
-          ]);
-          break;
-        case "turn-finished":
-          setRunning(false);
-          setLive(null);
-          setApprovals([]);
-          if (activeRef.current) {
-            void agentGetMessages(activeRef.current).then(setMessages);
-          }
-          void refreshSessions();
           break;
         case "error":
           setError(event.message);
@@ -301,9 +308,14 @@ export function AgentPanel() {
   };
 
   const decide = (callId: string, decision: string) => {
-    if (!active) return;
+    // Resolve against the approval's own session, so a background routine's
+    // approval is decided for the right session (not the active chat).
+    const approval = approvals.find((a) => a.callId === callId);
+    if (!approval) return;
     setApprovals((list) => list.filter((a) => a.callId !== callId));
-    void agentResolveApproval(active.id, callId, decision).catch((e) => setError(String(e)));
+    void agentResolveApproval(approval.sessionId, callId, decision).catch((e) =>
+      setError(String(e)),
+    );
   };
 
   const onBranch = useCallback(
