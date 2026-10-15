@@ -295,16 +295,18 @@ pub async fn run_due_routines(app: &AppHandle, pool: &SqlitePool, runtime: &Agen
             routine.prompt.clone(),
         )
         .await;
-        let (status, detail) = match result {
-            Ok(()) => ("done", None),
-            Err(e) => ("failed", Some(e)),
-        };
-        let _ = sqlx::query("UPDATE routine_runs SET status = ?2, detail = ?3 WHERE id = ?1")
-            .bind(&run_id)
-            .bind(status)
-            .bind(detail)
-            .execute(pool)
-            .await;
+        // Only a delivery failure ends the run here. On success it stays
+        // "running": agent_send_inner merely accepts the message, and the
+        // turn-finished event is what actually marks the run "done" (the old
+        // code reported "done" the moment the message was accepted).
+        if let Err(e) = result {
+            let _ =
+                sqlx::query("UPDATE routine_runs SET status = 'failed', detail = ?2 WHERE id = ?1")
+                    .bind(&run_id)
+                    .bind(&e)
+                    .execute(pool)
+                    .await;
+        }
     }
 }
 

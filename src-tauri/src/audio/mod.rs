@@ -90,8 +90,13 @@ impl CaptureHandle {
     /// without stopping the stream — for live/partial transcription.
     pub fn snapshot(&self) -> Result<AudioClip, CaptureError> {
         self.drain();
-        let raw = self.buffer.lock().expect("capture buffer lock").clone();
-        let mono = resample::downmix_interleaved(&raw, self.channels);
+        // Downmix straight from the locked buffer — a full defensive clone on
+        // every live-preview tick was pure waste. (Resampling still re-runs over
+        // the whole buffer; an incremental resampler is a larger follow-up.)
+        let mono = {
+            let guard = self.buffer.lock().expect("capture buffer lock");
+            resample::downmix_interleaved(&guard, self.channels)
+        };
         let samples = resample::resample_to_16k(&mono, self.sample_rate)
             .map_err(|e| CaptureError::Resample(e.to_string()))?;
         Ok(AudioClip { samples })

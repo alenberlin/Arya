@@ -242,24 +242,35 @@ fn handle_event(app: &AppHandle, params: &Value) {
             });
             let pool = app.state::<SqlitePool>().inner().clone();
             let session_id = session_id.to_string();
-            std::thread::spawn(move || {
-                let _ = tauri::async_runtime::block_on(async {
-                    sqlx::query(
-                        "INSERT INTO agent_messages (id, session_id, role, content_json, created_at)
-                         VALUES (?1, ?2, 'assistant', ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
-                    )
-                    .bind(uuid::Uuid::new_v4().to_string())
-                    .bind(&session_id)
-                    .bind(content.to_string())
-                    .execute(&pool)
-                    .await?;
-                    sqlx::query(
-                        "UPDATE agent_sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
-                    )
-                    .bind(&session_id)
-                    .execute(&pool)
-                    .await
-                });
+            // Persist synchronously: this runs on the sidecar's reader thread
+            // (not the async runtime), so the row commits before the UI's
+            // post-turn re-fetch. A detached spawn could lose that race and the
+            // assistant message would appear only on the next refresh.
+            let _ = tauri::async_runtime::block_on(async {
+                sqlx::query(
+                    "INSERT INTO agent_messages (id, session_id, role, content_json, created_at)
+                     VALUES (?1, ?2, 'assistant', ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                )
+                .bind(uuid::Uuid::new_v4().to_string())
+                .bind(&session_id)
+                .bind(content.to_string())
+                .execute(&pool)
+                .await?;
+                sqlx::query(
+                    "UPDATE agent_sessions SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?1",
+                )
+                .bind(&session_id)
+                .execute(&pool)
+                .await?;
+                // The turn actually finished — complete any routine run tied to
+                // this session (its status is no longer just "message accepted").
+                sqlx::query(
+                    "UPDATE routine_runs SET status = 'done', detail = NULL
+                     WHERE session_id = ?1 AND status = 'running'",
+                )
+                .bind(&session_id)
+                .execute(&pool)
+                .await
             });
         }
         _ => {}
