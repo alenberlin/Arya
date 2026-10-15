@@ -1405,6 +1405,10 @@ export function NotesWorkspace({
                 initialBodyMd={detail.bodyMd}
                 mentionItems={mentionItems}
                 onChange={(documentJson, bodyMd, mentions) => {
+                  // The editor's debounce flushes on unmount; ignore a stale
+                  // flush that lands after the note switched, so the previous
+                  // note's content can never be written into the new note.
+                  if (activeNoteRef.current !== detail.id) return;
                   mentionsRef.current = mentions;
                   editDetail({ documentJson, bodyMd });
                   if (detail.title === "New note") scheduleAutoTitle(detail.id, bodyMd);

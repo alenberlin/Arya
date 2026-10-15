@@ -90,9 +90,7 @@ async function openaiModels(key: string): Promise<string[]> {
     authorization: `Bearer ${key}`,
   });
   const list = (data as { data?: Array<{ id?: string }> } | undefined)?.data ?? [];
-  const models = list
-    .map((m) => m.id)
-    .filter((id): id is string => !!id && isOpenAiChatModel(id));
+  const models = list.map((m) => m.id).filter((id): id is string => !!id && isOpenAiChatModel(id));
   return models.length ? models : OPENAI_FALLBACK;
 }
 
@@ -108,10 +106,7 @@ export async function listCloudModels(): Promise<string[]> {
       : Promise.resolve([]),
     process.env.OPENAI_API_KEY ? openaiModels(process.env.OPENAI_API_KEY) : Promise.resolve([]),
   ]);
-  return [
-    ...anthropic.map((m) => `anthropic:${m}`),
-    ...openai.map((m) => `openai:${m}`),
-  ];
+  return [...anthropic.map((m) => `anthropic:${m}`), ...openai.map((m) => `openai:${m}`)];
 }
 
 // Ollama lists embedding-only models (e.g. nomic-embed-text) alongside chat

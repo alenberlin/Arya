@@ -148,10 +148,34 @@ export function BlockEditor({
     return () => el.removeEventListener("keydown", handler);
   }, [editor, onInlineCommand]);
 
-  const emit = useCallback(() => {
+  // Typing re-derives the block-JSON, markdown projection, and mention targets
+  // on every keystroke — three O(document) passes. Debounce them so a burst of
+  // keystrokes pays that cost once, while programmatic inserts flush immediately.
+  const dirtyRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const compute = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    dirtyRef.current = false;
     const doc = editor.document;
     onChange(JSON.stringify(doc), editor.blocksToMarkdownLossy(doc), extractMentionTargets(doc));
   }, [editor, onChange]);
+
+  const handleChange = useCallback(() => {
+    dirtyRef.current = true;
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(compute, 120);
+  }, [compute]);
+
+  // Flush a pending debounced edit on unmount so a fast note switch never drops
+  // the last keystrokes.
+  useEffect(() => {
+    return () => {
+      if (dirtyRef.current) compute();
+    };
+  }, [compute]);
 
   // Append a side-by-side translation (or any markdown) as new blocks at the
   // end, leaving the original blocks untouched. Token-gated so a stable request
@@ -164,8 +188,8 @@ export function BlockEditor({
     if (blocks.length === 0) return;
     const doc = editor.document;
     editor.insertBlocks(blocks, doc[doc.length - 1], "after");
-    emit();
-  }, [appendRequest, editor, emit]);
+    compute();
+  }, [appendRequest, editor, compute]);
 
   // In-app dictation: when this editor holds focus, insert the completed text at
   // the caret through BlockNote's own API. The OS clipboard/AX path can't be used
@@ -184,12 +208,12 @@ export function BlockEditor({
       if (!text || !container?.contains(active)) return;
       if (!(active instanceof HTMLElement) || !active.isContentEditable) return;
       editor.insertInlineContent([text]);
-      emit();
+      compute();
     }).then((fn) => {
       unlisten = fn;
     });
     return () => unlisten?.();
-  }, [editor, emit]);
+  }, [editor, compute]);
 
   const getMentionItems = useCallback(
     (query: string) =>
@@ -210,7 +234,7 @@ export function BlockEditor({
 
   return (
     <div className="block-editor" ref={containerRef}>
-      <BlockNoteView editor={editor} theme={scheme} onChange={emit}>
+      <BlockNoteView editor={editor} theme={scheme} onChange={handleChange}>
         <SuggestionMenuController
           triggerCharacter="@"
           getItems={async (query) => getMentionItems(query)}
