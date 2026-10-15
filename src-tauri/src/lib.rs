@@ -91,6 +91,9 @@ pub fn run() {
 
             let config_dir = app.path().app_config_dir()?;
             let settings = dictation::settings::load(&config_dir);
+            // One Ollama URL for every feature (dictation, transform, classify,
+            // brain-dump, KB) — seed it from the persisted user setting.
+            crate::provider::set_ollama_url(settings.ollama_url.clone());
             let app_profiles = dictation::profiles::load(&config_dir);
             let service = Arc::new(DictationService::new(settings.clone(), app_profiles));
             app.manage(service);

@@ -44,7 +44,7 @@ fn run(
     };
     crate::provider::chat(
         &qualified,
-        &crate::provider::default_ollama_url(),
+        &crate::provider::ollama_url(),
         SYSTEM_PROMPT,
         &user,
         0.3,

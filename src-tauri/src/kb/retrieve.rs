@@ -63,7 +63,7 @@ pub fn search_blocking(
     if query.is_empty() {
         return Ok(Vec::new());
     }
-    let embedder = OllamaEmbedder::new(crate::provider::default_ollama_url());
+    let embedder = OllamaEmbedder::new(crate::provider::ollama_url());
     let query_vec = embedder
         .embed(&[query.to_string()])?
         .into_iter()
@@ -371,7 +371,7 @@ mod tests {
             "Our headquarters is located in Berlin, Germany.",
             "The new engineer starts work next Monday morning.",
         ];
-        let embedder = OllamaEmbedder::new(crate::provider::default_ollama_url());
+        let embedder = OllamaEmbedder::new(crate::provider::ollama_url());
         let embeddings = embedder
             .embed(&sentences.iter().map(|s| s.to_string()).collect::<Vec<_>>())
             .expect("embed via Ollama");

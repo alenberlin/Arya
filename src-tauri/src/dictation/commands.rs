@@ -136,6 +136,8 @@ pub fn set_dictation_settings(
     let previous = service.settings();
     settings::save(&config_dir, &settings).map_err(|e| e.to_string())?;
     service.update_settings(settings.clone());
+    // Keep the shared Ollama URL in sync so non-dictation AI features honor it.
+    crate::provider::set_ollama_url(settings.ollama_url.clone());
     if previous.shortcut != settings.shortcut || previous.mode != settings.mode {
         super::hotkey::register(&app, &settings).map_err(|e| e.to_string())?;
     }

@@ -108,7 +108,7 @@ impl Translator for AryaTranslator {
         let qualified = crate::provider::default_model()?;
         match crate::provider::chat(
             &qualified,
-            &crate::provider::default_ollama_url(),
+            &crate::provider::ollama_url(),
             &system_prompt(target),
             text,
             0.2,

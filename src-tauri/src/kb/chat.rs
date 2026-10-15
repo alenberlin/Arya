@@ -250,7 +250,7 @@ fn answer_blocking(
     // answer; a longer timeout suits the fuller responses this prompt asks for.
     let answer = crate::provider::chat_ex(
         &format!("ollama:{model}"),
-        &crate::provider::default_ollama_url(),
+        &crate::provider::ollama_url(),
         SYSTEM_PROMPT,
         &user,
         0.2,
@@ -479,7 +479,7 @@ mod tests {
 
         let pool = tauri::async_runtime::block_on(test_pool());
         let fact = "The office guest WiFi password is banana-hotel-42.";
-        let embedder = OllamaEmbedder::new(crate::provider::default_ollama_url());
+        let embedder = OllamaEmbedder::new(crate::provider::ollama_url());
         let emb = embedder
             .embed(&[fact.to_string()])
             .expect("embed")

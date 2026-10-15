@@ -6,6 +6,7 @@
 //! This replaces the per-caller "local vs cloud" branching that was duplicated
 //! across the transform, translate, and dictation paths.
 
+use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
 /// Runs a single-turn completion against whichever provider the
@@ -70,10 +71,28 @@ pub fn chat_ex(
     .ok_or_else(|| "the local model did not respond — is Ollama running?".to_string())
 }
 
-/// The Ollama base URL used by features that don't carry a per-user setting of
-/// their own: an `OLLAMA_URL` override, or the default loopback server.
-pub fn default_ollama_url() -> String {
+fn url_holder() -> &'static RwLock<String> {
+    static URL: OnceLock<RwLock<String>> = OnceLock::new();
+    URL.get_or_init(|| RwLock::new(env_ollama_url()))
+}
+
+fn env_ollama_url() -> String {
     std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".into())
+}
+
+/// Set the Ollama URL from the user's dictation settings. Every feature that
+/// talks to Ollama reads this one value, so a custom URL is honored app-wide.
+pub fn set_ollama_url(url: String) {
+    let trimmed = url.trim();
+    if !trimmed.is_empty() {
+        *url_holder().write().expect("ollama url lock") = trimmed.to_string();
+    }
+}
+
+/// The Ollama base URL: the user's configured URL (if set via
+/// [`set_ollama_url`]), else an `OLLAMA_URL` override, else the loopback default.
+pub fn ollama_url() -> String {
+    url_holder().read().expect("ollama url lock").clone()
 }
 
 /// A sensible default cloud model for whichever key the user has (Anthropic
