@@ -161,7 +161,6 @@ fn run_classify(
     folders: &[FolderRow],
     notes: &[NoteRow],
 ) -> Vec<FolderSuggestion> {
-    let client = crate::http::blocking_client();
     let by_name: HashMap<String, String> = folders
         .iter()
         .map(|f| (f.name.to_lowercase(), f.id.clone()))
@@ -170,10 +169,9 @@ fn run_classify(
     let mut out = Vec::new();
     for batch in notes.chunks(BATCH_SIZE) {
         let user = build_user_prompt(folders, batch);
-        let Some(reply) = crate::http::ollama_chat(
-            &client,
+        let Ok(reply) = crate::provider::chat(
+            &format!("ollama:{model}"),
             base_url,
-            model,
             SYSTEM_PROMPT,
             &user,
             0.1,

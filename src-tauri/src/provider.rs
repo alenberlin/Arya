@@ -36,6 +36,40 @@ pub fn chat(
     }
 }
 
+/// Like [`chat`], but passes `num_ctx` and a JSON-schema `format` through to
+/// the local Ollama backend. Only the `ollama:` prefix is supported — these
+/// extended options are Ollama-specific, so a cloud model is an explicit error.
+#[allow(clippy::too_many_arguments)]
+pub fn chat_ex(
+    qualified_model: &str,
+    ollama_url: &str,
+    system: &str,
+    user: &str,
+    temperature: f32,
+    timeout: Duration,
+    num_ctx: Option<u32>,
+    format: Option<serde_json::Value>,
+) -> Result<String, String> {
+    let Some(model) = qualified_model.strip_prefix("ollama:") else {
+        return Err(
+            "extended options (num_ctx/format) are only supported for local Ollama models".into(),
+        );
+    };
+    let client = crate::http::blocking_client();
+    crate::http::ollama_chat_ex(
+        &client,
+        ollama_url,
+        model,
+        system,
+        user,
+        temperature,
+        timeout,
+        num_ctx,
+        format,
+    )
+    .ok_or_else(|| "the local model did not respond — is Ollama running?".to_string())
+}
+
 /// The Ollama base URL used by features that don't carry a per-user setting of
 /// their own: an `OLLAMA_URL` override, or the default loopback server.
 pub fn default_ollama_url() -> String {

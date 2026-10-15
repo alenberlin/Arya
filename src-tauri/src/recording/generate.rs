@@ -87,7 +87,6 @@ pub fn format_ms(ms: u64) -> String {
 pub struct OllamaGenerator {
     pub base_url: String,
     pub model: String,
-    client: reqwest::blocking::Client,
 }
 
 impl OllamaGenerator {
@@ -95,7 +94,6 @@ impl OllamaGenerator {
         Self {
             base_url: base_url.into(),
             model: model.into(),
-            client: crate::http::blocking_client(),
         }
     }
 
@@ -129,15 +127,15 @@ impl OllamaGenerator {
         } else {
             format!("Manual notes:\n{manual_notes}\n\nTranscript:\n{transcript}")
         };
-        let content = crate::http::ollama_chat(
-            &self.client,
+        let content = crate::provider::chat(
+            &format!("ollama:{}", self.model),
             &self.base_url,
-            &self.model,
             system,
             &user,
             0.2,
             Duration::from_secs(120),
-        )?;
+        )
+        .ok()?;
         let (title, rest) = content.split_once('\n').unwrap_or((content.as_str(), ""));
         Some(GeneratedNote {
             title: title.trim_start_matches('#').trim().to_string(),

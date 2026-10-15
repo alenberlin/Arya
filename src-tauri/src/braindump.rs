@@ -94,18 +94,16 @@ fn run_split(text: &str, model: Option<String>) -> Result<Vec<ProposedNote>, Str
             "required": ["title", "body"]
         }
     });
-    let reply = crate::http::ollama_chat_ex(
-        &crate::http::blocking_client(),
+    let reply = crate::provider::chat_ex(
+        &format!("ollama:{model}"),
         &crate::provider::default_ollama_url(),
-        &model,
         SYSTEM_PROMPT,
         &format!("Brain dump:\n\n{text}"),
         0.3,
         SPLIT_TIMEOUT,
         Some(SPLIT_NUM_CTX),
         Some(schema),
-    )
-    .ok_or("the local model didn't respond — is Ollama running?")?;
+    )?;
 
     let notes = parse_notes(&reply).ok_or("couldn't understand the model's response")?;
     // Drop empty-bodied entries; backfill a title from the body when the model

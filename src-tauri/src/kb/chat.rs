@@ -248,18 +248,16 @@ fn answer_blocking(
     let model = model.unwrap_or_else(|| crate::translate::DEFAULT_LOCAL_MODEL.to_string());
     // num_ctx gives headroom for the retrieved passages plus a comprehensive
     // answer; a longer timeout suits the fuller responses this prompt asks for.
-    let answer = crate::http::ollama_chat_ex(
-        &crate::http::blocking_client(),
+    let answer = crate::provider::chat_ex(
+        &format!("ollama:{model}"),
         &crate::provider::default_ollama_url(),
-        &model,
         SYSTEM_PROMPT,
         &user,
         0.2,
         Duration::from_secs(180),
         Some(16384),
         None,
-    )
-    .ok_or("the local model didn't respond — is Ollama running?")?;
+    )?;
     Ok((answer, citations))
 }
 

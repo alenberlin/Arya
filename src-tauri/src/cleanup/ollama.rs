@@ -40,15 +40,15 @@ impl OllamaCleaner {
 
     fn try_clean(&self, request: &CleanupRequest) -> Option<String> {
         let system = build_system_prompt(request);
-        let text = crate::http::ollama_chat(
-            &self.client,
+        let text = crate::provider::chat(
+            &format!("ollama:{}", self.model),
             &self.base_url,
-            &self.model,
             &system,
             &request.raw,
             0.1,
             self.timeout,
-        )?;
+        )
+        .ok()?;
         // "Polished" deliberately rewrites for grammar, so word-level divergence
         // is expected and no longer disqualifying. The remaining backstop is
         // length: a grammatical rewrite stays roughly input-sized, so an output
