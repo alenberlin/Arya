@@ -39,6 +39,29 @@ use tauri::Manager;
 use dictation::service::DictationService;
 use recording::recorder::Recorder;
 
+/// App commands the transparent dictation HUD may invoke. It renders status and
+/// listens to events; everything else (deleting notes, clearing keys, sending
+/// agent messages, …) is main-window-only.
+const HUD_COMMANDS: &[&str] = &["hud_resize"];
+
+/// Wraps the app command handler so the transparent HUD window can only invoke
+/// its allowlisted commands; everything else is rejected with a clear message.
+/// The main window is unaffected.
+fn gate_hud(
+    base: impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static,
+) -> impl Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync + 'static {
+    move |invoke| {
+        if invoke.message.webview().label() == "hud"
+            && !HUD_COMMANDS.contains(&invoke.message.command())
+        {
+            invoke.resolver.reject("not available in the dictation HUD");
+            false
+        } else {
+            base(invoke)
+        }
+    }
+}
+
 /// Builds and runs the Tauri application.
 pub fn run() {
     // whisper.cpp's Metal backend (macOS >= 15) registers every model buffer in
@@ -157,7 +180,7 @@ pub fn run() {
             dev_hooks::install(app.handle().clone());
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(gate_hud(tauri::generate_handler![
             notes::create_note,
             notes::set_note_parent,
             notes::list_notes,
@@ -283,7 +306,7 @@ pub fn run() {
             dictation::commands::list_dictionary_entries,
             dictation::commands::create_dictionary_entry,
             dictation::commands::delete_dictionary_entry,
-        ])
+        ]))
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
