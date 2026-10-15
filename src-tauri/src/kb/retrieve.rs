@@ -8,6 +8,7 @@
 //! document, page, and quote so the grounded chat can cite it.
 
 use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -42,6 +43,7 @@ pub struct KbHit {
 }
 
 /// A chunk loaded into memory for scoring.
+#[derive(Clone)]
 struct ChunkRow {
     chunk_id: String,
     document_id: String,
@@ -165,10 +167,38 @@ fn rank(
         .collect()
 }
 
+/// In-memory cache of a collection's decoded chunks, keyed by database +
+/// collection so one database's chunks are never served to another (the app has
+/// one DB, but tests use distinct in-memory DBs). Cleared wholesale on any KB
+/// mutation — mutations are rare, queries are frequent.
+fn chunk_cache() -> &'static Mutex<HashMap<String, Vec<ChunkRow>>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Vec<ChunkRow>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Drop every cached collection. Call after ingest/delete/reindex so a stale
+/// cache can never serve deleted or outdated chunks.
+pub fn invalidate_chunk_cache() {
+    chunk_cache().lock().expect("chunk cache lock").clear();
+}
+
+fn cache_key(pool: &SqlitePool, collection_id: &str) -> String {
+    let db = pool
+        .connect_options()
+        .get_filename()
+        .to_string_lossy()
+        .into_owned();
+    format!("{db}:{collection_id}")
+}
+
 async fn load_chunks(
     pool: &SqlitePool,
     collection_id: &str,
 ) -> crate::error::AryaResult<Vec<ChunkRow>> {
+    let key = cache_key(pool, collection_id);
+    if let Some(cached) = chunk_cache().lock().expect("chunk cache lock").get(&key) {
+        return Ok(cached.clone());
+    }
     let rows = sqlx::query_as::<_, (String, String, String, Option<i64>, String, Vec<u8>)>(
         "SELECT c.id, c.document_id, d.filename, c.page, c.content, c.embedding \
          FROM kb_chunks c JOIN kb_documents d ON d.id = c.document_id \
@@ -178,7 +208,7 @@ async fn load_chunks(
     .fetch_all(pool)
     .await
     .map_err(crate::error::AryaError::from_display)?;
-    Ok(rows
+    let chunks: Vec<ChunkRow> = rows
         .into_iter()
         .map(
             |(chunk_id, document_id, filename, page, content, blob)| ChunkRow {
@@ -190,7 +220,12 @@ async fn load_chunks(
                 embedding: blob_to_f32(&blob),
             },
         )
-        .collect())
+        .collect();
+    chunk_cache()
+        .lock()
+        .expect("chunk cache lock")
+        .insert(key, chunks.clone());
+    Ok(chunks)
 }
 
 /// Sparse leg: BM25-ranked chunk ids from the FTS mirror, scoped to the
@@ -341,6 +376,56 @@ mod tests {
         let hits = rank(&rows, &[1.0, 0.0], &[], 10, 2);
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].chunk_id, "c1");
+    }
+
+    /// The cache must serve a pre-invalidation view and then reload after
+    /// invalidation — and, because the key includes the database, two distinct
+    /// in-memory test DBs can't leak chunks into each other.
+    #[test]
+    fn chunk_cache_is_invalidated_and_reloaded() {
+        let pool = tauri::async_runtime::block_on(crate::db::test_pool());
+        tauri::async_runtime::block_on(async {
+            sqlx::query("INSERT INTO kb_collections (id, name) VALUES ('c1', 'C')")
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO kb_documents (id, collection_id, filename) \
+                 VALUES ('d1', 'c1', 'f.txt')",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO kb_chunks (id, collection_id, document_id, ordinal, content, embedding, model) \
+                 VALUES ('k1', 'c1', 'd1', 0, 'hello', ?1, 'm')",
+            )
+            .bind(crate::vecmath::f32_to_blob(&[1.0, 0.0]))
+            .execute(&pool)
+            .await
+            .unwrap();
+        });
+
+        let first = tauri::async_runtime::block_on(load_chunks(&pool, "c1")).unwrap();
+        assert_eq!(first.len(), 1);
+
+        // Add a second chunk behind the cache's back — it must still see one.
+        tauri::async_runtime::block_on(async {
+            sqlx::query(
+                "INSERT INTO kb_chunks (id, collection_id, document_id, ordinal, content, embedding, model) \
+                 VALUES ('k2', 'c1', 'd1', 1, 'world', ?1, 'm')",
+            )
+            .bind(crate::vecmath::f32_to_blob(&[0.0, 1.0]))
+            .execute(&pool)
+            .await
+            .unwrap();
+        });
+        let stale = tauri::async_runtime::block_on(load_chunks(&pool, "c1")).unwrap();
+        assert_eq!(stale.len(), 1, "cache serves the pre-invalidation view");
+
+        invalidate_chunk_cache();
+        let fresh = tauri::async_runtime::block_on(load_chunks(&pool, "c1")).unwrap();
+        assert_eq!(fresh.len(), 2, "invalidation must force a reload");
     }
 
     /// End-to-end retrieval against a real local embedder (Ollama +

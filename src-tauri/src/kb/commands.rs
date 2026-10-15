@@ -125,6 +125,7 @@ async fn delete_collection_inner(
         .execute(pool)
         .await
         .map_err(crate::error::AryaError::from_display)?;
+    super::retrieve::invalidate_chunk_cache();
     Ok(paths)
 }
 
@@ -337,6 +338,7 @@ pub async fn kb_delete_document(
         .execute(&*pool)
         .await
         .map_err(crate::error::AryaError::from_display)?;
+    super::retrieve::invalidate_chunk_cache();
     if let Some(p) = path {
         if !p.is_empty() {
             let _ = std::fs::remove_file(&p);

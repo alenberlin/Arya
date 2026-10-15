@@ -273,7 +273,11 @@ fn write_chunks(
         tx.commit()
             .await
             .map_err(crate::error::AryaError::from_display)
-    })
+    })?;
+    // New chunks landed — drop the retrieval cache so the next query reloads
+    // (and can never serve the pre-ingest view of this collection).
+    super::retrieve::invalidate_chunk_cache();
+    Ok(())
 }
 
 /// At startup, re-queue documents left `pending`/`processing` by a crash or
