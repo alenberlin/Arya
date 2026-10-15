@@ -493,20 +493,23 @@ pub async fn rename_folder(
         .map_err(|e| e.to_string())
 }
 
-/// Deletes a folder; notes inside revert to no folder.
+/// Deletes a folder; notes inside revert to no folder. The detach + delete run
+/// in one transaction so a crash between them can't leave dangling folder ids
+/// (the FK's ON DELETE SET NULL is a second, row-level backstop).
 #[tauri::command]
 pub async fn delete_folder(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     sqlx::query("UPDATE notes SET folder_id = NULL WHERE folder_id = ?1")
         .bind(&id)
-        .execute(&*pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
     sqlx::query("DELETE FROM folders WHERE id = ?1")
         .bind(id)
-        .execute(&*pool)
+        .execute(&mut *tx)
         .await
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -723,6 +726,21 @@ mod tests {
             .unwrap();
         let notes = fetch_notes(&pool).await.unwrap();
         assert_eq!(notes[0].folder_id, None);
+    }
+
+    #[tokio::test]
+    async fn assigning_a_note_to_a_missing_folder_is_rejected() {
+        let pool = test_pool().await;
+        let note = insert_note(&pool, "n").await.unwrap();
+        // No folder 'missing' exists → the FK must reject the assignment.
+        let res = sqlx::query("UPDATE notes SET folder_id = ?2 WHERE id = ?1")
+            .bind(&note.id)
+            .bind("missing")
+            .execute(&pool)
+            .await;
+        assert!(res.is_err(), "the folder FK must reject a dangling id");
+        let notes = fetch_notes(&pool).await.unwrap();
+        assert_eq!(notes[0].folder_id, None, "the note stays unfiled");
     }
 
     #[tokio::test]

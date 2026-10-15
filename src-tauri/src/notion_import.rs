@@ -9,7 +9,7 @@
 //! never aborts the whole run. Non-`.md` files (assets, database CSVs — a
 //! non-goal) are ignored.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -46,6 +46,21 @@ fn notion_title(stem: &str) -> String {
             .unwrap_or_else(|| stem.to_string()),
         None => stem.to_string(),
     }
+}
+
+/// The 32-char all-hex substrings of `markdown` — the Notion page-id tokens it
+/// references. A sliding window preserves the URL form (`Child%20<id>.md`, where
+/// the id follows a hex-encoded-space digit) without ever matching a longer hex
+/// run (a SHA, a UUID sans dashes) as one token.
+fn hex_page_refs(markdown: &str) -> impl Iterator<Item = &str> + '_ {
+    let bytes = markdown.as_bytes();
+    (0..bytes.len().saturating_sub(31)).filter_map(move |start| {
+        let end = start + 32;
+        bytes[start..end]
+            .iter()
+            .all(u8::is_ascii_hexdigit)
+            .then(|| &markdown[start..end])
+    })
 }
 
 /// Import an unzipped Notion export rooted at `root`.
@@ -110,18 +125,26 @@ pub async fn import_notion_folder(
 
     // Second pass: every internal link (a reference to another exported page's
     // hex id) becomes a `mention` edge, so the connection lives in the graph even
-    // though the inline markdown link isn't a mention chip yet.
+    // though the inline markdown link isn't a mention chip yet. Scan each note's
+    // markdown for 32-hex tokens and resolve only those — O(mentions) rather than
+    // O(pages × pages) — deduping so a repeated reference yields one edge.
     for (note_id, markdown) in &created {
-        for (hex, target_id) in &hex_to_note {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for hex in hex_page_refs(markdown) {
+            if !seen.insert(hex) {
+                continue;
+            }
+            let Some(target_id) = hex_to_note.get(hex) else {
+                continue;
+            };
             if target_id == note_id {
                 continue;
             }
-            if markdown.contains(hex.as_str())
-                && crate::links::insert_link(
-                    pool, "note", note_id, "note", target_id, "mention", "user", 1.0,
-                )
-                .await
-                .is_ok()
+            if crate::links::insert_link(
+                pool, "note", note_id, "note", target_id, "mention", "user", 1.0,
+            )
+            .await
+            .is_ok()
             {
                 report.links_resolved += 1;
             }
@@ -201,6 +224,29 @@ mod tests {
             "the internal link became a mention edge"
         );
         assert!(report.links_resolved >= 1);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn a_long_hex_sha_does_not_falsely_link() {
+        let pool = test_pool().await;
+        let root = std::env::temp_dir().join(format!("arya-notion-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let page_hex = "c".repeat(32);
+        // A 40-hex SHA in the body is not a Notion page reference.
+        std::fs::write(
+            root.join(format!("Page {page_hex}.md")),
+            format!("# Page\n\nhash {}", "d".repeat(40)),
+        )
+        .unwrap();
+
+        let report = import_notion_folder(&pool, &root).await.unwrap();
+        assert_eq!(report.pages_created, 1);
+        assert_eq!(
+            report.links_resolved, 0,
+            "a 40-hex SHA must not link anything"
+        );
 
         let _ = std::fs::remove_dir_all(&root);
     }
