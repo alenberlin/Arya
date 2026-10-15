@@ -87,23 +87,22 @@ pub fn enroll_blocking(
             .map_err(|e| e.to_string())?;
         let blob = super::diarize::f32_to_blob(&embedding);
         let id = uuid::Uuid::new_v4().to_string();
+        // RETURNING gives the row that actually won (the original id + created_at
+        // on a name conflict, the fresh row otherwise), so re-enrolling the same
+        // name never reports a bogus id or an empty created_at.
         tauri::async_runtime::block_on(async {
-            sqlx::query(
+            sqlx::query_as::<_, SpeakerProfileInfo>(
                 "INSERT INTO speaker_profiles (id, name, embedding, created_at)
                  VALUES (?1, ?2, ?3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-                 ON CONFLICT(name) DO UPDATE SET embedding = excluded.embedding",
+                 ON CONFLICT(name) DO UPDATE SET embedding = excluded.embedding
+                 RETURNING id, name, created_at",
             )
             .bind(&id)
             .bind(name)
             .bind(&blob)
-            .execute(pool)
+            .fetch_one(pool)
             .await
             .map_err(|e| e.to_string())
-        })?;
-        Ok(SpeakerProfileInfo {
-            id,
-            name: name.to_string(),
-            created_at: String::new(),
         })
     }
 }

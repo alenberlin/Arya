@@ -149,7 +149,14 @@ pub async fn start_recording_inner(
         return Err(e);
     }
     // Calendar context: title the note from the live event, keep attendees.
-    if let Some(event) = crate::calendar::current_or_upcoming_event(10) {
+    // EventKit is a blocking call, so run it off the async runtime; a failure
+    // here is best-effort (recording proceeds with a generic title).
+    let event =
+        tauri::async_runtime::spawn_blocking(|| crate::calendar::current_or_upcoming_event(10))
+            .await
+            .ok()
+            .flatten();
+    if let Some(event) = event {
         let context = serde_json::json!({
             "title": event.title,
             "attendees": event.attendees,

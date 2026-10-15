@@ -2,7 +2,11 @@
 //! transcript rows -> generated note. Every step is retryable from the
 //! artifacts; nothing depends on in-memory state from recording time.
 
-use std::{collections::HashMap, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path,
+    sync::{Mutex, OnceLock},
+};
 
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager};
@@ -41,8 +45,23 @@ fn emit(app: &AppHandle, note_id: &str, status: &str, error: Option<String>) {
 /// Runs (or re-runs) processing for a note from its saved audio. Existing
 /// transcript turns are reused when present so a generation-stage failure
 /// does not re-transcribe.
+/// Notes currently being processed, keyed by id. A finish + a manual retry (or
+/// a double-click) can spawn two detached threads for the same note; the second
+/// becomes a no-op instead of racing transcription and storing duplicate turns.
+fn in_flight() -> &'static Mutex<HashSet<String>> {
+    static IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
 pub fn process_note(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> Result<(), String> {
+    {
+        let mut set = in_flight().lock().expect("in-flight lock");
+        if !set.insert(note_id.to_string()) {
+            return Ok(()); // already processing on another thread
+        }
+    }
     let result = run(app, pool, note_id);
+    in_flight().lock().expect("in-flight lock").remove(note_id);
     if let Err(message) = &result {
         set_status_blocking(pool, note_id, "failed", Some(message.clone()));
         emit(app, note_id, "failed", Some(message.clone()));

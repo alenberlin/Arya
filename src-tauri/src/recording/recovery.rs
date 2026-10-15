@@ -30,13 +30,23 @@ pub async fn scan_recoverable_recordings(
 pub async fn scan_recoverable_inner(
     pool: &SqlitePool,
 ) -> Result<Vec<RecoverableRecording>, String> {
+    // One row per session: a meeting-mode session has both a microphone and a
+    // system partial, so a plain JOIN would emit a duplicate per source. Prefer
+    // the mic track (always present) as the representative file for the size
+    // check, and keep the JOIN as an EXISTS so sessions without any partial are
+    // still excluded.
     let candidates = sqlx::query_as::<_, RecoverableRecording>(
         "SELECT s.id AS session_id, s.note_id, n.title AS note_title,
-                a.path AS partial_path, 0 AS size_bytes, s.started_at
+                (SELECT a.path FROM audio_artifacts a
+                  WHERE a.session_id = s.id AND a.status = 'partial'
+                  ORDER BY CASE a.source WHEN 'microphone' THEN 0 ELSE 1 END, a.path
+                  LIMIT 1) AS partial_path,
+                0 AS size_bytes, s.started_at
          FROM recording_sessions s
          JOIN notes n ON n.id = s.note_id
-         JOIN audio_artifacts a ON a.session_id = s.id AND a.status = 'partial'
-	         WHERE s.status IN ('starting', 'recording', 'paused')
+         WHERE s.status IN ('starting', 'recording', 'paused')
+           AND EXISTS (SELECT 1 FROM audio_artifacts a
+                        WHERE a.session_id = s.id AND a.status = 'partial')
          ORDER BY s.started_at DESC",
     )
     .fetch_all(pool)
@@ -255,6 +265,21 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(session_status, "finished");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A meeting-mode session with two partial artifacts must appear ONCE in
+    /// the recovery scan, not once per source.
+    #[tokio::test]
+    async fn scan_deduplicates_multi_source_sessions() {
+        let pool = test_pool().await;
+        let dir = std::env::temp_dir().join(format!("arya-rec-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let session_id = seed_session(&pool, &dir, &["microphone", "system"]).await;
+
+        let rows = scan_recoverable_inner(&pool).await.unwrap();
+        let hits: Vec<_> = rows.iter().filter(|r| r.session_id == session_id).collect();
+        assert_eq!(hits.len(), 1, "one session must scan to one row: {rows:?}");
         std::fs::remove_dir_all(&dir).ok();
     }
 
