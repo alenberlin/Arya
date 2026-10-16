@@ -31,6 +31,7 @@ import {
 } from "../ui/icons";
 import { MessageView, toolSummary } from "./MessageView";
 import { AgentSessionList } from "./AgentSessionList";
+import { SafetyCard } from "./SafetyCard";
 import type { LiveTurn, PendingApproval } from "./types";
 
 /** Agent chat: sessions, streaming turns, tool approvals, steering. */
@@ -354,6 +355,8 @@ export function AgentPanel() {
             </div>
           </div>
         ) : null}
+
+        {tier ? <SafetyCard tier={tier} /> : null}
 
         {!active ? (
           <div className="panel-body">
