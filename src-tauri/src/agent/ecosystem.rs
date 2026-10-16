@@ -164,7 +164,14 @@ pub async fn mcp_remove_server(
 }
 
 /// Reconnects all enabled MCP servers into a freshly (re)started sidecar.
+/// If no sidecar is alive yet for the only mode we ship, this just flags
+/// the runtime so the next `get_or_spawn` drains the work — keeping app
+/// startup off the critical path of users who never touch the agent.
 pub async fn reconnect_all(app: &AppHandle, pool: &SqlitePool, runtime: &AgentRuntime) {
+    if !runtime.sidecar_alive(WriteMode::Sandboxed) {
+        runtime.mark_mcp_pending();
+        return;
+    }
     let servers = sqlx::query_as::<_, McpServerRow>(
         "SELECT id, name, command, args_json, env_json, enabled, created_at
          FROM mcp_servers WHERE enabled = 1",

@@ -403,7 +403,9 @@ fn spawn_agent_scheduler(app: tauri::AppHandle) {
         .spawn(move || {
             let pool = app.state::<sqlx::SqlitePool>().inner().clone();
             let runtime = app.state::<agent::AgentRuntime>();
-            // Reconnect persisted MCP servers (best effort; sidecar spawns lazily).
+            // Kick a startup-time reconnect pass: with no sidecar alive this just
+            // arms the lazy flag, so the sidecar only spawns when the first
+            // agent turn (or first MCP-aware tool call) actually needs it.
             tauri::async_runtime::block_on(agent::ecosystem::reconnect_all(&app, &pool, &runtime));
             let mut last_generation = runtime.spawn_generation();
             loop {
@@ -411,7 +413,7 @@ fn spawn_agent_scheduler(app: tauri::AppHandle) {
                 // A freshly (re)spawned sidecar has an empty MCP manager: reconnect
                 // persisted servers so their tools survive key changes and crashes.
                 let generation = runtime.spawn_generation();
-                if generation != last_generation {
+                if generation != last_generation || runtime.take_mcp_pending() {
                     last_generation = generation;
                     tauri::async_runtime::block_on(agent::ecosystem::reconnect_all(
                         &app, &pool, &runtime,

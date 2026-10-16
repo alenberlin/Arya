@@ -6,7 +6,7 @@ pub mod ecosystem;
 pub mod sidecar;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -24,6 +24,12 @@ pub struct AgentRuntime {
     /// Bumped whenever a sidecar is (re)spawned; the scheduler watches it to
     /// reconnect MCP servers into a freshly spawned sidecar.
     spawn_generation: AtomicU64,
+    /// Set when persisted MCP servers should be (re)connected but no sidecar
+    /// is alive yet. The first `get_or_spawn` (or the scheduler tick) drains
+    /// this so the sidecar boots up with MCP tools ready. Keeps startup off
+    /// the critical path — a user who only records notes never spawns the
+    /// sidecar just to satisfy a reconnect-all that would have no listener.
+    mcp_pending: AtomicBool,
 }
 
 #[derive(Default, Clone)]
@@ -89,12 +95,38 @@ impl AgentRuntime {
         self.spawn_generation.load(Ordering::SeqCst)
     }
 
+    /// Mark MCP as needing a reconnect on the next sidecar spawn. Used when
+    /// the user adds/removes a server, or when the scheduler's startup-time
+    /// reconnect-all bails because the sidecar hasn't spawned yet. Cheap;
+    /// does not touch the sidecar map.
+    pub fn mark_mcp_pending(&self) {
+        self.mcp_pending.store(true, Ordering::SeqCst);
+    }
+
+    /// True iff a sidecar for `mode` is alive right now. Non-spawning — the
+    /// only purpose is to let callers like `reconnect_all` decide whether to
+    /// connect MCP now or just flag it for the next spawn.
+    pub fn sidecar_alive(&self, mode: WriteMode) -> bool {
+        let guard = self.sidecars.lock().expect("sidecars lock");
+        guard.get(&mode).map(|s| s.is_alive()).unwrap_or(false)
+    }
+
+    /// Atomically test-and-clear the MCP-pending flag. Callers should drain
+    /// it whenever they have a live sidecar for the only mode we ship
+    /// (Sandboxed). The scheduler ticks this on every generation change so
+    /// server restarts also pick up new entries.
+    pub fn take_mcp_pending(&self) -> bool {
+        self.mcp_pending.swap(false, Ordering::SeqCst)
+    }
+
     /// Drop every running sidecar so the next agent call respawns it with a
     /// fresh environment. Called when the user changes their cloud API keys so
     /// the agent gains (or loses) direct-provider models without an app restart.
-    /// Each dropped `Sidecar` kills its child process via `Drop`.
+    /// Each dropped `Sidecar` kills its child process via `Drop`. Also re-arms
+    /// the MCP reconnect so the freshly spawned sidecar picks up servers.
     pub fn reset_sidecars(&self) {
         self.sidecars.lock().expect("sidecars lock").clear();
+        self.mark_mcp_pending();
     }
 
     pub fn request(
