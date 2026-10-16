@@ -1,7 +1,7 @@
 # Arya development targets. `make verify` is the full local gate and must be
 # green before any milestone closes.
 
-.PHONY: verify verify-front verify-rust verify-sidecar verify-release asr-bench help
+.PHONY: verify verify-front verify-rust verify-sidecar verify-release asr-bench e2e help
 
 help:
 	@echo "verify         run the full gate: brand, secret-scan, lint (incl. sidecar), typecheck, tests (TS + Rust)"
@@ -10,6 +10,7 @@ help:
 	@echo "verify-sidecar sidecar typecheck + tests"
 	@echo "verify-release compile the Rust shell in RELEASE (catches release-only breakage the debug gate misses)"
 	@echo "asr-bench      run the ignored ASR acceptance gates (downloads ~148 MB models; CI gate)"
+	@echo "e2e            run the dev_hooks E2E runner (requires a built debug binary; macOS only)"
 
 verify: verify-front verify-rust verify-sidecar
 
@@ -54,3 +55,11 @@ asr-bench:
 	    --test streaming_bench -- --ignored --nocapture
 	cargo test --release --manifest-path src-tauri/Cargo.toml \
 	    --test diarize_probe -- --ignored --nocapture
+
+# E2E runner for the env-gated dev_hooks module. Each scenario spawns the
+# local debug binary with the matching ARYA_DEV_* var set and asserts the
+# expected tracing line lands on stderr within a bounded timeout. The hooks
+# are `#[cfg(debug_assertions)]`, so this gate is meaningful only on a debug
+# build — CI builds debug, runs this, then keeps going.
+e2e:
+	node scripts/e2e-dev-hooks.mjs
