@@ -27,7 +27,7 @@ describe("onboarding", () => {
 
     expect(screen.getByRole("heading", { name: /Welcome to Arya/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Get started" }));
-    expect(screen.getByRole("heading", { name: /Private by design/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /What's local, what's cloud/ })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue" }));
     // Permissions step reflects granted state from the mocked status.
     await waitFor(() =>

@@ -35,10 +35,10 @@ export function useT(): (key: string, vars?: Record<string, string | number>) =>
       const raw = active[key] ?? fallback[key] ?? key;
       if (!vars) return raw;
       return raw.replace(/\{(\w+)\}/g, (_, name) =>
-        Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : `{${name}}`,
+        Object.hasOwn(vars, name) ? String(vars[name]) : `{${name}}`,
       );
     };
-  }, [locale]);
+  }, []);
 }
 
 /** Read a string synchronously outside React (for non-component code paths). */
@@ -46,6 +46,6 @@ export function tSync(key: string, vars?: Record<string, string | number>): stri
   const raw = CATALOGS.en[key] ?? key;
   if (!vars) return raw;
   return raw.replace(/\{(\w+)\}/g, (_, name) =>
-    Object.prototype.hasOwnProperty.call(vars, name) ? String(vars[name]) : `{${name}}`,
+    Object.hasOwn(vars, name) ? String(vars[name]) : `{${name}}`,
   );
 }

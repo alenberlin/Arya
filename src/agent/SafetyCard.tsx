@@ -79,9 +79,8 @@ export function SafetyCard({ tier }: SafetyCardProps) {
   }
 
   return (
-    <div
+    <section
       className="safety-card"
-      role="region"
       aria-label="Agent safety model"
       style={{
         margin: "12px 22px 0",
@@ -143,7 +142,8 @@ export function SafetyCard({ tier }: SafetyCardProps) {
         <SafetyItem
           icon={<CheckIcon />}
           title="Per-tool approval"
-          body={`Before the agent runs a tool, you'll see a prompt like "Allow Arya to run <em>name</em>?" — approve or deny each one individually. Nothing runs without an explicit OK.`}
+          body={`Before the agent runs a tool, you'll see a prompt like "Allow Arya to run name?" — approve or deny each one individually. Nothing runs without an explicit OK.`}
+          em="name"
         />
         {tier === "cloud" ? (
           <SafetyItem
@@ -175,32 +175,45 @@ export function SafetyCard({ tier }: SafetyCardProps) {
         >
           Don't show again
         </button>
-        <span
-          aria-hidden="true"
-          style={{ flex: 1 }}
-        />
-        <button
-          type="button"
-          className="btn-sm"
-          onClick={() => setOpen(false)}
-          aria-label="Close"
-        >
+        <span aria-hidden="true" style={{ flex: 1 }} />
+        <button type="button" className="btn-sm" onClick={() => setOpen(false)} aria-label="Close">
           Close
         </button>
       </div>
-    </div>
+    </section>
   );
 }
 
-function SafetyItem({
-  icon,
-  title,
-  body,
-}: {
+interface SafetyItemProps {
   icon: React.ReactNode;
   title: string;
+  /**
+   * The body text. Optional `em` highlights a single substring (rendered
+   * inside `<em>`) — used for inline emphasis like a tool name in the
+   * approval-prompt description. The body itself is always treated as
+   * plain text, so callers can pass any user-controlled string safely.
+   */
   body: string;
-}) {
+  em?: string;
+}
+
+function SafetyItem({ icon, title, body, em }: SafetyItemProps) {
+  // Render the body as plain text plus an optional <em> highlight at the
+  // first occurrence of `em`. Splitting the string and rendering pieces as
+  // JSX children avoids dangerouslySetInnerHTML (and the XSS surface it
+  // would open if a translation ever piped user data through here).
+  const renderBody = () => {
+    if (!em) return body;
+    const idx = body.indexOf(em);
+    if (idx < 0) return body;
+    return (
+      <>
+        {body.slice(0, idx)}
+        <em>{em}</em>
+        {body.slice(idx + em.length)}
+      </>
+    );
+  };
   return (
     <li style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
       <div
@@ -221,8 +234,7 @@ function SafetyItem({
         {icon}
       </div>
       <div style={{ minWidth: 0, fontSize: 12.5, lineHeight: 1.5 }}>
-        <span style={{ fontWeight: 600 }}>{title}.</span>{" "}
-        <span dangerouslySetInnerHTML={{ __html: body }} />
+        <span style={{ fontWeight: 600 }}>{title}.</span> <span>{renderBody()}</span>
       </div>
     </li>
   );

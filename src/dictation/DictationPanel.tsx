@@ -29,13 +29,7 @@ import {
 } from "../lib/dictation";
 import { TRANSLATE_LANGUAGES } from "../lib/languages";
 import { TypeToConfirmDialog } from "../ui/dialogs";
-import {
-  POLISH_LEVELS,
-  SPEECH_LANGUAGES,
-  SPEECH_MODELS,
-  STYLES,
-  TONES,
-} from "./options";
+import { POLISH_LEVELS, SPEECH_LANGUAGES, SPEECH_MODELS, STYLES, TONES } from "./options";
 import { RecentDictations } from "./RecentDictations";
 
 /** Dictation settings (hotkey, style, mic, voice profiles, dictionary) beside a
@@ -488,9 +482,7 @@ export function DictationPanel() {
                 <input
                   type="checkbox"
                   checked={settings.lowPower}
-                  onChange={(e) =>
-                    void save({ ...settings, lowPower: e.target.checked })
-                  }
+                  onChange={(e) => void save({ ...settings, lowPower: e.target.checked })}
                   aria-label="low-power mode"
                 />
               </label>

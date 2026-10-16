@@ -17,7 +17,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -112,13 +112,10 @@ function color(s, c) {
 
 async function main() {
   const { only } = parseArgs(process.argv);
-  const scenarios = only
-    ? SCENARIOS.filter((s) => s.name === only)
-    : SCENARIOS;
+  const scenarios = only ? SCENARIOS.filter((s) => s.name === only) : SCENARIOS;
   if (only && scenarios.length === 0) {
     console.error(
-      `unknown scenario: ${only}\n` +
-        `known: ${SCENARIOS.map((s) => s.name).join(", ")}`,
+      `unknown scenario: ${only}\n` + `known: ${SCENARIOS.map((s) => s.name).join(", ")}`,
     );
     process.exit(2);
   }
@@ -127,16 +124,14 @@ async function main() {
     process.stdout.write(`-> ${s.name}: `);
     const r = await runScenario(s);
     if (r.matched) {
-      process.stdout.write(color("PASS", 32) + "\n");
+      process.stdout.write(`${color("PASS", 32)}\n`);
     } else {
-      process.stdout.write(
-        color("FAIL", 31) + ` (timeout waiting for ${s.expect})\n`,
-      );
+      process.stdout.write(`${color("FAIL", 31)} (timeout waiting for ${s.expect})\n`);
     }
     if (!r.matched) {
       // Surface the last bit of stderr so the failure is debuggable from
       // CI logs without re-running locally.
-      process.stdout.write("---\n" + r.captured + "---\n");
+      process.stdout.write(`---\n${r.captured}---\n`);
     }
     results.push(r);
   }

@@ -2,9 +2,9 @@
 // load the first time the user actually opens a note — keeping the Notes
 // pane's first paint free of editor-weighting JS.
 
-import { lazy, Suspense, type ComponentProps } from "react";
-import { BlockEditor } from "./BlockEditor";
+import { type ComponentProps, lazy, Suspense } from "react";
 import type { MentionItem } from "./BlockEditor";
+import { BlockEditor } from "./BlockEditor";
 
 const LazyBlockEditor = lazy(async () => ({ default: BlockEditor }));
 

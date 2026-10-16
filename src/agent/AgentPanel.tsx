@@ -22,15 +22,9 @@ import { agentBranchSession } from "../lib/ecosystem";
 import { TRANSLATE_LANGUAGES, translateInstruction } from "../lib/languages";
 import { getNote, updateNote } from "../lib/notes";
 import { aiTransform } from "../lib/transform";
-import {
-  AgentIcon,
-  CheckIcon,
-  FileWriteIcon,
-  LockIcon,
-  SendIcon,
-} from "../ui/icons";
-import { MessageView, toolSummary } from "./MessageView";
+import { AgentIcon, CheckIcon, FileWriteIcon, LockIcon, SendIcon } from "../ui/icons";
 import { AgentSessionList } from "./AgentSessionList";
+import { MessageView, toolSummary } from "./MessageView";
 import { SafetyCard } from "./SafetyCard";
 import type { LiveTurn, PendingApproval } from "./types";
 

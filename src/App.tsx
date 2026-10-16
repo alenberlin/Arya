@@ -22,8 +22,8 @@ const GalaxyPanel = lazy(() =>
 const MindMapPanel = lazy(() =>
   import("./mindmap/MindMapPanel").then((m) => ({ default: m.MindMapPanel })),
 );
+
 import { ConfirmDialog, Modal } from "./ui/dialogs";
-import { PaneErrorBoundary } from "./ui/PaneErrorBoundary";
 import {
   AccountIcon,
   AgentIcon,
@@ -39,6 +39,7 @@ import {
   ThemeIcon,
 } from "./ui/icons";
 import { Logo } from "./ui/Logo";
+import { PaneErrorBoundary } from "./ui/PaneErrorBoundary";
 
 type Tab =
   | "notes"

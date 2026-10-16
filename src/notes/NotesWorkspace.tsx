@@ -62,6 +62,7 @@ import { BrainDumpDialog } from "./BrainDumpDialog";
 import type { MentionTarget } from "./blockDocument";
 import { NoteBanners } from "./NoteBanners";
 import "./notes-chrome.css";
+import { splitFolders } from "./folders";
 import {
   AUTO_TITLE_DEBOUNCE_MS,
   AUTO_TITLE_INSTRUCTION,
@@ -70,11 +71,10 @@ import {
   formatBytes,
   formatElapsed,
   formatWhen,
-  sanitizeAutoTitle,
   SORT_INSTRUCTION,
+  sanitizeAutoTitle,
   WAVE,
 } from "./format";
-import { splitFolders } from "./folders";
 import { NoteTree } from "./NoteRow";
 
 // Re-export so existing consumers (legacy imports / tests) keep working without
@@ -1022,11 +1022,7 @@ export function NotesWorkspace({
           </nav>
 
           <ul aria-label="notes" className="plain">
-            {renderNoteRows(
-              showAllNotes
-                ? listSource
-                : listSource.slice(0, NOTE_LIST_CAP),
-            )}
+            {renderNoteRows(showAllNotes ? listSource : listSource.slice(0, NOTE_LIST_CAP))}
             {listSource.length === 0 ? (
               <li className="empty">
                 {filter.trim()

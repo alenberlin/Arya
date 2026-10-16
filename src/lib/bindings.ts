@@ -407,9 +407,10 @@ export type DictationSettings = {
 	 */
 	translateModel?: string | null,
 	/**
-	 *  Free GPU residency sooner, prefer CPU inference, and skip background KB
-	 *  reindex. Defaults to the ARYA_LOW_POWER env var. Helpful on older
-	 *  hardware or when running on battery.
+	 *  "Low-power mode" toggle: prefer CPU inference over Metal/GPU, skip
+	 *  background KB reindexing, and shorten the speech engine idle-eviction
+	 *  window. Defaults to `false`. Overridden by the `ARYA_LOW_POWER=1` env
+	 *  var (handy for headless / scripted runs on a laptop on battery).
 	 */
 	lowPower?: boolean,
 };

@@ -22,13 +22,7 @@ export interface PaneStateProps {
   icon?: ReactNode;
 }
 
-export function PaneState({
-  kind,
-  title,
-  description,
-  action,
-  icon,
-}: PaneStateProps) {
+export function PaneState({ kind, title, description, action, icon }: PaneStateProps) {
   return (
     <div
       className={`pane-state pane-state-${kind}`}
@@ -88,7 +82,6 @@ function defaultIcon(kind: PaneStateKind): ReactNode {
       return <span className="spinner" aria-hidden="true" />;
     case "error":
       return <ShieldIcon />;
-    case "empty":
     default:
       return <SearchIcon />;
   }

@@ -2,8 +2,8 @@
 // so the main file can stay focused on local state and composition.
 
 import type { JSX } from "react";
-import { TrashIcon } from "../ui/icons";
 import type { NoteSummary } from "../lib/notes";
+import { TrashIcon } from "../ui/icons";
 import { formatWhen, statusChip } from "./format";
 
 export interface NoteRowProps {
@@ -34,10 +34,7 @@ export function NoteRow({
   onRequestDelete,
 }: NoteRowProps): JSX.Element {
   return (
-    <li
-      className="note-row"
-      style={treeMode ? { paddingLeft: 8 + depth * 14 } : undefined}
-    >
+    <li className="note-row" style={treeMode ? { paddingLeft: 8 + depth * 14 } : undefined}>
       {treeMode ? (
         kidsLength > 0 ? (
           <button
@@ -138,17 +135,20 @@ export function NoteTree({
       />
     );
     if (!treeMode || !expanded.has(note.id) || kids.length === 0) return [row];
-    return [row, ...NoteTree({
-      items: kids,
-      depth: depth + 1,
-      treeMode,
-      expanded,
-      childrenByParent,
-      activeNoteId,
-      onOpen,
-      onContextMenu,
-      onToggleExpand,
-      onRequestDelete,
-    })];
+    return [
+      row,
+      ...NoteTree({
+        items: kids,
+        depth: depth + 1,
+        treeMode,
+        expanded,
+        childrenByParent,
+        activeNoteId,
+        onOpen,
+        onContextMenu,
+        onToggleExpand,
+        onRequestDelete,
+      }),
+    ];
   });
 }

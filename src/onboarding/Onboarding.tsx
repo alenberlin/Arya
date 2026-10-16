@@ -83,19 +83,18 @@ export function Onboarding({ onFinish }: { onFinish: () => void }) {
 
         {step === "privacy" ? (
           <>
-            <h1>Private by design</h1>
+            <h1>What's local, what's cloud</h1>
             <ul className="onboarding-list">
               <li>
-                <strong>Local by default.</strong> Notes, recordings, transcripts, and history live
+                <strong>Local.</strong> Notes, recordings, transcripts, history, and search live
                 only on your Mac.
               </li>
               <li>
-                <strong>On-device speech.</strong> Transcription, dictation, and diarization run
-                locally, even offline.
+                <strong>Local.</strong> Speech-to-text and dictation run on-device, even offline.
               </li>
               <li>
-                <strong>Your choice of model.</strong> Free local models, or cloud models routed
-                through an open-source proxy that keeps keys off your machine.
+                <strong>Cloud (optional).</strong> You can use cloud models with your own key — sent
+                straight to the provider, never through a middleman.
               </li>
             </ul>
             <div className="onboarding-actions">

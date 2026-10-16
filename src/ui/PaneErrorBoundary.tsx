@@ -42,8 +42,8 @@ export class PaneErrorBoundary extends Component<Props, State> {
           <div className="screen-col" style={{ maxWidth: 480 }}>
             <h1 className="hero-title">{this.props.paneName} hit a snag</h1>
             <p className="muted">
-              This pane crashed, but the rest of Arya is still working. Your notes and data are
-              safe on disk.
+              This pane crashed, but the rest of Arya is still working. Your notes and data are safe
+              on disk.
             </p>
             <pre
               style={{
