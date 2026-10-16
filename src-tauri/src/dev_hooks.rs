@@ -220,9 +220,7 @@ pub fn install(handle: tauri::AppHandle) {
             let visible_after_show = handle
                 .get_webview_window("main")
                 .and_then(|w| w.is_visible().ok());
-            info!(
-                "dev close-test: visible_after_show={visible_after_show:?} (expect Some(true))"
-            );
+            info!("dev close-test: visible_after_show={visible_after_show:?} (expect Some(true))");
         });
     }
 

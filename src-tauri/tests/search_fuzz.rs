@@ -29,12 +29,14 @@ async fn seed_corpus(pool: &sqlx::SqlitePool) {
         ("c6", ""), // empty title is allowed
     ];
     for (id, title) in corpus {
-        sqlx::query("INSERT INTO notes (id, title, created_at) VALUES (?1, ?2, '2024-01-01T00:00:00Z')")
-            .bind(id)
-            .bind(title)
-            .execute(pool)
-            .await
-            .expect("seed");
+        sqlx::query(
+            "INSERT INTO notes (id, title, created_at) VALUES (?1, ?2, '2024-01-01T00:00:00Z')",
+        )
+        .bind(id)
+        .bind(title)
+        .execute(pool)
+        .await
+        .expect("seed");
     }
 }
 
@@ -116,7 +118,11 @@ async fn randomized_inputs_never_panic_or_error() {
     let mut rng = Xs(DETERMINISTIC_SEED);
     let alphabet: Vec<char> = (0..64)
         .map(|_| char::from_u32(0x20 + rng.range(96) as u32).unwrap_or('?'))
-        .chain(['%', '_', '\'', '"', '\\', '\0', '\n', '\r', '\u{0}'].iter().copied())
+        .chain(
+            ['%', '_', '\'', '"', '\\', '\0', '\n', '\r', '\u{0}']
+                .iter()
+                .copied(),
+        )
         .collect();
     let special = ['%', '_', '\'', '"', '\\', '\0'];
 

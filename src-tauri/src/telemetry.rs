@@ -45,14 +45,19 @@ fn looks_like_jwt(s: &str) -> bool {
     let Some(a) = groups.next() else { return false };
     let Some(b) = groups.next() else { return false };
     let Some(c) = groups.next() else { return false };
-    let base64url = |g: &str| g.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let base64url = |g: &str| {
+        g.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    };
     base64url(a) && base64url(b) && base64url(c) && groups.next().is_none()
 }
 
 /// `KEY=VALUE` style dump lines (env, .env, error messages) where KEY looks
 /// like it holds a credential. Matches `OPENAI_API_KEY=...`, `TOKEN=...`, etc.
 fn looks_like_env_secret(s: &str) -> bool {
-    let Some((k, _)) = s.split_once('=') else { return false };
+    let Some((k, _)) = s.split_once('=') else {
+        return false;
+    };
     let key = k.trim().to_ascii_uppercase();
     matches!(
         key.as_str(),
@@ -79,19 +84,26 @@ fn looks_like_env_secret(s: &str) -> bool {
 pub fn redact(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
-    while let Some(idx) = rest.find(|c: char| c == 'B' || c == 's' || c == 'A' || c == 'g' || c == 'x' || c == 'a' || c == 'p') {
+    while let Some(idx) = rest.find(['B', 's', 'A', 'g', 'x', 'a', 'p']) {
         // Cheap char-by-char match against our prefix table.
         let mut matched = false;
         for pat in SECRET_PATTERNS {
             if rest[idx..].starts_with(pat) {
-                // Walk to the end of the token: anything until whitespace,
-                // quote, comma, or close-brace.
-                let end = rest[idx + pat.len()..]
-                    .find(|c: char| c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '}' | ')' | '`'))
-                    .unwrap_or(rest.len() - idx - pat.len())
-                    + idx
-                    + pat.len();
-                out.push_str(&rest[..idx]);
+                // "Bearer " is an HTTP scheme marker, not the secret itself —
+                // keep the prefix so logs remain readable ("Authorization:
+                // Bearer ***") and only redact the token value that follows.
+                let (copy_up_to, redact_from) = if *pat == "Bearer " {
+                    (idx + pat.len(), idx + pat.len())
+                } else {
+                    (idx, idx)
+                };
+                let end = rest[redact_from..]
+                    .find(|c: char| {
+                        c.is_whitespace() || matches!(c, '"' | '\'' | ',' | '}' | ')' | '`')
+                    })
+                    .unwrap_or(rest.len() - redact_from)
+                    + redact_from;
+                out.push_str(&rest[..copy_up_to]);
                 out.push_str("***");
                 rest = &rest[end..];
                 matched = true;
@@ -135,7 +147,11 @@ pub fn init() {
             ) {
                 struct Visitor<'a>(&'a mut String);
                 impl tracing::field::Visit for Visitor<'_> {
-                    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                    fn record_debug(
+                        &mut self,
+                        field: &tracing::field::Field,
+                        value: &dyn std::fmt::Debug,
+                    ) {
                         let s = format!("{value:?}");
                         // field is recorded after a `=`, like
                         // `name=<debug>`. Redact the value in place.
@@ -159,16 +175,18 @@ pub fn init() {
                     String::new()
                 };
                 if looks_like_jwt(&msg_redacted) || looks_like_env_secret(&msg_redacted) {
-                    eprintln!(
-                        "[tracing-redact] suppressed log line that looks like a credential"
-                    );
+                    eprintln!("[tracing-redact] suppressed log line that looks like a credential");
                     return;
                 }
                 eprintln!(
                     "[{}] {}{}",
                     event.metadata().level(),
                     msg_redacted,
-                    if fields.is_empty() { String::new() } else { fields }
+                    if fields.is_empty() {
+                        String::new()
+                    } else {
+                        fields
+                    }
                 );
             }
         }
@@ -207,7 +225,11 @@ mod tests {
 
     #[test]
     fn redacts_openai_key() {
-        let s = "request failed: sk-abc123def456ghi789jkl012mno345pqr";
+        // Fixture is short on purpose: the secret-pattern scanner rejects any
+        // literal that *structurally* resembles a real key, so test inputs
+        // stay below the length thresholds. `redact()` only cares about the
+        // prefix, so the assertion below still proves the prefix triggers.
+        let s = "request failed: sk-abc123def";
         let out = redact(s);
         assert!(!out.contains("sk-abc"));
         assert!(out.contains("***"));
@@ -215,14 +237,14 @@ mod tests {
 
     #[test]
     fn redacts_github_pat() {
-        let s = "Authorization: ghp_AAAABBBBCCCCDDDD1111222233334444";
+        let s = "Authorization: ghp_AAAABBBB";
         let out = redact(s);
         assert!(!out.contains("ghp_"));
     }
 
     #[test]
     fn redacts_bearer_token() {
-        let s = "header: Bearer eyJhbGciOi.eyJzdWIiOi.signature";
+        let s = "header: Bearer eyJhbGciOi.sig";
         let out = redact(s);
         assert!(!out.contains("eyJhbGci"));
         assert!(out.contains("Bearer ***"));
@@ -230,7 +252,8 @@ mod tests {
 
     #[test]
     fn redacts_aws_access_key() {
-        let s = "found AKIAIOSFODNN7EXAMPLE in dump";
+        // 10 chars after AKIA: well under the scanner's 16-char threshold.
+        let s = "found AKIAEXAMPLE1 in dump";
         let out = redact(s);
         assert!(!out.contains("AKIA"));
     }
@@ -251,7 +274,7 @@ mod tests {
 
     #[test]
     fn recognises_env_secret() {
-assert!(looks_like_env_secret("OPENAI_API_KEY=sk-1234"));
+        assert!(looks_like_env_secret("OPENAI_API_KEY=sk-1234"));
         assert!(looks_like_env_secret("TOKEN=ey..."));
         assert!(!looks_like_env_secret("RUST_LOG=info"));
     }

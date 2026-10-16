@@ -29,12 +29,14 @@ async fn seed_note(pool: &sqlx::SqlitePool, id: &str, title: &str) {
 }
 
 async fn seed_folder(pool: &sqlx::SqlitePool, id: &str, name: &str) {
-    sqlx::query("INSERT INTO folders (id, name, created_at) VALUES (?1, ?2, '2024-01-01T00:00:00Z')")
-        .bind(id)
-        .bind(name)
-        .execute(pool)
-        .await
-        .expect("seed folder");
+    sqlx::query(
+        "INSERT INTO folders (id, name, created_at) VALUES (?1, ?2, '2024-01-01T00:00:00Z')",
+    )
+    .bind(id)
+    .bind(name)
+    .execute(pool)
+    .await
+    .expect("seed folder");
 }
 
 // -------- FK enforcement -----------------------------------------------------
@@ -196,9 +198,14 @@ async fn reconcile_replaces_only_one_relation_and_keeps_others() {
     .unwrap();
 
     let from = links::links_from(&pool, "note", "n1").await.unwrap();
-    let relations: Vec<&str> = from.iter().map(|l| l.relation.as_str()).collect();
-    assert_eq!(relations, vec!["semantic", "mention"]);
-    let targets: Vec<&str> = from.iter().map(|l| l.target_id.as_str()).collect();
+    // Order returned by links_from is implementation-defined (driven by the
+    // underlying SQLite row order); assert by sorted projection instead so
+    // the test stays valid if the planner re-orders ties.
+    let mut relations: Vec<&str> = from.iter().map(|l| l.relation.as_str()).collect();
+    relations.sort_unstable();
+    assert_eq!(relations, vec!["mention", "semantic"]);
+    let mut targets: Vec<&str> = from.iter().map(|l| l.target_id.as_str()).collect();
+    targets.sort_unstable();
     assert_eq!(targets, vec!["n2", "n3"]);
 }
 
@@ -310,16 +317,22 @@ async fn search_like_query_is_safe_against_wildcards_and_quotes() {
 
     // `%` and `_` are LIKE wildcards; the search path must escape them so
     // they don't match every row. With escape, only the literal row hits.
-    let pct = arya_lib::notes::search_notes_query(&pool, "%").await.unwrap();
+    let pct = arya_lib::notes::search_notes_query(&pool, "%")
+        .await
+        .unwrap();
     assert_eq!(pct.len(), 1, "only the row literally containing %");
     assert_eq!(pct[0].id, "n2");
 
-    let under = arya_lib::notes::search_notes_query(&pool, "_").await.unwrap();
+    let under = arya_lib::notes::search_notes_query(&pool, "_")
+        .await
+        .unwrap();
     assert_eq!(under.len(), 1, "only the row literally containing _");
     assert_eq!(under[0].id, "n3");
 
     // Apostrophes / quotes must not break the LIKE pattern.
-    let apos = arya_lib::notes::search_notes_query(&pool, "'").await.unwrap();
+    let apos = arya_lib::notes::search_notes_query(&pool, "'")
+        .await
+        .unwrap();
     assert_eq!(apos.len(), 1);
     assert_eq!(apos[0].id, "n4");
 

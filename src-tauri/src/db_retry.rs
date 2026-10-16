@@ -7,6 +7,14 @@
 //! reindex). Wrapping write paths here turns a transient lock into a small
 //! wait, and an outright "I can't write this" into a durable spool that
 //! replays next launch.
+//!
+//! `spool_for_replay`, `spool_path`, and `drain_replay` form the WAL-replay
+//! surface: the per-session spool that survives a crash. The shell currently
+//! funnels through `with_retry` only; the spool half is wired but not yet
+//! called from a writer, so clippy rightly flags them as unused. They're
+//! kept public (and the dead_code allow is module-scoped) so the contract
+//! stays stable when the next writer is added.
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -85,7 +93,9 @@ where
 pub async fn spool_for_replay(data_dir: &Path, intent: &str) -> AryaResult<()> {
     let path = spool_path(data_dir);
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(AryaError::from_display)?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(AryaError::from_display)?;
     }
     use tokio::io::AsyncWriteExt;
     let mut f = tokio::fs::OpenOptions::new()
@@ -100,9 +110,7 @@ pub async fn spool_for_replay(data_dir: &Path, intent: &str) -> AryaResult<()> {
     f.write_all(intent.as_bytes())
         .await
         .map_err(AryaError::from_display)?;
-    f.write_all(b"\n")
-        .await
-        .map_err(AryaError::from_display)?;
+    f.write_all(b"\n").await.map_err(AryaError::from_display)?;
     f.flush().await.map_err(AryaError::from_display)?;
     Ok(())
 }

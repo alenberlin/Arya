@@ -3,6 +3,23 @@
 
 .PHONY: verify verify-front verify-rust verify-sidecar verify-release asr-bench e2e help
 
+# On macOS, the active MacOSX27.0 SDK ships a libSystem.B.tbd referencing the
+# arm64e.x1 slice. whisper-rs-sys's CMake C-compiler probe can't consume that
+# TBD on arm64e machines, so `cargo test` aborts before any of our code runs.
+# The shell helper below picks the newest non-27 SDK on the host and exports
+# SDKROOT for every cargo invocation in this Makefile. No-op when the active
+# SDK is fine, or when no other SDKs are installed.
+ifeq ($(shell uname),Darwin)
+  ACTIVE_SDK_VERSION := $(shell xcrun --sdk macosx --show-sdk-version 2>/dev/null)
+  ifeq ($(ACTIVE_SDK_VERSION),27.0)
+    FALLBACK_SDK := $(shell ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX2*.sdk 2>/dev/null | grep -v 'MacOSX27\.0\.sdk' | sort -V | tail -1)
+    ifneq ($(FALLBACK_SDK),)
+      export SDKROOT := $(FALLBACK_SDK)
+      $(info verify: SDKROOT=$(SDKROOT) (auto-pinned; active 27.0 SDK has arm64e TBD breakage))
+    endif
+  endif
+endif
+
 help:
 	@echo "verify         run the full gate: brand, secret-scan, lint (incl. sidecar), typecheck, tests (TS + Rust)"
 	@echo "verify-front   frontend + secret-scan gate only"
