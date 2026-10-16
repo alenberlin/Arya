@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 
 use serde_json::{json, Value};
+use tracing::info;
 
 type PendingMap = Arc<Mutex<HashMap<u64, mpsc::Sender<crate::error::AryaResult<Value>>>>>;
 
@@ -236,7 +237,7 @@ impl Sidecar {
             .name(format!("arya-sidecar-{}-err", mode.as_str()))
             .spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    eprintln!("sidecar[{}]: {line}", mode.as_str());
+                    info!(mode = %mode.as_str(), "{}", line);
                 }
             })
             .map_err(crate::error::AryaError::from_display)?;

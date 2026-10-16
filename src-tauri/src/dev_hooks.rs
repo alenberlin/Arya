@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use tauri::Manager;
+use tracing::info;
 
 use crate::dictation::service::DictationService;
 use crate::recording::recorder::Recorder;
@@ -45,12 +46,12 @@ pub fn install(handle: tauri::AppHandle) {
                 tauri::async_runtime::block_on(crate::recording::commands::start_recording_inner(
                     &handle, &pool, &recorder, None, mode,
                 ));
-            eprintln!("dev record: started {started:?}");
+            info!("dev record: started {started:?}");
             std::thread::sleep(std::time::Duration::from_millis(record_ms));
             let finished = tauri::async_runtime::block_on(
                 crate::recording::commands::finish_recording_inner(&handle, &pool, &recorder),
             );
-            eprintln!("dev record: finished {finished:?}");
+            info!("dev record: finished {finished:?}");
         });
     }
 
@@ -66,7 +67,7 @@ pub fn install(handle: tauri::AppHandle) {
                 tauri::async_runtime::block_on(crate::recording::commands::start_recording_inner(
                     &handle, &pool, &recorder, None, mode,
                 ));
-            eprintln!("dev record forever: started {started:?}");
+            info!("dev record forever: started {started:?}");
         });
     }
 
@@ -87,7 +88,7 @@ pub fn install(handle: tauri::AppHandle) {
                 };
                 let ev = &value["event"];
                 if ev["kind"] == "tool-approval-required" {
-                    eprintln!("dev agent: auto-approving {}", ev["description"]);
+                    info!("dev agent: auto-approving {}", ev["description"]);
                     let session_id = value["sessionId"].as_str().unwrap_or("").to_string();
                     let call_id = ev["callId"].as_str().unwrap_or("").to_string();
                     let runtime = approver.state::<crate::agent::AgentRuntime>();
@@ -103,7 +104,7 @@ pub fn install(handle: tauri::AppHandle) {
                     );
                 }
                 if ev["kind"] == "turn-finished" {
-                    eprintln!("dev agent: turn finished");
+                    info!("dev agent: turn finished");
                 }
             });
             let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
@@ -118,7 +119,7 @@ pub fn install(handle: tauri::AppHandle) {
                     None,
                 )
                 .await?;
-                eprintln!("dev agent: session {}", session.id);
+                info!("dev agent: session {}", session.id);
                 crate::agent::commands::agent_send_inner(
                     &runtime_handle,
                     &pool,
@@ -129,7 +130,7 @@ pub fn install(handle: tauri::AppHandle) {
                 .await
                 .map(|_| session.id)
             });
-            eprintln!("dev agent: send result {result:?}");
+            info!("dev agent: send result {result:?}");
         });
     }
 
@@ -141,15 +142,15 @@ pub fn install(handle: tauri::AppHandle) {
             let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
             let start = std::time::Instant::now();
             let indexed = crate::rag::commands::reindex_blocking_public(&handle, &pool);
-            eprintln!("dev rag: indexed {indexed:?} in {:?}", start.elapsed());
+            info!("dev rag: indexed {indexed:?} in {:?}", start.elapsed());
             let start = std::time::Instant::now();
             let hits = crate::rag::commands::search_blocking(&pool, &query, 5);
             let elapsed = start.elapsed();
             match hits {
                 Ok(hits) => {
-                    eprintln!("dev rag: search took {elapsed:?}, {} hits", hits.len());
+                    info!("dev rag: search took {elapsed:?}, {} hits", hits.len());
                     for hit in hits.iter().take(3) {
-                        eprintln!(
+                        info!(
                             "dev rag: [{}:{}] {:.2} {}",
                             hit.source_kind,
                             hit.title,
@@ -158,7 +159,7 @@ pub fn install(handle: tauri::AppHandle) {
                         );
                     }
                 }
-                Err(e) => eprintln!("dev rag: search failed {e}"),
+                Err(e) => info!("dev rag: search failed {e}"),
             }
         });
     }
@@ -172,7 +173,7 @@ pub fn install(handle: tauri::AppHandle) {
             let seconds = secs.parse::<u32>().unwrap_or(6);
             let pool = handle.state::<sqlx::SqlitePool>().inner().clone();
             let result = crate::recording::enroll::enroll_blocking(&handle, &pool, name, seconds);
-            eprintln!("dev enroll: {result:?}");
+            info!("dev enroll: {result:?}");
         });
     }
 
@@ -180,11 +181,11 @@ pub fn install(handle: tauri::AppHandle) {
     if std::env::var("ARYA_DEV_CALENDAR").as_deref() == Ok("1") {
         std::thread::spawn(|| {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            eprintln!(
+            info!(
                 "dev calendar: access={:?}",
                 crate::calendar::access_status()
             );
-            eprintln!(
+            info!(
                 "dev calendar: event={:?}",
                 crate::calendar::current_or_upcoming_event(10)
             );
@@ -201,7 +202,7 @@ pub fn install(handle: tauri::AppHandle) {
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(3));
             if let Some(w) = handle.get_webview_window("main") {
-                eprintln!("dev close-test: calling window.close()");
+                info!("dev close-test: calling window.close()");
                 let _ = w.close();
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
@@ -209,17 +210,17 @@ pub fn install(handle: tauri::AppHandle) {
             let visible_after_close = handle
                 .get_webview_window("main")
                 .and_then(|w| w.is_visible().ok());
-            eprintln!(
+            info!(
                 "dev close-test: gettable={still_gettable:?} visible_after_close={visible_after_close:?} (expect true / Some(false) — hidden, not destroyed)"
             );
             std::thread::sleep(std::time::Duration::from_secs(1));
-            eprintln!("dev close-test: calling crate::show_main (what the tray/dock reopen do)");
+            info!("dev close-test: calling crate::show_main (what the tray/dock reopen do)");
             crate::show_main(&handle);
             std::thread::sleep(std::time::Duration::from_millis(300));
             let visible_after_show = handle
                 .get_webview_window("main")
                 .and_then(|w| w.is_visible().ok());
-            eprintln!(
+            info!(
                 "dev close-test: visible_after_show={visible_after_show:?} (expect Some(true))"
             );
         });
@@ -233,7 +234,7 @@ pub fn install(handle: tauri::AppHandle) {
             let found = tauri::async_runtime::block_on(
                 crate::recording::recovery::scan_recoverable_inner(&pool),
             );
-            eprintln!("dev recover: scan {found:?}");
+            info!("dev recover: scan {found:?}");
             if let Ok(list) = found {
                 for item in list {
                     let result = tauri::async_runtime::block_on(
@@ -243,7 +244,7 @@ pub fn install(handle: tauri::AppHandle) {
                             &item.session_id,
                         ),
                     );
-                    eprintln!("dev recover: recovered {result:?}");
+                    info!("dev recover: recovered {result:?}");
                 }
             }
         });

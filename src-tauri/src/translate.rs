@@ -13,6 +13,7 @@
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 /// Where translation runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, specta::Type)]
@@ -118,7 +119,7 @@ impl Translator for AryaTranslator {
             Err(e) => {
                 // The source text is still kept (never lost), but surface the
                 // reason instead of failing completely silently.
-                eprintln!("arya cloud translation failed, falling back to source: {e}");
+                warn!(error = %e, "arya cloud translation failed, falling back to source");
                 None
             }
         }

@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use crate::speech::AudioClip;
+use tracing::warn;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CaptureError {
@@ -152,7 +153,7 @@ pub fn start_capture(device_name: Option<&str>) -> Result<CaptureHandle, Capture
                     move |data: &[f32], _| {
                         callback.send_f32(data);
                     },
-                    |e| eprintln!("capture stream error: {e}"),
+                    |e| warn!(error = %e, "capture stream error"),
                     None,
                 )
                 .map_err(|e| CaptureError::Device(e.to_string()))?;
@@ -167,7 +168,7 @@ pub fn start_capture(device_name: Option<&str>) -> Result<CaptureHandle, Capture
                     move |data: &[i16], _| {
                         callback.send_i16(data);
                     },
-                    |e| eprintln!("capture stream error: {e}"),
+                    |e| warn!(error = %e, "capture stream error"),
                     None,
                 )
                 .map_err(|e| CaptureError::Device(e.to_string()))?;

@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use sqlx::SqlitePool;
 use tokio::time::sleep;
+use tracing::warn;
 
 use crate::error::{AryaError, AryaResult};
 
@@ -57,9 +58,12 @@ where
             Ok(value) => return Ok(value),
             Err(err) if attempt < DEFAULT_MAX_ATTEMPTS && is_transient(&err) => {
                 attempt += 1;
-                eprintln!(
-                    "db_retry: transient error attempt {attempt}/{max}: {err}; sleeping {backoff:?}",
-                    max = DEFAULT_MAX_ATTEMPTS
+                warn!(
+                    attempt,
+                    max = DEFAULT_MAX_ATTEMPTS,
+                    backoff_ms = backoff.as_millis() as u64,
+                    error = %err,
+                    "db_retry: transient error; retrying"
                 );
                 sleep(backoff).await;
                 // Mild jitter: ±20%.

@@ -8,6 +8,7 @@ use std::sync::Mutex;
 
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tracing::{debug, warn};
 
 use super::recorder::{Recorder, RecorderState, RecorderStatus, StartSpec};
 use super::settings::{save_generation_settings, GenerationSettings};
@@ -130,13 +131,13 @@ pub async fn start_recording_inner(
                 }
                 Err(message) => {
                     let _ = app.emit("recording:system-audio-unavailable", message.clone());
-                    eprintln!("system audio unavailable: {message}");
+                    warn!("system audio unavailable: {message}");
                     remove_system_artifact(pool, &session_id).await?;
                 }
             },
             Err(message) => {
                 let _ = app.emit("recording:system-audio-unavailable", message.clone());
-                eprintln!("system audio unavailable: {message}");
+                warn!("system audio unavailable: {message}");
                 remove_system_artifact(pool, &session_id).await?;
             }
         }
@@ -319,13 +320,13 @@ pub async fn finish_recording_inner(
                             "recording:system-audio-unavailable",
                             BLANK_SYSTEM_AUDIO_MESSAGE,
                         );
-                        eprintln!("system audio unavailable: {BLANK_SYSTEM_AUDIO_MESSAGE}");
+                        warn!("system audio unavailable: {BLANK_SYSTEM_AUDIO_MESSAGE}");
                         let _ = std::fs::remove_file(&system_final);
                         remove_system_artifact(pool, &session_id).await?;
                     }
                 }
             }
-            Err(message) => eprintln!("system capture stop failed: {message}"),
+            Err(message) => warn!("system capture stop failed: {message}"),
         }
     }
 
@@ -539,7 +540,7 @@ fn spawn_live_preview(app: AppHandle, recorder: Recorder, note_id: String) {
                     let text = transcript.text.trim().to_string();
                     if !text.is_empty() {
                         #[cfg(debug_assertions)]
-                        eprintln!("live preview: {text}");
+                        debug!("live preview: {text}");
                         let _ = app.emit(
                             "note:live-preview",
                             serde_json::json!({ "noteId": note_id, "text": text }),

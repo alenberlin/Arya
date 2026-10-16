@@ -10,6 +10,7 @@ use std::{
 
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager};
+use tracing::{debug, warn};
 
 use super::diarize;
 use super::generate::{FallbackGenerator, NoteGenerator, OllamaGenerator, TurnText};
@@ -31,7 +32,7 @@ pub struct ProcessingEvent {
 
 fn emit(app: &AppHandle, note_id: &str, status: &str, error: Option<String>) {
     #[cfg(debug_assertions)]
-    eprintln!("processing: note={note_id} status={status} error={error:?}");
+    debug!(note_id, status, error = ?error, "processing status");
     let _ = app.emit(
         "note:processing",
         ProcessingEvent {
@@ -100,7 +101,7 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> crate::error::AryaR
                     // A silent or unreadable source (e.g. the system track
                     // when the TCC grant is missing) must not fail the note
                     // as long as another source produced speech.
-                    eprintln!("processing: source {source} skipped: {message}");
+                    warn!(source = %source, error = %message, "processing source skipped");
                     errors.push(format!("{source}: {message}"));
                 }
             }
@@ -118,7 +119,7 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> crate::error::AryaR
                 .any(|(source, _, _)| source == "system")
         {
             if let Err(message) = assign_speakers(app, pool, &mut turns, &samples_by_turn) {
-                eprintln!("processing: diarization skipped: {message}");
+                warn!("processing: diarization skipped: {message}");
             }
         }
         let mut order: Vec<usize> = (0..turns.len()).collect();
@@ -129,7 +130,7 @@ fn run(app: &AppHandle, pool: &SqlitePool, note_id: &str) -> crate::error::AryaR
     } else {
         let mut turns = existing_turns;
         if let Err(message) = refresh_existing_speaker_labels(app, pool, note_id, &mut turns) {
-            eprintln!("processing: existing-turn diarization skipped: {message}");
+            warn!("processing: existing-turn diarization skipped: {message}");
         }
         turns
     };
@@ -295,7 +296,7 @@ fn assign_speakers(
                         embeddings.push(embedding);
                         embedded_indices.push(i);
                     }
-                    Err(e) => eprintln!("diarize: embedding failed: {e}"),
+                    Err(e) => warn!(error = %e, "diarize: embedding failed"),
                 }
             }
         }
@@ -322,11 +323,12 @@ fn assign_speakers(
                         .map(move |b| format!("{:.2}", diarize::cosine_similarity(a, b)))
                 })
                 .collect();
-            eprintln!(
-                "diarize: source={source} embeddings={} clusters={} pairwise=[{}]",
-                embeddings.len(),
-                cluster_centroids.len(),
-                pairwise.join(",")
+            debug!(
+                source = %source,
+                embeddings = embeddings.len(),
+                clusters = cluster_centroids.len(),
+                pairwise = %pairwise.join(","),
+                "diarize: cluster debug"
             );
         }
         let cluster_names = name_clusters(&cluster_centroids, &profiles, &mut anonymous);

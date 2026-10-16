@@ -27,6 +27,7 @@ mod rag;
 mod recording;
 mod search;
 pub mod speech;
+mod telemetry;
 mod transform;
 mod translate;
 mod tray;
@@ -38,6 +39,7 @@ pub use recording::diarize as recording_diarize;
 use std::sync::Arc;
 
 use tauri::Manager;
+use tracing::{debug, error, warn};
 
 use dictation::service::DictationService;
 use recording::recorder::Recorder;
@@ -88,6 +90,11 @@ fn dispatch_app_commands(
 
 /// Builds and runs the Tauri application.
 pub fn run() {
+    // Initialise structured, secret-safe logging first so every subsequent
+    // line in `run` (and in any worker it spawns) flows through the redact
+    // layer. Idempotent, so it's safe to re-call from tests.
+    telemetry::init();
+
     // whisper.cpp's Metal backend (macOS >= 15) registers every model buffer in
     // a device "residency set" and asserts that set is empty when it tears the
     // device down at process exit. Loaded whisper engines live in a
@@ -121,7 +128,7 @@ pub fn run() {
                 std::thread::sleep(tick);
                 let dropped = crate::speech::engine_cache::evict_idle(idle);
                 if dropped > 0 {
-                    eprintln!("engine cache: evicted {dropped} idle engine(s)");
+                    debug!(dropped, "engine cache: evicted idle engines");
                 }
             }
         })
@@ -316,7 +323,7 @@ pub fn run() {
             if let Err(e) = dictation::hotkey::register(app.handle(), &settings) {
                 // A bad persisted shortcut must not brick startup; surface it
                 // and continue so the user can rebind in settings.
-                eprintln!("dictation hotkey not registered: {e}");
+                warn!(error = %e, "dictation hotkey not registered");
             }
             // Right-Shift dictation trigger (hold = push-to-talk, double-tap =
             // hands-free). Its gesture state is shared so the pill's Stop can
@@ -354,7 +361,7 @@ pub fn run() {
                 });
             }
             if let Err(e) = tray::setup(app.handle()) {
-                eprintln!("tray setup failed: {e}");
+                warn!(error = %e, "tray setup failed");
             }
             position_hud_bottom_center(app.handle());
             // Make the transparent pill a non-activating panel so it paints
@@ -429,7 +436,7 @@ fn spawn_agent_scheduler(app: tauri::AppHandle) {
                     ));
                 }));
                 if tick.is_err() {
-                    eprintln!("arya-agent-scheduler: routine tick panicked; continuing");
+                    error!("arya-agent-scheduler: routine tick panicked; continuing");
                 }
             }
         })
@@ -469,7 +476,7 @@ fn spawn_calendar_poller(app: tauri::AppHandle) {
                 }));
                 match tick {
                     Ok(next) => last_title = next,
-                    Err(_) => eprintln!("arya-calendar: poll panicked; continuing"),
+                    Err(_) => error!("arya-calendar: poll panicked; continuing"),
                 }
             }
         })
@@ -673,7 +680,7 @@ mod bindings_test {
                     specta_typescript::Typescript::default(),
                     "../src/lib/bindings.ts",
                 );
-                eprintln!("export result: {result:?}");
+                debug!(?result, "export result");
                 result.unwrap();
             })
             .unwrap()

@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use tracing::{error, warn};
 
 use crate::audio::wav_file::WavSink;
 
@@ -343,7 +344,7 @@ fn build_stream(
                     move |data: &[f32], _| {
                         callback.send_f32(data);
                     },
-                    |e| eprintln!("recording stream error: {e}"),
+                    |e| warn!(error = %e, "recording stream error"),
                     None,
                 )
                 .map_err(crate::error::AryaError::from_display)?;
@@ -358,7 +359,7 @@ fn build_stream(
                     move |data: &[i16], _| {
                         callback.send_i16(data);
                     },
-                    |e| eprintln!("recording stream error: {e}"),
+                    |e| warn!(error = %e, "recording stream error"),
                     None,
                 )
                 .map_err(crate::error::AryaError::from_display)?;
@@ -382,7 +383,7 @@ fn drain_samples(state: &mut Active, level_out: &AtomicU32, elapsed_out: &Atomic
         let rms = crate::audio::sample_rms(&chunk);
         latest_level = Some(rms);
         if state.sink.write_f32(&chunk).is_err() {
-            eprintln!("recording: failed to write samples");
+            error!("recording: failed to write samples");
         }
         for s in &chunk {
             state.preview.push_back(*s);

@@ -13,6 +13,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use sqlx::SqlitePool;
+use tracing::debug;
 
 use crate::speech::models::ModelSpec;
 
@@ -128,7 +129,7 @@ pub fn match_profile<'a>(
         .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
     #[cfg(debug_assertions)]
     if let Some((p, s)) = &best {
-        eprintln!("diarize: best profile match {} similarity {s:.3}", p.name);
+        debug!(name = %p.name, similarity = s, "diarize: best profile match");
     }
     best.filter(|(_, s)| *s >= threshold)
         .map(|(p, _)| p.name.as_str())

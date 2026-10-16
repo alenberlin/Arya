@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager};
+use tracing::{debug, warn};
 
 use super::capture_worker::CaptureWorker;
 use super::profiles::{self, AppProfile};
@@ -470,9 +471,9 @@ impl DictationService {
             Ok((alternate, alternate_ms))
                 if should_replace_suspicious_transcript(&raw, &alternate) =>
             {
-                eprintln!(
-                    "dictation: replaced suspicious ASR output with alternate decode \
-                     ({alternate_model})"
+                warn!(
+                    alternate_model = %alternate_model,
+                    "dictation: replaced suspicious ASR output with alternate decode"
                 );
                 (alternate, asr_ms + alternate_ms)
             }
@@ -727,7 +728,7 @@ fn spawn_streaming_prepare(app: AppHandle) {
             // Best-effort warm: on failure the live preview silently keeps using
             // the whisper fallback, so log the reason rather than discarding it.
             if let Err(e) = load_streaming_blocking(&app) {
-                eprintln!("arya: streaming prepare failed: {e}");
+                warn!(error = %e, "arya: streaming prepare failed");
             }
         })
         .expect("spawn streaming prepare");
@@ -740,7 +741,7 @@ fn emit_state(
     text: Option<String>,
 ) {
     #[cfg(debug_assertions)]
-    eprintln!("dictation state: {state:?} message={message:?} text={text:?}");
+    debug!(?state, ?message, ?text, "dictation state");
     let _ = app.emit(
         "dictation:state",
         DictationEvent {

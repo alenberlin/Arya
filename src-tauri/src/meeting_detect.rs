@@ -227,7 +227,7 @@ pub mod macos {
                             clear_countdown = 0;
                             let _ = app.emit("meeting:detected", info.clone());
                             #[cfg(debug_assertions)]
-                            eprintln!("meeting detected: {} ({})", info.app_name, info.bundle_id);
+                            tracing::info!(app = %info.app_name, bundle = %info.bundle_id, "meeting detected");
                         }
                         (Some(_), None) => {
                             // Debounce: require two consecutive empty scans.
@@ -237,7 +237,7 @@ pub mod macos {
                                 clear_countdown = 0;
                                 let _ = app.emit("meeting:cleared", ());
                                 #[cfg(debug_assertions)]
-                                eprintln!("meeting cleared");
+                                tracing::info!("meeting cleared");
                             }
                         }
                         _ => {
