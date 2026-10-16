@@ -5,6 +5,8 @@ import ForceGraph2D, {
   type NodeObject,
 } from "react-force-graph-2d";
 import { type Graph, galaxyGraph } from "../lib/galaxy";
+import { GalaxyIcon } from "../ui/icons";
+import { PaneState } from "../ui/PaneState";
 import "./galaxy.css";
 
 type GNode = { id: string; kind: string; label: string };
@@ -350,13 +352,12 @@ export function GalaxyPanel() {
           </div>
         ) : data.nodes.length === 0 ? (
           <div className="galaxy-overlay">
-            <div className="empty">
-              <div style={{ fontFamily: "var(--font-serif)", fontSize: 18, marginBottom: 6 }}>
-                No stars yet
-              </div>
-              Create notes and dictations, then @-mention across them — the connections light up
-              here.
-            </div>
+            <PaneState
+              kind="empty"
+              title="No stars yet"
+              description="Create notes and dictations, then @-mention across them — the connections light up here."
+              icon={<GalaxyIcon />}
+            />
           </div>
         ) : null}
 

@@ -30,7 +30,8 @@ import {
   type MindmapSummary,
   updateMindmap,
 } from "../lib/mindmap";
-import { PlusIcon, StickyNoteIcon, TrashIcon } from "../ui/icons";
+import { MindMapIcon, PlusIcon, StickyNoteIcon, TrashIcon } from "../ui/icons";
+import { PaneState } from "../ui/PaneState";
 import "./mindmap.css";
 
 type Shape = "rounded" | "square" | "diamond";
@@ -756,9 +757,21 @@ export function MindMapPanel() {
             <MindMapCanvas key={activeId} mapId={activeId} />
           </ReactFlowProvider>
         ) : (
-          <div className="empty" style={{ paddingTop: 48 }}>
-            Select a mind map, or create one to start.
-          </div>
+          <PaneState
+            kind="empty"
+            title={maps.length === 0 ? "No mind maps yet" : "Pick a mind map"}
+            description={
+              maps.length === 0
+                ? "Mind maps are free-form canvases — drop in nodes, connect them, drag freely."
+                : "Pick one from the sidebar, or create a new canvas."
+            }
+            action={
+              maps.length === 0
+                ? { label: "New mind map", onClick: () => void onCreate() }
+                : undefined
+            }
+            icon={<MindMapIcon />}
+          />
         )}
       </div>
     </div>

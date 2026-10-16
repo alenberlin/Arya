@@ -9,7 +9,6 @@ import { safeMcpEnv } from "./mcp.js";
 import { classifyReadable, resolveInWorkspace } from "./paths.js";
 import type { AgentEvent } from "./protocol.js";
 
-
 const execFileAsync = promisify(execFile);
 
 export interface ToolContext {
