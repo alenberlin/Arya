@@ -145,16 +145,6 @@ async function dispatch(request: RpcRequest): Promise<void> {
         if (id !== null) ok(id, { resolved });
         return;
       }
-      case "image.generate": {
-        const { generateImageToWorkspace } = await import("./images.js");
-        const result = await generateImageToWorkspace(
-          String(params.workspace),
-          String(params.prompt),
-          params.size ? String(params.size) : undefined,
-        );
-        if (id !== null) ok(id, result);
-        return;
-      }
       case "mcp.connect": {
         const spec = params as unknown as McpServerSpec;
         const toolNames = await mcp.connect(spec);

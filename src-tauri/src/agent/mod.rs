@@ -180,64 +180,6 @@ pub fn agent_workspace(app: &AppHandle) -> crate::error::AryaResult<std::path::P
         .join("agent/workspace"))
 }
 
-/// Result of an image-generation request: the workspace-relative path of the
-/// generated file and its byte size.
-#[derive(Debug, Clone, serde::Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct GeneratedImage {
-    pub path: String,
-    pub bytes: i64,
-}
-
-/// Generates an image via the sidecar and returns its workspace path.
-#[specta::specta]
-#[tauri::command]
-pub fn agent_generate_image(
-    app: AppHandle,
-    runtime: tauri::State<'_, AgentRuntime>,
-    prompt: String,
-    size: Option<String>,
-) -> crate::error::AryaResult<GeneratedImage> {
-    let workspace = agent_workspace(&app)?;
-    let value = runtime.request(
-        &app,
-        sidecar::WriteMode::Sandboxed,
-        "image.generate",
-        serde_json::json!({
-            "workspace": workspace.to_string_lossy(),
-            "prompt": prompt,
-            "size": size,
-        }),
-    )?;
-    let path = value
-        .get("path")
-        .and_then(|p| p.as_str())
-        .unwrap_or_default()
-        .to_string();
-    let bytes = value.get("bytes").and_then(|b| b.as_i64()).unwrap_or(0);
-    Ok(GeneratedImage { path, bytes })
-}
-
-/// Reads a workspace file as base64 (for inline image rendering).
-#[specta::specta]
-#[tauri::command]
-pub fn agent_workspace_read_b64(app: AppHandle, path: String) -> crate::error::AryaResult<String> {
-    let base = agent_workspace(&app)?;
-    let target = base
-        .join(&path)
-        .canonicalize()
-        .map_err(crate::error::AryaError::from_display)?;
-    if !target.starts_with(&base) {
-        return Err("path escapes workspace".into());
-    }
-    let bytes = std::fs::read(&target).map_err(crate::error::AryaError::from_display)?;
-    if bytes.len() > 8 * 1024 * 1024 {
-        return Err("file too large".into());
-    }
-    use base64::Engine;
-    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
-}
-
 /// Caps so a session that never emits `turn-finished` (sidecar crash, an
 /// infinite model loop) can't grow its accumulator without bound.
 const MAX_ACC_BYTES: usize = 4 * 1024 * 1024;

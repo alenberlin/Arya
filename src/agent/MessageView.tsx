@@ -1,13 +1,11 @@
-import { memo, useEffect, useMemo } from "react";
+import { memo, useMemo } from "react";
 import type { AgentMessage, ToolInfo } from "../lib/agent";
 import { AgentIcon, CheckIcon } from "../ui/icons";
 
 interface MessageViewProps {
   message: AgentMessage;
   branchable: boolean;
-  images: Record<string, string>;
   onBranch: (messageId: string) => void;
-  onNeedImage: (path: string) => void;
 }
 
 /** Condenses a tool's result (or args) to a short chip label. */
@@ -25,9 +23,7 @@ export function toolSummary(tool: ToolInfo): string {
 export const MessageView = memo(function MessageView({
   message,
   branchable,
-  images,
   onBranch,
-  onNeedImage,
 }: MessageViewProps) {
   const content = useMemo<{ text?: string; reasoning?: string | null; tools?: ToolInfo[] }>(() => {
     try {
@@ -36,17 +32,6 @@ export const MessageView = memo(function MessageView({
       return { text: message.contentJson };
     }
   }, [message.contentJson]);
-
-  const imagePaths = useMemo(
-    () =>
-      (content.tools ?? [])
-        .map((tool) => tool.result?.match(/images\/[\w.-]+\.png/)?.[0])
-        .filter((p): p is string => Boolean(p)),
-    [content.tools],
-  );
-  useEffect(() => {
-    for (const path of imagePaths) onNeedImage(path);
-  }, [imagePaths, onNeedImage]);
 
   if (message.role === "user") {
     return (
@@ -72,25 +57,13 @@ export const MessageView = memo(function MessageView({
         ) : null}
         {(content.tools ?? []).length > 0 ? (
           <div className="stack" style={{ gap: 8, marginBottom: 14 }}>
-            {(content.tools ?? []).map((tool) => {
-              const match = tool.result?.match(/images\/[\w.-]+\.png/)?.[0];
-              return (
-                <div key={tool.callId}>
-                  <div className="tool-chip">
-                    <CheckIcon className="tool-check" />
-                    <span className="tool-name">{tool.name}</span>
-                    <span className="tool-args">{toolSummary(tool)}</span>
-                  </div>
-                  {match && images[match] ? (
-                    <img
-                      src={images[match]}
-                      alt={`generated ${match}`}
-                      style={{ display: "block", maxWidth: 360, marginTop: 6, borderRadius: 10 }}
-                    />
-                  ) : null}
-                </div>
-              );
-            })}
+            {(content.tools ?? []).map((tool) => (
+              <div key={tool.callId} className="tool-chip">
+                <CheckIcon className="tool-check" />
+                <span className="tool-name">{tool.name}</span>
+                <span className="tool-args">{toolSummary(tool)}</span>
+              </div>
+            ))}
           </div>
         ) : null}
         {content.text ? (

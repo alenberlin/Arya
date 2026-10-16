@@ -147,10 +147,6 @@ export const commands = {
 	 *  chat is this plus a side-by-side note translation, composed on the frontend.
 	 */
 	convertSessionToNote: (sessionId: string) => typedError<string, AryaError>(__TAURI_INVOKE("convert_session_to_note", { sessionId })),
-	/**  Reads a workspace file as base64 (for inline image rendering). */
-	agentWorkspaceReadB64: (path: string) => typedError<string, AryaError>(__TAURI_INVOKE("agent_workspace_read_b64", { path })),
-	/**  Generates an image via the sidecar and returns its workspace path. */
-	agentGenerateImage: (prompt: string, size: string | null) => typedError<GeneratedImage, AryaError>(__TAURI_INVOKE("agent_generate_image", { prompt, size })),
 	mcpListServers: () => typedError<McpServerRow[], AryaError>(__TAURI_INVOKE("mcp_list_servers")),
 	mcpAddServer: (name: string, command: string, args: string[], env: { [key in string]: string }) => typedError<string[], AryaError>(__TAURI_INVOKE("mcp_add_server", { name, command, args, env })),
 	mcpRemoveServer: (id: string) => typedError<null, AryaError>(__TAURI_INVOKE("mcp_remove_server", { id })),
@@ -456,15 +452,6 @@ export type FolderAssignment = {
 export type FolderSuggestion = {
 	noteId: string,
 	folderId: string,
-};
-
-/**
- *  Result of an image-generation request: the workspace-relative path of the
- *  generated file and its byte size.
- */
-export type GeneratedImage = {
-	path: string,
-	bytes: number,
 };
 
 export type GenerationSettings = {

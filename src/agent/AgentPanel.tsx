@@ -7,14 +7,12 @@ import {
   agentCancel,
   agentCreateSession,
   agentDeleteSession,
-  agentGenerateImage,
   agentGetMessages,
   agentListModels,
   agentListSessions,
   agentResolveApproval,
   agentSend,
   agentSteer,
-  agentWorkspaceReadB64,
   convertSessionToNote,
   modelPrivacy,
 } from "../lib/agent";
@@ -41,7 +39,6 @@ export function AgentPanel() {
   const [input, setInput] = useState("");
   const [steerText, setSteerText] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [images, setImages] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [sessionMenu, setSessionMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const sessionMenuRef = useRef<HTMLDivElement | null>(null);
@@ -242,27 +239,6 @@ export function AgentPanel() {
     if (!active || !input.trim()) return;
     const text = input.trim();
     setInput("");
-    // /image <prompt>: direct text-to-image without engaging the model.
-    if (text.startsWith("/image ")) {
-      const prompt = text.slice(7).trim();
-      try {
-        const result = await agentGenerateImage(prompt);
-        setImages((m) => ({ ...m, [result.path]: "" }));
-        void loadImage(result.path);
-        setMessages((mm) => [
-          ...mm,
-          {
-            id: `local-img-${crypto.randomUUID()}`,
-            role: "assistant",
-            contentJson: JSON.stringify({ text: `Image saved to ${result.path}`, tools: [] }),
-            createdAt: new Date().toISOString(),
-          },
-        ]);
-      } catch (e) {
-        setError(String(e));
-      }
-      return;
-    }
     setMessages((m) => [
       ...m,
       {
@@ -276,15 +252,6 @@ export function AgentPanel() {
       await agentSend(active.id, text);
     } catch (e) {
       setError(String(e));
-    }
-  };
-
-  const loadImage = async (path: string) => {
-    try {
-      const b64 = await agentWorkspaceReadB64(path);
-      setImages((m) => ({ ...m, [path]: `data:image/png;base64,${b64}` }));
-    } catch {
-      // leave placeholder
     }
   };
 
@@ -369,14 +336,7 @@ export function AgentPanel() {
                   key={message.id}
                   message={message}
                   branchable={!message.id.startsWith("local-")}
-                  images={images}
                   onBranch={onBranch}
-                  onNeedImage={(path) => {
-                    if (images[path] === undefined) {
-                      setImages((m) => ({ ...m, [path]: "" }));
-                      void loadImage(path);
-                    }
-                  }}
                 />
               ))}
               {live ? (
