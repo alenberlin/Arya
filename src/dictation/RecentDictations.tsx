@@ -1,5 +1,6 @@
 import type { DictationTranslation, HistoryItem } from "../lib/dictation";
 import { CheckIcon, CopyIcon } from "../ui/icons";
+import { PaneState } from "../ui/PaneState";
 
 interface Props {
   history: HistoryItem[];
@@ -108,9 +109,11 @@ export function RecentDictations({
           ))}
         </ul>
         {history.length === 0 ? (
-          <p className="muted" style={{ fontSize: 13, padding: 12 }}>
-            No dictations yet. Hold <span className="kbd">Right Shift</span> anywhere and speak.
-          </p>
+          <PaneState
+            kind="empty"
+            title="No dictations yet"
+            description="Hold the Right Shift key anywhere and speak. Your last dictation shows here so you can copy or translate it."
+          />
         ) : null}
       </div>
     </div>

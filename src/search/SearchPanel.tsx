@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useState } from "react";
 import { FileIcon, SearchIcon } from "../ui/icons";
+import { PaneState } from "../ui/PaneState";
 
 interface SemanticHit {
   sourceKind: string;
@@ -199,6 +200,14 @@ export function SearchPanel() {
           </p>
         ) : null}
 
+        {!searched ? (
+          <PaneState
+            kind="empty"
+            title="Type a query to search"
+            description="Matches titles, transcript text, and dictation content. Search runs locally — nothing leaves your Mac."
+          />
+        ) : null}
+
         <ul aria-label="search results" className="plain">
           {hits.map((hit) => (
             <li key={`${hit.sourceKind}:${hit.sourceId}`}>
@@ -226,8 +235,12 @@ export function SearchPanel() {
             </li>
           ))}
           {searched && hits.length === 0 && !busy ? (
-            <li className="empty">
-              No matches. Try different words, or Reindex if you've added content.
+            <li>
+              <PaneState
+                kind="empty"
+                title="No matches"
+                description="Try different words, or Reindex if you've added content."
+              />
             </li>
           ) : null}
         </ul>
