@@ -1,0 +1,41 @@
+name: asr-bench
+
+# ASR acceptance gates: WER + RTF + speaker embedding sanity. These tests are
+# `#[ignore]`'d in the source because they download large speech models on
+# first run (~148 MB whisper base, ~73 MB streaming zipformer, ~30 MB
+# embedding). They run in this dedicated job so a CI failure is unambiguously
+# an ASR regression and not just "the verify gate is flaky." Cache the model
+# directory between runs to keep wall time under ~5 minutes.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  bench:
+    runs-on: macos-14
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+          # sherpa-rs-sys downloads a prebuilt onnxruntime/sherpa-onnx library
+          # here at build time; it lives outside target/, so without this it's
+          # absent on a fresh runner even when the target/ fingerprint cache
+          # says the build script already succeeded, breaking the link step.
+          cache-directories: |
+            ~/Library/Caches/sherpa-rs
+      - name: Cache ASR models
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/target/speech-bench
+          # A new model file or fixture invalidates the cache. SHA-based keys
+          # would be tighter but the bench downloads verify-and-write through
+          # the speech::models module, so re-downloading on miss is safe.
+          key: asr-models-${{ runner.os }}-${{ hashFiles('src-tauri/src/speech/models.rs') }}
+      - run: make asr-bench
