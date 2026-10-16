@@ -1,18 +1,27 @@
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import brand from "../brand.json";
 import { AccountPanel } from "./account/AccountPanel";
 import { AgentSection } from "./agent/AgentSection";
 import { DictationPanel } from "./dictation/DictationPanel";
-import { GalaxyPanel } from "./galaxy/GalaxyPanel";
 import { KnowledgeBasePanel } from "./knowledge/KnowledgeBasePanel";
 import { disableAutostart, enableAutostart, isAutostartEnabled } from "./lib/autostart";
 import { useFormFieldDictation } from "./lib/dictationInsert";
 import { loadTheme, saveTheme, type Theme } from "./lib/theme";
-import { MindMapPanel } from "./mindmap/MindMapPanel";
 import { NotesWorkspace } from "./notes/NotesWorkspace";
 import { Onboarding, onboardingComplete } from "./onboarding/Onboarding";
 import { SearchPanel } from "./search/SearchPanel";
+
+// The Galaxy and Mind Map panes pull in d3-force / reactflow (xyflow) — both are
+// multi-hundred-KB bundles that aren't needed until the user actually opens
+// those tabs. We keep them out of the initial chunk so the Notes + Agent +
+// Search first paint stays small.
+const GalaxyPanel = lazy(() =>
+  import("./galaxy/GalaxyPanel").then((m) => ({ default: m.GalaxyPanel })),
+);
+const MindMapPanel = lazy(() =>
+  import("./mindmap/MindMapPanel").then((m) => ({ default: m.MindMapPanel })),
+);
 import { ConfirmDialog, Modal } from "./ui/dialogs";
 import { PaneErrorBoundary } from "./ui/PaneErrorBoundary";
 import {
@@ -346,7 +355,23 @@ export function App() {
             .map(({ id, name, node }) => (
               <div key={id} style={{ display: tab === id ? "contents" : "none" }}>
                 <PaneErrorBoundary paneKey={id} paneName={name}>
-                  {node}
+                  <Suspense
+                    fallback={
+                      <div
+                        className="pane-loading"
+                        aria-busy="true"
+                        style={{
+                          padding: "20px 24px",
+                          color: "var(--text-muted)",
+                          fontSize: 13,
+                        }}
+                      >
+                        Loading {name}…
+                      </div>
+                    }
+                  >
+                    {node}
+                  </Suspense>
                 </PaneErrorBoundary>
               </div>
             ))}

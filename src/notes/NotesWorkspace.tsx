@@ -57,7 +57,7 @@ import {
   TrashIcon,
 } from "../ui/icons";
 import { BacklinksPanel } from "./BacklinksPanel";
-import { BlockEditor, type MentionItem } from "./BlockEditor";
+import { BlockEditorLazy, type MentionItem } from "./BlockEditorLazy";
 import { BrainDumpDialog } from "./BrainDumpDialog";
 import type { MentionTarget } from "./blockDocument";
 import { NoteBanners } from "./NoteBanners";
@@ -1247,7 +1247,7 @@ export function NotesWorkspace({
                   </button>
                 </div>
               ) : null}
-              <BlockEditor
+              <BlockEditorLazy
                 key={`${detail.id}:${editorEpoch}`}
                 initialDocumentJson={detail.documentJson}
                 initialBodyMd={detail.bodyMd}

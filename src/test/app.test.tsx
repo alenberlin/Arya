@@ -32,6 +32,12 @@ vi.mock("@tauri-apps/api/event", () => ({
 // tests exercise app-shell wiring, not the editor.
 vi.mock("../notes/BlockEditor", () => ({ BlockEditor: () => null }));
 
+// The Labs panes pull in d3-force + xyflow; the shell tests never visit them,
+// but the import graph does — stub them so vitest doesn't try to load the real
+// heavy modules through the lazy() boundary.
+vi.mock("../galaxy/GalaxyPanel", () => ({ GalaxyPanel: () => null }));
+vi.mock("../mindmap/MindMapPanel", () => ({ MindMapPanel: () => null }));
+
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(async (cmd: string, args?: Record<string, unknown>) => {
     switch (cmd) {
