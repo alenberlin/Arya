@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Folder } from "../lib/notes";
-import { splitFolders } from "../notes/NotesWorkspace";
+import { splitFolders } from "../notes/folders";
 
 const folder = (id: string): Folder => ({ id, name: id, createdAt: "2026-07-09T00:00:00Z" });
 const ids = (fs: Folder[]) => fs.map((f) => f.id);

@@ -62,129 +62,24 @@ import { BrainDumpDialog } from "./BrainDumpDialog";
 import type { MentionTarget } from "./blockDocument";
 import { NoteBanners } from "./NoteBanners";
 import "./notes-chrome.css";
+import {
+  AUTO_TITLE_DEBOUNCE_MS,
+  AUTO_TITLE_INSTRUCTION,
+  AUTO_TITLE_MIN_CHARS,
+  extOf,
+  formatBytes,
+  formatElapsed,
+  formatWhen,
+  sanitizeAutoTitle,
+  SORT_INSTRUCTION,
+  WAVE,
+} from "./format";
+import { splitFolders } from "./folders";
+import { NoteTree } from "./NoteRow";
 
-const STATUS_LABEL: Record<string, string> = {
-  idle: "",
-  recording: "Recording",
-  transcribing: "Transcribing…",
-  generating: "Generating…",
-  ready: "",
-  failed: "Failed",
-};
-
-/** Short type badge from a filename (e.g. "PDF"). */
-function extOf(name: string): string {
-  const dot = name.lastIndexOf(".");
-  return dot > 0
-    ? name
-        .slice(dot + 1)
-        .toUpperCase()
-        .slice(0, 4)
-    : "FILE";
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-// A static set of bar heights/timings for the live recording waveform.
-const WAVE = [
-  { h: "70%", d: "0s", t: "0.9s" },
-  { h: "100%", d: "0.1s", t: "1.1s" },
-  { h: "50%", d: "0.05s", t: "0.8s" },
-  { h: "85%", d: "0.15s", t: "1s" },
-  { h: "40%", d: "0.2s", t: "0.95s" },
-  { h: "65%", d: "0.08s", t: "1.05s" },
-  { h: "90%", d: "0.12s", t: "0.85s" },
-  { h: "55%", d: "0.04s", t: "1.15s" },
-];
-
-function formatElapsed(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
-}
-
-function formatWhen(iso: string): string {
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ""
-    : d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-function statusChip(status: string) {
-  if (status === "recording") {
-    return (
-      <span className="status-chip status--rec note-list-status">
-        <span className="dot-pulse" />
-        REC
-      </span>
-    );
-  }
-  if (status === "transcribing" || status === "generating") {
-    return (
-      <span className="status-chip status--processing note-list-status">
-        {STATUS_LABEL[status]}
-      </span>
-    );
-  }
-  if (status === "failed") {
-    return <span className="status-chip status--failed note-list-status">Failed</span>;
-  }
-  return null;
-}
-
-/** F16: turn a messy, multi-topic brain dump into coherent, grouped sections. */
-const SORT_INSTRUCTION =
-  "Reorganize this text into a few coherent, well-written sections, each focused " +
-  "on a single topic. Group related points together and give each section a short " +
-  "heading. Preserve every idea, but do not add any information that is not already " +
-  "in the text.";
-
-/** Auto-title: name an untitled note from its content once there's enough to
- * go on. Never invents facts — just names what's already there. */
-const AUTO_TITLE_INSTRUCTION =
-  "Read this note and reply with ONLY a short, specific title for it (3-7 " +
-  "words) that captures what it's actually about. No quotes, no punctuation " +
-  "at the end, no preamble, no explanation — just the title text itself.";
-/** Below this many characters of body markdown, there isn't enough context
- * yet for a meaningful title — wait for more before asking the model. */
-const AUTO_TITLE_MIN_CHARS = 24;
-const AUTO_TITLE_DEBOUNCE_MS = 2500;
-
-/** Strip quoting/trailing punctuation a model tends to add despite being
- * asked not to, and cap length so a rambling reply can't become the title. */
-function sanitizeAutoTitle(raw: string): string {
-  const cleaned = raw
-    .trim()
-    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
-    .replace(/[.!?]+$/, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return cleaned.length > 80 ? `${cleaned.slice(0, 79)}…` : cleaned;
-}
-
-/** How many folder chips sit inline before the rest fold into "More". */
-const MAX_VISIBLE_FOLDERS = 3;
-
-/** Split folders into the inline chips and the overflow that folds into the
- * "More" dropdown. The active folder is always kept visible as a chip (swapped
- * into the last inline slot if it would otherwise overflow), so the current
- * selection is never hidden behind the menu. */
-export function splitFolders(
-  all: Folder[],
-  active: string | null,
-): { visible: Folder[]; overflow: Folder[] } {
-  if (all.length <= MAX_VISIBLE_FOLDERS) return { visible: all, overflow: [] };
-  let visible = all.slice(0, MAX_VISIBLE_FOLDERS);
-  if (active && !visible.some((f) => f.id === active)) {
-    const activeFolder = all.find((f) => f.id === active);
-    if (activeFolder) visible = [...all.slice(0, MAX_VISIBLE_FOLDERS - 1), activeFolder];
-  }
-  const visibleIds = new Set(visible.map((f) => f.id));
-  return { visible, overflow: all.filter((f) => !visibleIds.has(f.id)) };
-}
+// Re-export so existing consumers (legacy imports / tests) keep working without
+// churn during the world-class refactor.
+export { splitFolders } from "./folders";
 
 /** Notes workspace: a list panel (recorder, banners, folders, notes) beside an
  * editor panel (title, live capture, note body, transcript). */
@@ -862,78 +757,18 @@ export function NotesWorkspace({
     </button>
   );
 
-  const renderNoteRow = (note: NoteSummary, depth: number) => {
-    const kids = childrenByParent.get(note.id) ?? [];
-    const isOpen = expanded.has(note.id);
-    return (
-      <li
-        key={note.id}
-        className="note-row"
-        style={treeMode ? { paddingLeft: 8 + depth * 14 } : undefined}
-      >
-        {treeMode ? (
-          kids.length > 0 ? (
-            <button
-              type="button"
-              className="note-twisty"
-              aria-label={`${isOpen ? "Collapse" : "Expand"} ${note.title}`}
-              aria-expanded={isOpen}
-              onClick={() => toggleExpand(note.id)}
-            >
-              {isOpen ? "▾" : "▸"}
-            </button>
-          ) : (
-            <span className="note-twisty note-twisty-empty" aria-hidden="true" />
-          )
-        ) : null}
-        <button
-          type="button"
-          className="row"
-          draggable
-          aria-current={note.id === activeNoteId ? "true" : undefined}
-          onClick={() => void openNote(note.id)}
-          onDragStart={(e) => {
-            e.dataTransfer.setData("text/plain", note.id);
-            e.dataTransfer.effectAllowed = "move";
-          }}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setNoteMenu({ id: note.id, x: e.clientX, y: e.clientY });
-          }}
-        >
-          <div className="spread hstack" style={{ marginBottom: 4 }}>
-            <span className="truncate" style={{ fontSize: 13.5, fontWeight: 500 }}>
-              {note.title}
-            </span>
-            {statusChip(note.processingStatus)}
-          </div>
-          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-muted)" }}>
-            {formatWhen(note.createdAt)}
-          </div>
-        </button>
-        <button
-          type="button"
-          className="note-del"
-          aria-label={`delete ${note.title}`}
-          title="Delete note"
-          onClick={(e) => {
-            e.stopPropagation();
-            setDeleteTargetId(note.id);
-          }}
-        >
-          <TrashIcon />
-        </button>
-      </li>
-    );
-  };
-
-  const renderTree = (items: NoteSummary[], depth: number): React.JSX.Element[] =>
-    items.flatMap((note) => {
-      const rows = [renderNoteRow(note, depth)];
-      if (expanded.has(note.id) && (childrenByParent.get(note.id)?.length ?? 0) > 0) {
-        rows.push(...renderTree(childrenByParent.get(note.id) ?? [], depth + 1));
-      }
-      return rows;
+  const renderNoteRows = (items: NoteSummary[]): React.JSX.Element[] =>
+    NoteTree({
+      items,
+      depth: 0,
+      treeMode,
+      expanded,
+      childrenByParent,
+      activeNoteId,
+      onOpen: openNote,
+      onContextMenu: (note, x, y) => setNoteMenu({ id: note.id, x, y }),
+      onToggleExpand: toggleExpand,
+      onRequestDelete: (id) => setDeleteTargetId(id),
     });
 
   const tabTitle = (id: string) => notes.find((n) => n.id === id)?.title ?? "Note";
@@ -1187,11 +1022,11 @@ export function NotesWorkspace({
           </nav>
 
           <ul aria-label="notes" className="plain">
-            {treeMode
-              ? renderTree(showAllNotes ? rootNotes : rootNotes.slice(0, NOTE_LIST_CAP), 0)
-              : (showAllNotes ? visibleNotes : visibleNotes.slice(0, NOTE_LIST_CAP)).map((note) =>
-                  renderNoteRow(note, 0),
-                )}
+            {renderNoteRows(
+              showAllNotes
+                ? listSource
+                : listSource.slice(0, NOTE_LIST_CAP),
+            )}
             {listSource.length === 0 ? (
               <li className="empty">
                 {filter.trim()
