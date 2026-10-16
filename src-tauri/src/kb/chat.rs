@@ -238,7 +238,8 @@ fn answer_blocking(
     query: &str,
     model: Option<String>,
 ) -> crate::error::AryaResult<(String, Vec<Citation>)> {
-    let hits = super::retrieve::search_blocking(pool, collection_id, query, RETRIEVE_K)?;
+    let hits =
+        tauri::async_runtime::block_on(super::retrieve::search(pool, collection_id, query, RETRIEVE_K))?;
     if hits.is_empty() {
         return Ok((
             "I couldn't find anything about that in this collection's documents. \

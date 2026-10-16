@@ -53,9 +53,11 @@ struct ChunkRow {
     embedding: Vec<f32>,
 }
 
-/// Search one collection for the `limit` most relevant chunks. Blocking (called
-/// from a worker thread).
-pub fn search_blocking(
+/// Search one collection for the `limit` most relevant chunks. Awaited
+/// directly from Tauri commands — keeping it async lets the two SQL legs chain
+/// without nested `block_on`, which would otherwise spin up an extra runtime
+/// per call and could deadlock against the worker pool.
+pub async fn search(
     pool: &SqlitePool,
     collection_id: &str,
     query: &str,
@@ -72,15 +74,14 @@ pub fn search_blocking(
         .next()
         .ok_or("no embedding for query")?;
 
-    let rows = tauri::async_runtime::block_on(load_chunks(pool, collection_id))?;
+    let rows = load_chunks(pool, collection_id).await?;
     if rows.is_empty() {
         return Ok(Vec::new());
     }
     // Candidate pool per leg — generous enough that a hit strong in only one leg
     // still surfaces, bounded so fusion stays cheap.
     let pool_size = (limit * 5).max(20);
-    let fts_ranked =
-        tauri::async_runtime::block_on(fts_search(pool, collection_id, query, pool_size as i64))?;
+    let fts_ranked = fts_search(pool, collection_id, query, pool_size as i64).await?;
 
     Ok(rank(&rows, &query_vec, &fts_ranked, pool_size, limit))
 }
@@ -503,7 +504,9 @@ mod tests {
         });
 
         // No keyword overlap with "revenue/grew/twenty" — pure semantic match.
-        let hits = search_blocking(&pool, "c1", "how much did sales increase?", 3).unwrap();
+        let hits =
+            tauri::async_runtime::block_on(search(&pool, "c1", "how much did sales increase?", 3))
+                .unwrap();
         assert!(!hits.is_empty(), "expected retrieval hits");
         assert!(
             hits[0].content.contains("revenue"),

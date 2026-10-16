@@ -368,11 +368,7 @@ pub async fn kb_search(
 ) -> crate::error::AryaResult<Vec<super::retrieve::KbHit>> {
     let limit = limit.unwrap_or(8).clamp(1, 50) as usize;
     let pool = pool.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        super::retrieve::search_blocking(&pool, &collection_id, &query, limit)
-    })
-    .await
-    .map_err(crate::error::AryaError::from_display)?
+    super::retrieve::search(&pool, &collection_id, &query, limit).await
 }
 
 /// Re-run extraction + embedding for one document (e.g. after starting Ollama).
