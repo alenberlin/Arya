@@ -17,7 +17,6 @@ import {
   agentWorkspaceReadB64,
   convertSessionToNote,
   modelPrivacy,
-  type ToolInfo,
 } from "../lib/agent";
 import { agentBranchSession } from "../lib/ecosystem";
 import { TRANSLATE_LANGUAGES, translateInstruction } from "../lib/languages";
@@ -28,24 +27,11 @@ import {
   CheckIcon,
   FileWriteIcon,
   LockIcon,
-  MoreIcon,
-  PlusIcon,
   SendIcon,
 } from "../ui/icons";
 import { MessageView, toolSummary } from "./MessageView";
-
-interface PendingApproval {
-  sessionId: string;
-  callId: string;
-  name: string;
-  description: string;
-}
-
-interface LiveTurn {
-  text: string;
-  reasoning: string;
-  tools: ToolInfo[];
-}
+import { AgentSessionList } from "./AgentSessionList";
+import type { LiveTurn, PendingApproval } from "./types";
 
 /** Agent chat: sessions, streaming turns, tool approvals, steering. */
 export function AgentPanel() {
@@ -336,75 +322,16 @@ export function AgentPanel() {
   return (
     <div className="screen">
       {/* SESSION PANEL */}
-      <div className="panel" style={{ width: 270, flex: "0 0 270px" }}>
-        <div className="panel-head">
-          <button
-            type="button"
-            className="btn"
-            style={{ width: "100%" }}
-            onClick={() => void onNewSession()}
-            disabled={!model}
-          >
-            <PlusIcon /> New chat
-          </button>
-        </div>
-        <div style={{ padding: 12, borderBottom: "1px solid var(--border-subtle)" }}>
-          <div className="section-label" style={{ marginBottom: 8, padding: "0 4px" }}>
-            Model
-          </div>
-          <select aria-label="agent model" value={model} onChange={(e) => setModel(e.target.value)}>
-            {models.map((m) => (
-              <option key={m} value={m}>
-                {m} {modelPrivacy(m) === "local" ? "(local, free)" : "(cloud)"}
-              </option>
-            ))}
-          </select>
-          {tier ? (
-            <div className="hstack" style={{ marginTop: 6, padding: "0 4px", fontSize: 11 }}>
-              <span
-                className="tier-dot"
-                style={{ background: tier === "local" ? "var(--success)" : "var(--warning)" }}
-              />
-              <span style={{ color: tier === "local" ? "var(--success)" : "var(--warning)" }}>
-                {tier === "local" ? "On-device · free · private" : "Cloud"}
-              </span>
-            </div>
-          ) : null}
-        </div>
-        <div className="panel-body">
-          <div className="section-label" style={{ padding: "4px 8px" }}>
-            Recent
-          </div>
-          <ul aria-label="agent sessions" className="plain">
-            {sessions.map((session) => (
-              <li key={session.id} className="hstack" style={{ gap: 2 }}>
-                <button
-                  type="button"
-                  className="list-item"
-                  style={{ flex: 1, minWidth: 0 }}
-                  aria-current={active?.id === session.id ? "true" : undefined}
-                  onClick={() => void openSession(session)}
-                >
-                  <div className="item-title">{session.title}</div>
-                </button>
-                <button
-                  type="button"
-                  className="btn-icon bare"
-                  style={{ color: "var(--text-muted)" }}
-                  aria-label={`actions for ${session.title}`}
-                  title="Chat actions"
-                  onClick={(e) => {
-                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-                    openSessionMenu(session.id, r.right - 210, r.bottom + 4);
-                  }}
-                >
-                  <MoreIcon />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
+      <AgentSessionList
+        sessions={sessions}
+        activeId={active?.id ?? null}
+        models={models}
+        model={model}
+        onNewSession={() => void onNewSession()}
+        onSelectSession={(s) => void openSession(s)}
+        onSetModel={setModel}
+        onOpenSessionMenu={openSessionMenu}
+      />
 
       {/* CONVERSATION PANEL */}
       <div className="panel panel-grow">
