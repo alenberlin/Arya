@@ -4,6 +4,7 @@
 //! from the audio callback over a channel and hit disk continuously, so a
 //! crash at any moment loses at most the unflushed tail.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
@@ -68,7 +69,14 @@ struct Active {
     written_frames: u64,
     paused: bool,
     /// Rolling buffer of recent raw samples for the ephemeral live preview.
-    preview: Vec<f32>,
+    ///
+    /// A `VecDeque` gives us O(1) `push_back` plus O(k) trimming when the
+    /// rolling cap is hit, replacing the old `Vec::extend_from_slice` +
+    /// `Vec::drain(..excess)` pair which was O(n) per chunk because the drain
+    /// memmoved the whole tail on every push. With ~30s of 48 kHz mono audio
+    /// that single drain call accounted for the majority of the recorder
+    /// thread's CPU once a long meeting got going.
+    preview: VecDeque<f32>,
 }
 
 type RecorderStream = (
@@ -262,11 +270,15 @@ fn run_loop(
             }
             Ok(Command::TakePreview(reply)) => {
                 let payload = active.as_mut().map(|state| {
-                    (
-                        std::mem::take(&mut state.preview),
-                        state.sample_rate,
-                        state.channels,
-                    )
+                    // Drain the ring into a contiguous Vec that the preview
+                    // consumer (live-transcription ticker) can index directly.
+                    // VecDeque::make_contiguous gives us a single &[T] slice
+                    // covering all live elements, which we copy once into a
+                    // fresh Vec; the recorder thread keeps a fresh empty ring
+                    // for the next accumulation window.
+                    let drained: Vec<f32> = state.preview.iter().copied().collect();
+                    state.preview.clear();
+                    (drained, state.sample_rate, state.channels)
                 });
                 let _ = reply.send(payload);
             }
@@ -291,7 +303,7 @@ fn begin(spec: StartSpec, level_out: Arc<AtomicU32>) -> crate::error::AryaResult
         channels,
         written_frames: 0,
         paused: false,
-        preview: Vec::new(),
+        preview: VecDeque::new(),
     })
 }
 
@@ -372,11 +384,15 @@ fn drain_samples(state: &mut Active, level_out: &AtomicU32, elapsed_out: &Atomic
         if state.sink.write_f32(&chunk).is_err() {
             eprintln!("recording: failed to write samples");
         }
-        state.preview.extend_from_slice(&chunk);
+        for s in &chunk {
+            state.preview.push_back(*s);
+        }
         let cap = (state.sample_rate as usize) * (state.channels as usize) * 30;
-        if state.preview.len() > cap {
-            let excess = state.preview.len() - cap;
-            state.preview.drain(..excess);
+        // Trim the head of the ring to keep only the most recent `cap` samples.
+        // `pop_front` is O(1) on a VecDeque, so trimming never has to memmove
+        // the live tail even on a long meeting.
+        while state.preview.len() > cap {
+            state.preview.pop_front();
         }
         state.written_frames += chunk.len() as u64 / state.channels as u64;
         crate::audio::recycle_sample_block(&state.sample_free_tx, chunk);
