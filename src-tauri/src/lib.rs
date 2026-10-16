@@ -6,20 +6,20 @@ mod calendar;
 mod classify;
 pub mod cleanup;
 mod cloud;
-mod db;
+pub mod db;
 mod db_retry;
 mod dictation;
-mod error;
+pub mod error;
 mod filestage;
 mod galaxy;
 mod http;
 mod kb;
 mod keys;
-mod links;
+pub mod links;
 mod low_power;
 mod meeting_detect;
 mod mindmaps;
-mod notes;
+pub mod notes;
 mod notion_import;
 mod paste;
 mod provider;
@@ -541,6 +541,7 @@ mod dev_hooks;
 
 #[cfg(test)]
 mod bindings_test {
+    use tracing::debug;
     /// Generates src/lib/bindings.ts. Run: `cargo test generate_bindings`.
     /// Runs on a large-stack thread — collecting 120+ command types overflows
     /// the default test-thread stack.

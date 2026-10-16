@@ -48,8 +48,11 @@ pub async fn init_pool(path: &Path) -> Result<SqlitePool, DbError> {
 }
 
 /// In-memory pool for tests. Single connection: each `:memory:` connection
-/// is otherwise its own database.
-#[cfg(test)]
+/// is otherwise its own database. Exposed at the crate root so integration
+/// tests in `tests/` can reuse the same harness as the inline ones in
+/// `#[cfg(test)] mod`s; the migration set is the production schema, so a
+/// green run there is a real contract check on the FK / link invariants.
+#[doc(hidden)]
 pub async fn test_pool() -> SqlitePool {
     use std::str::FromStr;
     let options = SqliteConnectOptions::from_str("sqlite::memory:")
