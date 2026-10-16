@@ -7,6 +7,7 @@ mod classify;
 pub mod cleanup;
 mod cloud;
 mod db;
+mod db_retry;
 mod dictation;
 mod error;
 mod filestage;
@@ -15,6 +16,7 @@ mod http;
 mod kb;
 mod keys;
 mod links;
+mod low_power;
 mod meeting_detect;
 mod mindmaps;
 mod notes;
@@ -100,14 +102,24 @@ pub fn run() {
     // Lazy-unload the speech engines after a period of non-use: an idle app
     // releases its Metal/GPU residency (important on limited-GPU Macs), and the
     // model reloads on the next ASR call. A detached sleeper is fine — it only
-    // drops Arc handles nobody else holds.
+    // drops Arc handles nobody else holds. In low-power mode the window and
+    // tick are tightened so older / battery-bound Macs free GPU residency
+    // sooner.
     std::thread::Builder::new()
         .name("arya-engine-evict".into())
         .spawn(|| {
-            const IDLE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+            const NORMAL_IDLE: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+            const NORMAL_TICK: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+            const LOW_POWER_IDLE: std::time::Duration = std::time::Duration::from_secs(2 * 60);
+            const LOW_POWER_TICK: std::time::Duration = std::time::Duration::from_secs(2 * 60);
             loop {
-                std::thread::sleep(IDLE);
-                let dropped = crate::speech::engine_cache::evict_idle(IDLE);
+                let (idle, tick) = if crate::low_power::is_enabled() {
+                    (LOW_POWER_IDLE, LOW_POWER_TICK)
+                } else {
+                    (NORMAL_IDLE, NORMAL_TICK)
+                };
+                std::thread::sleep(tick);
+                let dropped = crate::speech::engine_cache::evict_idle(idle);
                 if dropped > 0 {
                     eprintln!("engine cache: evicted {dropped} idle engine(s)");
                 }
@@ -291,6 +303,9 @@ pub fn run() {
             app.manage(pool);
 
             let config_dir = app.path().app_config_dir()?;
+            // Register the config dir once so background threads (engine
+            // evictor) can read the user's `low_power` toggle each tick.
+            crate::low_power::set_config_dir(config_dir.clone());
             let settings = dictation::settings::load(&config_dir);
             // One Ollama URL for every feature (dictation, transform, classify,
             // brain-dump, KB) — seed it from the persisted user setting.

@@ -22,6 +22,7 @@ const state = {
     translate: null,
     translateProvider: "local",
     translateModel: null,
+    lowPower: false,
   } satisfies DictationSettings,
   saved: [] as unknown[],
 };

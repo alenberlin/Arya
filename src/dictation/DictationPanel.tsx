@@ -519,6 +519,26 @@ export function DictationPanel() {
             </div>
 
             <div className="card-sunken">
+              <label className="spread hstack" style={{ cursor: "pointer" }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>Low-power mode</div>
+                  <div className="muted" style={{ fontSize: 12.5 }}>
+                    Skip background KB reindex, idle speech engines sooner, and prefer CPU
+                    inference. Helpful on older Macs or when running on battery.
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.lowPower}
+                  onChange={(e) =>
+                    void save({ ...settings, lowPower: e.target.checked })
+                  }
+                  aria-label="low-power mode"
+                />
+              </label>
+            </div>
+
+            <div className="card-sunken">
               <div className="spread hstack" style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>Voice profiles</div>
               </div>

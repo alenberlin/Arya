@@ -334,16 +334,29 @@ pub async fn update_note(
     manual_notes: Option<String>,
     document_json: Option<String>,
 ) -> crate::error::AryaResult<()> {
-    update_note_fields(
-        &pool,
-        &id,
-        title.as_deref(),
-        body_md.as_deref(),
-        manual_notes.as_deref(),
-        document_json.as_deref(),
-    )
+    // The keystroke hot-path: a debounced update from BlockNote. Wrap the
+    // SQL in `write_with_retry` so a transient lock (RAG reindex, parallel
+    // recording finalization) becomes a small backoff instead of a
+    // user-visible error.
+    crate::db_retry::write_with_retry(pool.inner().clone(), |p| {
+        let id = id.clone();
+        let title = title.clone();
+        let body_md = body_md.clone();
+        let manual_notes = manual_notes.clone();
+        let document_json = document_json.clone();
+        Box::pin(async move {
+            update_note_fields(
+                &p,
+                &id,
+                title.as_deref(),
+                body_md.as_deref(),
+                manual_notes.as_deref(),
+                document_json.as_deref(),
+            )
+            .await
+        })
+    })
     .await
-    .map_err(crate::error::AryaError::from_display)
 }
 
 /// Deletes a note and its recordings/attachments from disk (rows cascade).

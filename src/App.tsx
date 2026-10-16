@@ -14,6 +14,7 @@ import { NotesWorkspace } from "./notes/NotesWorkspace";
 import { Onboarding, onboardingComplete } from "./onboarding/Onboarding";
 import { SearchPanel } from "./search/SearchPanel";
 import { ConfirmDialog, Modal } from "./ui/dialogs";
+import { PaneErrorBoundary } from "./ui/PaneErrorBoundary";
 import {
   AccountIcon,
   AgentIcon,
@@ -205,18 +206,19 @@ export function App() {
     return <Onboarding onFinish={() => setOnboarded(true)} />;
   }
 
-  const panels: { id: Tab; node: React.JSX.Element }[] = [
+  const panels: { id: Tab; name: string; node: React.JSX.Element }[] = [
     {
       id: "notes",
+      name: "Notes",
       node: <NotesWorkspace openNoteId={pendingNote} onOpenConsumed={clearPendingNote} />,
     },
-    { id: "agent", node: <AgentSection /> },
-    { id: "search", node: <SearchPanel /> },
-    { id: "galaxy", node: <GalaxyPanel /> },
-    { id: "knowledge", node: <KnowledgeBasePanel /> },
-    { id: "mindmap", node: <MindMapPanel /> },
-    { id: "dictation", node: <DictationPanel /> },
-    { id: "account", node: <AccountPanel /> },
+    { id: "agent", name: "Agent", node: <AgentSection /> },
+    { id: "search", name: "Search", node: <SearchPanel /> },
+    { id: "galaxy", name: "Galaxy", node: <GalaxyPanel /> },
+    { id: "knowledge", name: "Knowledge", node: <KnowledgeBasePanel /> },
+    { id: "mindmap", name: "Mind Map", node: <MindMapPanel /> },
+    { id: "dictation", name: "Dictation", node: <DictationPanel /> },
+    { id: "account", name: "Account", node: <AccountPanel /> },
   ];
 
   return (
@@ -341,9 +343,11 @@ export function App() {
         <main className="content">
           {panels
             .filter(({ id }) => mountedTabs[id])
-            .map(({ id, node }) => (
+            .map(({ id, name, node }) => (
               <div key={id} style={{ display: tab === id ? "contents" : "none" }}>
-                {node}
+                <PaneErrorBoundary paneKey={id} paneName={name}>
+                  {node}
+                </PaneErrorBoundary>
               </div>
             ))}
         </main>

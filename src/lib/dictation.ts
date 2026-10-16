@@ -29,6 +29,9 @@ export interface DictationSettings {
   translateProvider: TranslateProvider;
   /** Ollama model for local translation; null = auto (cleanup model or default). */
   translateModel: string | null;
+  /** Free GPU residency sooner, prefer CPU inference, skip background KB
+   * reindex. Defaults to the ARYA_LOW_POWER env var. */
+  lowPower: boolean;
 }
 
 export interface DictationStatus {

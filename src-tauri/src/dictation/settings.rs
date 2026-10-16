@@ -48,6 +48,11 @@ pub struct DictationSettings {
     /// Ollama model used for local translation; None falls back to the cleanup
     /// model or a built-in default.
     pub translate_model: Option<String>,
+    /// "Low-power mode" toggle: prefer CPU inference over Metal/GPU, skip
+    /// background KB reindexing, and shorten the speech engine idle-eviction
+    /// window. Defaults to `false`. Overridden by the `ARYA_LOW_POWER=1` env
+    /// var (handy for headless / scripted runs on a laptop on battery).
+    pub low_power: bool,
 }
 
 /// Sentinel `shortcut` value selecting the low-level right-Shift trigger
@@ -84,6 +89,9 @@ impl Default for DictationSettings {
             translate: None,
             translate_provider: TranslateProvider::Local,
             translate_model: None,
+            low_power: std::env::var("ARYA_LOW_POWER")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
         }
     }
 }

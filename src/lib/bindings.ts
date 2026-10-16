@@ -406,6 +406,12 @@ export type DictationSettings = {
 	 *  model or a built-in default.
 	 */
 	translateModel?: string | null,
+	/**
+	 *  Free GPU residency sooner, prefer CPU inference, and skip background KB
+	 *  reindex. Defaults to the ARYA_LOW_POWER env var. Helpful on older
+	 *  hardware or when running on battery.
+	 */
+	lowPower?: boolean,
 };
 
 export type DictationStatus = {

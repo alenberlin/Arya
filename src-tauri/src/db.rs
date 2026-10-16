@@ -32,12 +32,18 @@ pub async fn init_pool(path: &Path) -> Result<SqlitePool, DbError> {
         // WAL already gives crash safety, so NORMAL synchronous avoids an fsync
         // on every commit (FULL is redundant with WAL). A modest page cache and
         // memory-mapped I/O — both caps, not reservations — keep KB/RAG scans
-        // fast without a fixed memory tax.
+        // fast without a fixed memory tax. TEMP store in MEMORY keeps RAG/KB
+        // scratch tables off disk for short-lived aggregations.
         .pragma("synchronous", "NORMAL")
         .pragma("cache_size", "-64000")
-        .pragma("mmap_size", "268435456");
+        .pragma("mmap_size", "268435456")
+        .pragma("temp_store", "MEMORY");
     let pool = SqlitePoolOptions::new().connect_with(options).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
+    // PRAGMA optimize refreshes the query planner's statistics; without it
+    // long-lived pools can drift toward stale plans after many writes. Cheap,
+    // safe to call after migrations.
+    sqlx::query("PRAGMA optimize").execute(&pool).await?;
     Ok(pool)
 }
 
