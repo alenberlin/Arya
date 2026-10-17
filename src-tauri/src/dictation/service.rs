@@ -365,6 +365,11 @@ impl DictationService {
         // exit path below releases them so the shared engine is left idle.
         let stream = self.active_stream.lock().expect("stream lock").take();
         let handle = self.partial_handle.lock().expect("handle lock").take();
+        // Snapshot the target app up front so the pipeline thread can persist
+        // the row (history + bundle_id) regardless of which exit branch runs
+        // (success, no-recognition, engine failure, …). A graze below still
+        // skips history.
+        let target_for_history = self.target_app.lock().expect("target lock").clone();
 
         if started.elapsed().as_millis() < MIN_HOLD_MS {
             // Graze: too short to be intentional. Cheap — stays on this thread.
@@ -393,21 +398,33 @@ impl DictationService {
                 // The feed ticker must be fully stopped before we touch the
                 // shared engine to finalize.
                 join_ticker(handle);
+                let bundle_id_str = target_for_history
+                    .as_ref()
+                    .and_then(|t| t.bundle_id.clone());
                 let clip = match service.worker.stop() {
                     Ok(clip) => clip,
                     Err(message) => {
                         warn!(error = %message, held_ms = held_for_ms, "dictation: capture stop failed");
+                        // Even a capture failure is recorded: every dictation
+                        // attempt the user made gets a row, so the history list
+                        // is the source of truth for what they tried to say.
+                        insert_history_blocking(
+                            &pool, "", "(capture failed)", None, None,
+                            bundle_id_str.as_deref(), 0, 0,
+                        ).ok();
                         emit_state(&app, DictationState::Error, Some(message.to_string()), None);
                         hide_hud_soon(&app, 1500);
                         return;
                     }
                 };
+                let duration_ms = (clip.duration_secs() * 1000.0) as i64;
                 // The 0.3s floor used to drop silently — users with working
                 // live partials but vanishing output had no way to tell that the
                 // dictation was rejected at the end. Surface it as an Error so
                 // they understand why no text appeared (the live preview words
                 // came from the streaming engine feeding, not from a finalized
-                // transcript).
+                // transcript), and record the attempt in history so they can
+                // see the row.
                 if clip.duration_secs() < 0.3 {
                     let secs = clip.duration_secs();
                     warn!(
@@ -415,6 +432,11 @@ impl DictationService {
                         held_ms = held_for_ms,
                         "dictation: clip dropped — less than 0.3s after worker.stop"
                     );
+                    let placeholder = format!("(very short — {:.2}s of audio)", secs);
+                    insert_history_blocking(
+                        &pool, "", &placeholder, None, None,
+                        bundle_id_str.as_deref(), duration_ms, 0,
+                    ).ok();
                     emit_state(
                         &app,
                         DictationState::Error,
@@ -424,17 +446,30 @@ impl DictationService {
                     hide_hud_soon(&app, 2000);
                     return;
                 }
-                let result = match stream {
+                // Run ASR + cleanup + paste. `deliver()` saves the success row
+                // when it runs; the Err branch below writes a placeholder so
+                // the user always sees their attempt in history, even when
+                // nothing got recognized.
+                let clip_secs = clip.duration_secs();
+                let pipeline_result = match stream {
                     Some(engine) => service.run_streaming_pipeline(&app, &pool, clip, &engine),
                     None => service.run_pipeline(&app, &pool, clip),
                 };
-                match result {
+                match pipeline_result {
                     Ok(text) => {
                         emit_state(&app, DictationState::Idle, None, Some(text));
                         hide_hud_soon(&app, 900);
                     }
                     Err(message) => {
-                        warn!(error = %message, "dictation: pipeline returned error");
+                        warn!(error = %message, duration_ms, "dictation: pipeline returned error");
+                        let placeholder = format!(
+                            "(couldn't recognize — {:.2}s of audio)",
+                            clip_secs
+                        );
+                        insert_history_blocking(
+                            &pool, "", &placeholder, None, None,
+                            bundle_id_str.as_deref(), duration_ms, 0,
+                        ).ok();
                         emit_state(&app, DictationState::Error, Some(message.to_string()), None);
                         hide_hud_soon(&app, 2500);
                     }
@@ -601,7 +636,8 @@ impl DictationService {
             target.bundle_id.as_deref(),
             (clip.duration_secs() * 1000.0) as i64,
             asr_ms,
-        )?;
+        )
+        .ok();
 
         emit_state(app, DictationState::Pasting, None, None);
         // In-app dictation (the target is Arya's own window) cannot go through the
