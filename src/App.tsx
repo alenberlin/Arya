@@ -179,6 +179,8 @@ export function App() {
         setTab("mindmap");
       } else if (detail.kind === "agent") {
         setTab("agent");
+      } else if (detail.kind === "knowledge") {
+        setTab("knowledge");
       }
     };
     window.addEventListener("arya:open-node", handler);

@@ -93,6 +93,48 @@ pub async fn search_all_query(
     .await?;
     hits.extend(mindmaps);
 
+    // Knowledge-base collections. Filename match is the cheap leg (catches
+    // queries like 'Satvic' that hit document titles without appearing in any
+    // chunk). Chunk match uses the FTS5 mirror so a phrase buried mid-document
+    // still surfaces. One row per document — chunk matches collapse to the
+    // owning document so we don't bury the result list under 80 hits from a
+    // single PDF.
+    let kb_doc_filenames: Vec<TextHit> = sqlx::query_as::<_, TextHit>(
+        "SELECT 'kb_document' AS source_kind, d.id AS source_id,
+                d.filename AS title,
+                substr(d.filename, 1, 320) AS snippet, d.updated_at AS created_at
+         FROM kb_documents d
+         WHERE d.filename LIKE ?1 ESCAPE '\\'
+         ORDER BY d.updated_at DESC
+         LIMIT ?2",
+    )
+    .bind(&like)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    hits.extend(kb_doc_filenames);
+
+    // KB chunks via the FTS5 mirror. Distinct on document_id keeps one row
+    // per document; we attach the highest-ranked chunk's leading slice as the
+    // snippet so the result card is meaningful.
+    let kb_chunks_text: Vec<TextHit> = sqlx::query_as::<_, TextHit>(
+        "SELECT 'kb_document' AS source_kind, d.id AS source_id,
+                d.filename AS title,
+                substr(c.content, 1, 320) AS snippet, d.updated_at AS created_at
+         FROM kb_chunks_fts fts
+         JOIN kb_chunks c ON c.id = fts.chunk_id
+         JOIN kb_documents d ON d.id = c.document_id
+         WHERE kb_chunks_fts MATCH ?1
+         GROUP BY d.id
+         ORDER BY d.updated_at DESC
+         LIMIT ?2",
+    )
+    .bind(query)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    hits.extend(kb_chunks_text);
+
     // Newest-first across kinds.
     hits.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     Ok(hits)

@@ -52,7 +52,9 @@ function openHit(hit: DisplayHit) {
       ? "agent"
       : hit.sourceKind === "transcript"
         ? "note"
-        : hit.sourceKind;
+        : hit.sourceKind === "kb_document"
+          ? "knowledge"
+          : hit.sourceKind;
   window.dispatchEvent(new CustomEvent("arya:open-node", { detail: { kind, id: hit.sourceId } }));
 }
 
@@ -164,7 +166,8 @@ export function SearchPanel() {
         <div style={{ textAlign: "center", marginBottom: 24 }}>
           <h1 className="hero-title">Search everything</h1>
           <p className="muted" style={{ margin: "6px 0 0" }}>
-            Search notes, transcripts, and dictations by title or content — on-device.
+            Search notes, dictations, mind maps, and Knowledge collections by title or content —
+            on-device.
           </p>
         </div>
 
@@ -236,7 +239,7 @@ export function SearchPanel() {
                 <div className="result-meta">
                   <FileIcon className="result-kind-icon" />
                   <span>
-                    {hit.sourceKind} · {hit.title}
+                    {hit.sourceKind === "kb_document" ? "Knowledge" : hit.sourceKind} · {hit.title}
                   </span>
                   <span className="result-score">
                     {hit.match.kind === "semantic"
