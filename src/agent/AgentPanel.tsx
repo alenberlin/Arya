@@ -171,9 +171,17 @@ export function AgentPanel() {
         setApprovals((list) => list.filter((a) => a.sessionId !== sessionId));
         if (sessionId !== activeRef.current) return;
         setRunning(false);
-        setLive(null);
-        if (activeRef.current) {
-          void agentGetMessages(activeRef.current).then(setMessages);
+        // Keep the live block visible until the refetch returns the persisted
+        // assistant message; clear it inside the `.then` so the streaming text
+        // doesn't flash to empty during the refetch window.
+        const sid = activeRef.current;
+        if (sid) {
+          agentGetMessages(sid).then((list) => {
+            setMessages(list);
+            setLive(null);
+          });
+        } else {
+          setLive(null);
         }
         void refreshSessions();
         return;

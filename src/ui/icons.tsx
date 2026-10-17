@@ -203,9 +203,13 @@ export const CopyIcon = (p: IconProps) => (
   </svg>
 );
 export const SendIcon = (p: IconProps) => (
-  <svg {...base} strokeWidth={2} {...p} aria-hidden="true">
-    <line x1="12" y1="19" x2="12" y2="5" />
-    <polyline points="6 11 12 5 18 11" />
+  // Paper-airplane style send icon. Sized at 20 (vs the rest of the icon set at
+  // 18) so the up-and-right silhouette stays legible inside the small btn-icon
+  // buttons that wrap it; a thin stroke makes it disappear into a square at
+  // the smaller default size.
+  <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...p} aria-hidden="true">
+    <path d="M22 2L11 13" />
+    <path d="M22 2L15 22L11 13L2 9L22 2Z" />
   </svg>
 );
 /** A side panel, for the toggle that collapses the documents column. */

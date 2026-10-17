@@ -188,7 +188,6 @@ const MAX_ACC_TOOLS: usize = 2000;
 /// Routes a sidecar event: forward to the UI, accumulate, and persist the
 /// assistant message when the turn finishes.
 fn handle_event(app: &AppHandle, params: &Value) {
-    let _ = app.emit("agent:event", params.clone());
     let Some(session_id) = params.get("sessionId").and_then(|v| v.as_str()) else {
         return;
     };
@@ -196,6 +195,19 @@ fn handle_event(app: &AppHandle, params: &Value) {
         return;
     };
     let kind = event.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+
+    // Streaming events (text-delta / reasoning-delta / tool-call / tool-result)
+    // are emitted immediately so the UI can render them in real time. The
+    // `turn-finished` event is special — it must NOT be emitted until the
+    // assistant message has been committed to the DB, otherwise the UI's
+    // post-turn `agentGetMessages` refetch races the INSERT and returns a
+    // session with no assistant row, which then looks like the answer
+    // vanished for a split second.
+    let emit_after = kind == "turn-finished";
+    if !emit_after {
+        let _ = app.emit("agent:event", params.clone());
+    }
+
     let runtime = app.state::<AgentRuntime>();
     let mut accumulators = runtime.accumulators.lock().expect("acc lock");
     let acc = accumulators.entry(session_id.to_string()).or_default();
@@ -271,6 +283,10 @@ fn handle_event(app: &AppHandle, params: &Value) {
                 .execute(&pool)
                 .await
             });
+            // Now that the row is committed, the UI's post-turn refetch will
+            // see it. Emit the event AFTER the INSERT so we never lose the
+            // race against `agentGetMessages`.
+            let _ = app.emit("agent:event", params.clone());
         }
         _ => {}
     }

@@ -2364,6 +2364,14 @@ mark {
   min-width: 0;
   height: 32px;
 }
+.kb-chat-model {
+  /* Matches the session dropdown but sized to its label (e.g. "ollama:ornith-1.5:35b"). */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 220px;
+  height: 32px;
+  font-size: var(--fs-sm);
+}
 .kb-chat-thread {
   flex: 1;
   min-height: 0;

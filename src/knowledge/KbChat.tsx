@@ -8,6 +8,7 @@ import {
   kbGetMessages,
   kbListSessions,
 } from "../lib/kb";
+import { agentListModels } from "../lib/agent";
 import { PlusIcon, SendIcon, TrashIcon } from "../ui/icons";
 
 /**
@@ -30,6 +31,12 @@ export function KbChat({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Mirror the AgentPanel's model list so KB chat picks an Ollama model that
+  // actually exists on this Mac, instead of the Rust default fallback
+  // (SuperGemma4-26b) which is rarely installed. The user can pick a different
+  // model from the dropdown; we keep the choice sticky per-session.
+  const [models, setModels] = useState<string[]>([]);
+  const [model, setModel] = useState<string>("");
   const threadRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const activeRef = useRef<string | null>(null);
@@ -81,6 +88,22 @@ export function KbChat({
       .then((list) => setActiveId(list[0]?.id ?? null))
       .catch((e) => setError(String(e)));
   }, [refreshSessions]);
+
+  // Load the agent's model list once so we have an Ollama model that exists.
+  // kb_ask's Rust default (SuperGemma4-26b) almost never matches what's
+  // installed locally — without this, every chat turns into "is Ollama running?"
+  useEffect(() => {
+    agentListModels()
+      .then((list) => {
+        setModels(list);
+        setModel((current) => current || list[0] || "");
+      })
+      .catch(() => {
+        // Swallow: an empty list leaves the model as "" and the Rust fallback
+        // takes over. The user can still chat; they just won't get the model
+        // picker.
+      });
+  }, []);
 
   useEffect(() => {
     if (!activeId) {
@@ -143,7 +166,7 @@ export function KbChat({
         setActiveId(s.id);
         setSessions((prev) => [s, ...prev]);
       }
-      const answer = await kbAsk(sid, q);
+      const answer = await kbAsk(sid, q, model || undefined);
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== "pending-user"),
         answer.userMessage,
@@ -189,6 +212,21 @@ export function KbChat({
             </option>
           ))}
         </select>
+        {models.length > 1 ? (
+          <select
+            aria-label="Model"
+            className="kb-chat-model"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            title="Model used to answer questions"
+          >
+            {models.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        ) : null}
         <button
           type="button"
           className="btn-icon"
