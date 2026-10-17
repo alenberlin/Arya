@@ -4,6 +4,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DictationPanel } from "../dictation/DictationPanel";
 import type { DictationSettings } from "../lib/dictation";
 
+// `listen` is called by the panel to refresh the history on `dictation:state`,
+// but the test environment has no Tauri runtime — mock it as a no-op so the
+// effect runs without throwing on `window.__TAURI_INTERNALS__`.
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(async () => () => undefined),
+}));
+
 const state = {
   // `satisfies` pins this to the real shape, so a future field added to
   // DictationSettings fails the build here instead of testing against undefined.

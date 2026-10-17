@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearDictationHistory,
@@ -157,6 +158,28 @@ export function DictationPanel() {
 
   useEffect(() => {
     void refresh();
+  }, [refresh]);
+
+  // A dictation can complete while this panel is hidden (on Notes / Knowledge
+  // tabs), so the user comes back to a stale history list and thinks their words
+  // were never saved. The HUD already emits a `dictation:state` when each
+  // utterance finishes; listen for it and refresh the history in-place. Both
+  // Idle (success — there's a final text) and Error (failure — no row will
+  // appear but the user can see at least that something finished) trigger a
+  // refresh so the panel stays in sync with what the Rust side actually saved.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<{ state: string; message: string | null; text: string | null }>(
+      "dictation:state",
+      (event) => {
+        if (event.payload.state === "idle" || event.payload.state === "error") {
+          void refresh();
+        }
+      },
+    ).then((fn) => {
+      unlisten = () => fn();
+    });
+    return () => unlisten?.();
   }, [refresh]);
 
   // Best-effort: populate the translation-model picker from Ollama.

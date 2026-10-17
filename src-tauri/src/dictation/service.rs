@@ -368,6 +368,11 @@ impl DictationService {
 
         if started.elapsed().as_millis() < MIN_HOLD_MS {
             // Graze: too short to be intentional. Cheap — stays on this thread.
+            // A graze really is silent — it's a deliberate micro-tap that
+            // doesn't open the HUD long enough to be confused with a dictation.
+            // Keep this branch quiet; only the post-stop clip-too-short path
+            // below is loud (because live partials may have made the user think
+            // they were dictating successfully).
             self.worker.abort();
             join_ticker(handle);
             emit_state(app, DictationState::Idle, None, None);
@@ -375,6 +380,7 @@ impl DictationService {
             return;
         }
 
+        let held_for_ms = started.elapsed().as_millis();
         self.busy.store(true, Ordering::SeqCst);
         emit_state(app, DictationState::Processing, None, None);
         let service = Arc::clone(self);
@@ -390,14 +396,32 @@ impl DictationService {
                 let clip = match service.worker.stop() {
                     Ok(clip) => clip,
                     Err(message) => {
+                        warn!(error = %message, held_ms = held_for_ms, "dictation: capture stop failed");
                         emit_state(&app, DictationState::Error, Some(message.to_string()), None);
                         hide_hud_soon(&app, 1500);
                         return;
                     }
                 };
+                // The 0.3s floor used to drop silently — users with working
+                // live partials but vanishing output had no way to tell that the
+                // dictation was rejected at the end. Surface it as an Error so
+                // they understand why no text appeared (the live preview words
+                // came from the streaming engine feeding, not from a finalized
+                // transcript).
                 if clip.duration_secs() < 0.3 {
-                    emit_state(&app, DictationState::Idle, None, None);
-                    hide_hud_soon(&app, 400);
+                    let secs = clip.duration_secs();
+                    warn!(
+                        duration_secs = secs,
+                        held_ms = held_for_ms,
+                        "dictation: clip dropped — less than 0.3s after worker.stop"
+                    );
+                    emit_state(
+                        &app,
+                        DictationState::Error,
+                        Some("nothing recognized — hold the key while speaking".into()),
+                        None,
+                    );
+                    hide_hud_soon(&app, 2000);
                     return;
                 }
                 let result = match stream {
@@ -410,6 +434,7 @@ impl DictationService {
                         hide_hud_soon(&app, 900);
                     }
                     Err(message) => {
+                        warn!(error = %message, "dictation: pipeline returned error");
                         emit_state(&app, DictationState::Error, Some(message.to_string()), None);
                         hide_hud_soon(&app, 2500);
                     }
@@ -605,7 +630,12 @@ impl DictationService {
         let settings = self.settings();
         let (raw, asr_ms) = self.transcribe_whisper(app, &settings, &clip)?;
         if raw.is_empty() {
-            return Err("nothing recognized".into());
+            warn!(
+                duration_secs = clip.duration_secs(),
+                model = %settings.speech_model,
+                "dictation: whisper returned an empty transcript"
+            );
+            return Err("nothing recognized — is the microphone picking up audio?".into());
         }
         let (raw, asr_ms) = self.guard_suspicious_transcript(app, &settings, &clip, raw, asr_ms);
         self.deliver(app, pool, &clip, raw, asr_ms)
@@ -624,20 +654,31 @@ impl DictationService {
         let started = Instant::now();
         engine.feed_up_to(&clip.samples);
         let raw = engine.finalize();
-        let asr_ms = started.elapsed().as_millis() as i64;
+        let streaming_ms = started.elapsed().as_millis() as i64;
         let raw = raw.trim().to_string();
         if !raw.is_empty() {
             let settings = self.settings();
             let (raw, asr_ms) =
-                self.guard_suspicious_transcript(app, &settings, &clip, raw, asr_ms);
+                self.guard_suspicious_transcript(app, &settings, &clip, raw, streaming_ms);
             return self.deliver(app, pool, &clip, raw, asr_ms);
         }
         // Streaming produced nothing (silence or a transient) — fall back to the
-        // proven whisper path.
+        // proven whisper path. This used to silently swallow a recognized-failure
+        // that both engines returned empty; log it so the empty history row has
+        // something to correlate with.
+        warn!(
+            duration_secs = clip.duration_secs(),
+            "dictation: streaming engine returned empty, falling back to whisper"
+        );
         let settings = self.settings();
         let (raw, asr_ms) = self.transcribe_whisper(app, &settings, &clip)?;
         if raw.is_empty() {
-            return Err("nothing recognized".into());
+            warn!(
+                duration_secs = clip.duration_secs(),
+                model = %settings.speech_model,
+                "dictation: both streaming and whisper returned empty"
+            );
+            return Err("nothing recognized — is the microphone picking up audio?".into());
         }
         let (raw, asr_ms) = self.guard_suspicious_transcript(app, &settings, &clip, raw, asr_ms);
         self.deliver(app, pool, &clip, raw, asr_ms)

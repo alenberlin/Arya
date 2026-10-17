@@ -117,6 +117,13 @@ pub async fn search_all_query(
     // KB chunks via the FTS5 mirror. Distinct on document_id keeps one row
     // per document; we attach the highest-ranked chunk's leading slice as the
     // snippet so the result card is meaningful.
+    //
+    // The query is wrapped as an FTS5 phrase ("...") so reserved operators —
+    // `-` (negation), `:` (column), `^` (anchor), `*` (prefix) — are treated
+    // as literal characters. Otherwise `covid-19` becomes "covid -19" and
+    // SQLite errors with "no such column: 19". Embedded `"` are escaped by
+    // doubling, per FTS5 syntax.
+    let fts_query = format!("\"{}\"", query.replace('"', "\"\""));
     let kb_chunks_text: Vec<TextHit> = sqlx::query_as::<_, TextHit>(
         "SELECT 'kb_document' AS source_kind, d.id AS source_id,
                 d.filename AS title,
@@ -129,7 +136,7 @@ pub async fn search_all_query(
          ORDER BY d.updated_at DESC
          LIMIT ?2",
     )
-    .bind(query)
+    .bind(&fts_query)
     .bind(limit)
     .fetch_all(pool)
     .await?;
