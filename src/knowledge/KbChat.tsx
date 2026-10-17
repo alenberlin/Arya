@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { agentListModels } from "../lib/agent";
 import {
   type KbMessage,
   type KbSession,
@@ -8,7 +9,6 @@ import {
   kbGetMessages,
   kbListSessions,
 } from "../lib/kb";
-import { agentListModels } from "../lib/agent";
 import { PlusIcon, SendIcon, TrashIcon } from "../ui/icons";
 
 /**
@@ -37,6 +37,13 @@ export function KbChat({
   // model from the dropdown; we keep the choice sticky per-session.
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState<string>("");
+  // `agentListModels` returns qualified names like "ollama:ornith-1.5:35b".
+  // kb_ask's Rust handler re-prefixes the model it receives, so we strip the
+  // provider prefix before sending — otherwise the request goes out as
+  // "ollama:ollama:ornith-…", Ollama 404s, and the UI shows
+  // "is Ollama running?" even though Ollama is up.
+  const stripProvider = (qualified: string) =>
+    qualified.replace(/^ollama:/, "").replace(/^openai:/, "");
   const threadRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const activeRef = useRef<string | null>(null);
@@ -166,7 +173,7 @@ export function KbChat({
         setActiveId(s.id);
         setSessions((prev) => [s, ...prev]);
       }
-      const answer = await kbAsk(sid, q, model || undefined);
+      const answer = await kbAsk(sid, q, model ? stripProvider(model) : undefined);
       setMessages((prev) => [
         ...prev.filter((m) => m.id !== "pending-user"),
         answer.userMessage,

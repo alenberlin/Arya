@@ -1,6 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { agentListModels } from "../lib/agent";
 import { useWindowFileDrop } from "../lib/fileDrop";
 import { TRANSLATE_LANGUAGES, translateInstruction } from "../lib/languages";
 import { type NodeKind, reconcileLinks } from "../lib/links";
@@ -119,6 +120,11 @@ export function NotesWorkspace({
   const [folderMenuFilter, setFolderMenuFilter] = useState("");
   const [moveFilter, setMoveFilter] = useState("");
   const folderMenuRef = useRef<HTMLDivElement | null>(null);
+  // Local Ollama model to use for auto-title + sort. Loaded once on mount so
+  // an untitled note can name itself within ~3s of body content appearing.
+  // Stored without the "ollama:" provider prefix; aiTransform will re-prefix
+  // when the provider is "local".
+  const [localModel, setLocalModel] = useState<string>("");
   // AI folder-sort: null = idle; otherwise the review modal is open with the
   // model's proposed moves and a per-note accept toggle.
   const [sortReview, setSortReview] = useState<FolderSuggestion[] | null>(null);
@@ -491,6 +497,17 @@ export function NotesWorkspace({
     void scanRecoverableRecordings()
       .then(setRecoverables)
       .catch(() => {});
+    // Load the agent's Ollama model list so auto-title and sort can call a
+    // model that's actually installed (otherwise they fall back to a default
+    // that almost never exists locally and silently fail).
+    void agentListModels()
+      .then((list) => {
+        const qualified = list[0] ?? "";
+        // agentListModels returns "ollama:<name>"; aiTransform re-prefixes when
+        // provider is "local", so we strip the provider prefix here.
+        setLocalModel(qualified.replace(/^ollama:/, "").replace(/^openai:/, ""));
+      })
+      .catch(() => {});
     const unlisten = listen<{ noteId: string; status: string }>("note:processing", (event) => {
       void refreshNotes();
       if (event.payload.status === "ready") {
@@ -634,24 +651,27 @@ export function NotesWorkspace({
    * forever, so every apply would silently no-op via editDetail's own early
    * `if (!detail) return`. Reading through the ref always gets the current
    * implementation instead. */
-  const scheduleAutoTitle = useCallback((noteId: string, bodyMd: string) => {
-    if (autoTitleTimer.current) clearTimeout(autoTitleTimer.current);
-    if (bodyMd.trim().length < AUTO_TITLE_MIN_CHARS) return;
-    autoTitleTimer.current = setTimeout(() => {
-      void aiTransform(bodyMd, AUTO_TITLE_INSTRUCTION)
-        .then((result) => {
-          const title = sanitizeAutoTitle(result);
-          const current = detailRef.current;
-          if (title && current?.id === noteId && current.title === "New note") {
-            editDetailRef.current({ title });
-          }
-        })
-        .catch(() => {
-          // Silent: this is a background nicety, not a user-initiated action.
-          // Ollama being unavailable should never surface as a note error.
-        });
-    }, AUTO_TITLE_DEBOUNCE_MS);
-  }, []);
+  const scheduleAutoTitle = useCallback(
+    (noteId: string, bodyMd: string) => {
+      if (autoTitleTimer.current) clearTimeout(autoTitleTimer.current);
+      if (bodyMd.trim().length < AUTO_TITLE_MIN_CHARS) return;
+      autoTitleTimer.current = setTimeout(() => {
+        void aiTransform(bodyMd, AUTO_TITLE_INSTRUCTION, "local", localModel || undefined)
+          .then((result) => {
+            const title = sanitizeAutoTitle(result);
+            const current = detailRef.current;
+            if (title && current?.id === noteId && current.title === "New note") {
+              editDetailRef.current({ title });
+            }
+          })
+          .catch(() => {
+            // Silent: this is a background nicety, not a user-initiated action.
+            // Ollama being unavailable should never surface as a note error.
+          });
+      }, AUTO_TITLE_DEBOUNCE_MS);
+    },
+    [localModel],
+  );
 
   const onRecord = async (sourceMode?: "microphone-only" | "microphone-and-system") => {
     try {

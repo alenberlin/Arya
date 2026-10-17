@@ -29,8 +29,12 @@ REL="$ROOT/src-tauri/target/release"
 APP="$REL/bundle/macos/Arya.app"
 DMG_DIR="$REL/bundle/dmg"
 
-echo "==> Building release bundle (tauri build)…"
-pnpm tauri build
+echo "==> Building release (tauri build --no-bundle)…"
+# Tauri's bundled DMG creator (bundle_dmg.sh) intermittently crashes on this
+# host with an uninformative 'failed to run bundle_dmg.sh' even though the
+# .app and the rw scratch DMG are produced fine. Skip the auto-bundler and
+# drive hdiutil ourselves below — same UDZO output, none of the flake.
+pnpm tauri build --no-bundle
 
 echo "==> Bundling @rpath dylibs into the app…"
 mkdir -p "$APP/Contents/Frameworks"
@@ -42,6 +46,23 @@ for dep in $(otool -L "$REL/arya" | awk '/@rpath\/.*\.dylib/ {print $1}' | sed '
 done
 # Point the executable at the bundled Frameworks (harmless if already present).
 install_name_tool -add_rpath @executable_path/../Frameworks "$APP/Contents/MacOS/arya" 2>/dev/null || true
+
+# Fail loudly before signing if anything is off — a DMG built from an app with
+# missing dylibs or no LC_RPATH launches with 'Library not loaded' and no
+# useful diagnostic.
+miss=()
+[ -d "$APP/Contents/Frameworks" ] || miss+=("Frameworks/ directory missing")
+for dep in $(otool -L "$REL/arya" | awk '/@rpath\/.*\.dylib/ {print $1}' | sed 's|@rpath/||' | sort -u); do
+  if [ ! -f "$APP/Contents/Frameworks/$dep" ]; then
+    miss+=("Frameworks/$dep missing")
+  fi
+done
+otool -l "$APP/Contents/MacOS/arya" | grep -q 'path @executable_path/../Frameworks' || miss+=("LC_RPATH @executable_path/../Frameworks missing")
+if [ ${#miss[@]} -gt 0 ]; then
+  echo "==> Bundle is incomplete; aborting before signing:"
+  printf '    - %s\n' "${miss[@]}"
+  exit 1
+fi
 
 # Prefer the stable self-signed identity (scripts/create-signing-cert.sh) so TCC
 # grants survive rebuilds; fall back to ad-hoc if it isn't installed.
