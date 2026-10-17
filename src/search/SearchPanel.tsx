@@ -3,6 +3,13 @@ import { useCallback, useEffect, useState } from "react";
 import { FileIcon, SearchIcon } from "../ui/icons";
 import { PaneState } from "../ui/PaneState";
 
+/** Hide semantic matches below this cosine score. Literal text matches are
+ *  unaffected. Below ~0.45 the embedding is "close enough" in vector space
+ *  for the surface to look unrelated — anything from notes to dictations to
+ *  an unrelated ARIA conversation starts to look like a hit, which makes the
+ *  search panel feel broken. */
+const SEMANTIC_MIN_SCORE = 0.45;
+
 interface SemanticHit {
   sourceKind: string;
   sourceId: string;
@@ -111,11 +118,20 @@ export function SearchPanel() {
       }
 
       const scoreOf = (m: Match) => (m.kind === "semantic" ? m.score : 1);
-      const merged = [...byNode.values()].sort((a, b) => {
-        // Exact/text matches first, then semantic by descending score.
-        const rank = (m: Match) => (m.kind === "text" ? 1 : 0);
-        return rank(b.match) - rank(a.match) || scoreOf(b.match) - scoreOf(a.match);
-      });
+      const merged = [...byNode.values()]
+        // Hide semantic results below a relevance threshold. A literal (text)
+        // hit always passes. The cosine-sim scores below ~0.45 are essentially
+        // noise — they pick up anything because the embedding is "close enough"
+        // in a high-dimensional space even when the topic has nothing to do
+        // with the query, which surfaces unrelated dictations and looks like
+        // the search is broken. Bumping the threshold surfaces the empty
+        // state ("no close matches") instead.
+        .filter((h) => (h.match.kind === "text" ? true : h.match.score >= SEMANTIC_MIN_SCORE))
+        .sort((a, b) => {
+          // Exact/text matches first, then semantic by descending score.
+          const rank = (m: Match) => (m.kind === "text" ? 1 : 0);
+          return rank(b.match) - rank(a.match) || scoreOf(b.match) - scoreOf(a.match);
+        });
 
       setHits(merged);
       setSearched(true);
